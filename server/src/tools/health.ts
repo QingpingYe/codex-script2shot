@@ -42,10 +42,16 @@ export interface HealthCheck {
   detail?: Record<string, unknown>;
 }
 
+export interface HealthWarning {
+  /** SCREAMING_SNAKE 语义码，供下游按 code + message 聚合去重。 */
+  code: string;
+  message: string;
+}
+
 export interface HealthResult {
   ok: boolean;
   checks: HealthCheck[];
-  warnings: string[];
+  warnings: HealthWarning[];
 }
 
 export interface HealthOptions {
@@ -60,7 +66,7 @@ const BASE_TOKEN_PREFIX_LENGTH = 6;
 
 export async function health(options: HealthOptions = {}): Promise<HealthResult> {
   const checks: HealthCheck[] = [];
-  const warnings: string[] = [];
+  const warnings: HealthWarning[] = [];
   const env = options.env;
   const home = resolve_home();
 
@@ -244,7 +250,7 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
       ].filter(has_text);
       if (configured_tables.length === 0) {
         const warning_message = "table_id 未配置（setup 初始化后填写）";
-        warnings.push(warning_message);
+        warnings.push({ code: "TABLE_ID_NOT_CONFIGURED", message: warning_message });
         push_check(checks, warnings, {
           id: "base_b_reachable",
           status: "pass",
@@ -279,12 +285,17 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
 
   const missing_dirs = LOCAL_DIR_NAMES.filter((name) => !is_directory(path.join(home, name)));
   if (missing_dirs.length > 0) {
-    push_check(checks, warnings, {
-      id: "local_dirs",
-      status: "warn",
-      message: `本地目录缺失：${missing_dirs.join("、")}。请运行 $setup。`,
-      detail: { home, missing: [...missing_dirs] },
-    });
+    push_check(
+      checks,
+      warnings,
+      {
+        id: "local_dirs",
+        status: "warn",
+        message: `本地目录缺失：${missing_dirs.join("、")}。请运行 $setup。`,
+        detail: { home, missing: [...missing_dirs] },
+      },
+      "LOCAL_DIRS_MISSING",
+    );
   } else {
     push_check(checks, warnings, {
       id: "local_dirs",
@@ -294,12 +305,17 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
     });
   }
 
-  push_check(checks, warnings, {
-    id: "index",
-    status: "warn",
-    message: "本地索引尚未构建（Phase 1 仅报告占位状态）。",
-    detail: { state: "not_built" },
-  });
+  push_check(
+    checks,
+    warnings,
+    {
+      id: "index",
+      status: "warn",
+      message: "本地索引尚未构建（Phase 1 仅报告占位状态）。",
+      detail: { state: "not_built" },
+    },
+    "INDEX_NOT_BUILT",
+  );
 
   const ok = checks.every((entry) => entry.status !== "fail");
   return { ok, checks, warnings };
@@ -312,25 +328,35 @@ function loaded_config(result: LoadConfigResult): Script2ShotConfig | undefined 
   return result.config;
 }
 
-function push_check(checks: HealthCheck[], warnings: string[], check: HealthCheck): void {
+function push_check(
+  checks: HealthCheck[],
+  warnings: HealthWarning[],
+  check: HealthCheck,
+  warning_code?: string,
+): void {
   checks.push(check);
   if (check.status === "warn") {
-    warnings.push(check.message);
+    warnings.push({ code: warning_code ?? check.id.toUpperCase(), message: check.message });
   }
 }
 
 function push_skipped(
   checks: HealthCheck[],
-  warnings: string[],
+  warnings: HealthWarning[],
   id: HealthCheckId,
   reason: string,
 ): void {
-  push_check(checks, warnings, {
-    id,
-    status: "warn",
-    message: `已跳过：${reason}。`,
-    detail: { skipped: true, reason },
-  });
+  push_check(
+    checks,
+    warnings,
+    {
+      id,
+      status: "warn",
+      message: `已跳过：${reason}。`,
+      detail: { skipped: true, reason },
+    },
+    `${id.toUpperCase()}_SKIPPED`,
+  );
 }
 
 function probe_ok(run: RunCliResult): run is Extract<RunCliResult, { ok: true }> {

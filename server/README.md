@@ -1,7 +1,7 @@
 # script2shot 本地 MCP Server
 
-本目录是插件的 stdio MCP Server。Phase 1 结束时它只支持 MCP 握手和空的
-`tools/list`；`health` 等工具在后续任务中注册。
+本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册
+`health`；其余工具在后续任务中注册。
 
 ## 环境要求
 
@@ -86,6 +86,6 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
 
 ## Phase 1 已知限制
 
-- 未注册任何工具，`tools/list` 返回空数组；`health` 由 Task 5 实现。
+- 已注册 `health`（只读健康检查）；其余工具由后续任务注册。
 - 不包含 lark-cli 路径发现、登录检查、知识库读写；Phase 1 只实现连接类能力。
 - 启动依赖已构建的 `server/dist/server.mjs`，源码目录不直接运行。

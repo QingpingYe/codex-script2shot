@@ -185,6 +185,13 @@ describe("health", () => {
     expect(check(result, "base_b_reachable").status).toBe("pass");
     expect(check(result, "local_dirs").status).toBe("pass");
     expect(check(result, "index")).toMatchObject({ status: "warn", detail: { state: "not_built" } });
+    expect(result.warnings).toEqual([
+      { code: "INDEX_NOT_BUILT", message: check(result, "index").message },
+    ]);
+    for (const warning of result.warnings) {
+      expect(warning.code).toMatch(/^[A-Z0-9_]+$/);
+      expect(warning.message.length).toBeGreaterThan(0);
+    }
 
     const calls = read_calls(log_file);
     expect(calls.map((call) => call.args)).toEqual([
@@ -340,6 +347,13 @@ describe("health", () => {
     expect(check(result, "config").status).toBe("pass");
     expect(check(result, "local_dirs").status).toBe("pass");
     expect(check(result, "index").status).toBe("warn");
+    expect(result.warnings.map((warning) => warning.code)).toEqual([
+      "LARK_CLI_VERSION_SKIPPED",
+      "AUTH_SKIPPED",
+      "SPACE_A_REACHABLE_SKIPPED",
+      "BASE_B_REACHABLE_SKIPPED",
+      "INDEX_NOT_BUILT",
+    ]);
   });
 
   test("health passes base b with a warning when table ids are not configured", async () => {
@@ -352,7 +366,12 @@ describe("health", () => {
     const base_b = check(result, "base_b_reachable");
     expect(base_b.status).toBe("pass");
     expect(String(base_b.detail?.warning)).toContain("table_id 未配置");
-    expect(result.warnings.some((warning) => warning.includes("table_id 未配置"))).toBe(true);
+    expect(
+      result.warnings.some(
+        (warning) =>
+          warning.code === "TABLE_ID_NOT_CONFIGURED" && warning.message.includes("table_id 未配置"),
+      ),
+    ).toBe(true);
   });
 
   test("health reports index as not_built in phase 1", async () => {
@@ -365,6 +384,6 @@ describe("health", () => {
     const index = check(result, "index");
     expect(index.status).toBe("warn");
     expect(index.detail?.state).toBe("not_built");
-    expect(result.warnings).toContain(index.message);
+    expect(result.warnings).toContainEqual({ code: "INDEX_NOT_BUILT", message: index.message });
   });
 });
