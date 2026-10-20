@@ -563,6 +563,7 @@ default_top_k = 12
 | Tool | 作用 |
 | --- | --- |
 | `health` | 检查 lark-cli、登录状态、知识库配置和本地索引 |
+| `write_config` | dry-run 预览并写入本地配置、初始化本地目录 |
 | `scan_knowledge_a` | 只扫描知识库 A 的节点元数据，不读取文档正文 |
 | `fetch_knowledge_a_doc` | 只读取一个指定文档的正文和 revision |
 | `read_sync_state` | 读取知识库 B 的按文档 SyncState |

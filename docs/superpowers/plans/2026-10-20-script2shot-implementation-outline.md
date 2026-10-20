@@ -118,6 +118,7 @@ Phase 1 插件骨架与飞书连接
 | Tool | 输入要点 | 输出要点 | 定稿位置 |
 | --- | --- | --- | --- |
 | `health` | 无 | `{ ok, checks[], warnings[] }`，`checks[].id` 见 Phase 1 Task 5 | Phase 1 |
+| `write_config` | `{ config, create_local_dirs?, dry_run? }`（缺省 dry-run） | `{ dry_run, config_path, diff, created_dirs, written }`；diff 中 `base_b` 掩码为前 6 位 + `…` | Phase 1 |
 | `scan_knowledge_a` | 无（读配置） | `{ nodes[], skipped[], warnings[] }`，节点含 `node_token/obj_token/obj_type/parent_node_token/title/obj_edit_time/node_type` | Phase 2 |
 | `fetch_knowledge_a_doc` | `{ doc: URL 或 token }` | `{ doc_token, revision_id, title, content, tips, warnings[] }` | Phase 2 |
 | `read_sync_state` | 无（只读） | `{ records[] }` | Phase 2 |

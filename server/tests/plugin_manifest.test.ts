@@ -45,4 +45,18 @@ describe("plugin manifest", () => {
       );
     }
   });
+
+  test("plugin declares onboarding skill that exists", () => {
+    const plugin = readJson("plugin.json");
+    const extensions = plugin.extensions as Record<string, Record<string, unknown>> | undefined;
+    expect(extensions?.["com.openai"]?.onboardingSkill).toBe("./skills/setup/SKILL.md");
+
+    const skillFile = path.join(repoRoot, "skills", "setup", "SKILL.md");
+    expect(existsSync(skillFile), "skills/setup/SKILL.md should exist").toBe(true);
+
+    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(readFileSync(skillFile, "utf8"));
+    expect(frontmatter, "setup SKILL.md should start with YAML frontmatter").not.toBeNull();
+    const name = /^name:\s*(.+?)\s*$/m.exec(frontmatter?.[1] ?? "");
+    expect(name?.[1], "setup SKILL.md frontmatter name should be setup").toBe("setup");
+  });
 });

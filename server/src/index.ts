@@ -7,6 +7,7 @@ import {
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 import { health } from "./tools/health.js";
+import { write_config, type WriteConfigInput } from "./tools/write_config.js";
 
 const server = new Server(
   { name: "script2shot", version: "0.1.0" },
@@ -19,6 +20,31 @@ const TOOLS = [
     description: "只读检查：lark-cli 路径与版本、登录状态、知识库 A/B 可达性、本地目录与索引状态。",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
+  {
+    name: "write_config",
+    description:
+      "dry-run 预览或写入 ~/.codex-script2shot/config.toml，并按需创建本地目录；返回的 diff 中 base_b 已掩码。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        config: {
+          type: "object",
+          description:
+            "完整配置：{ lark: { cli_path, profile, space_a, base_b, knowledge_cards_table_id, sync_state_table_id }, retrieval: { default_top_k } }。",
+        },
+        create_local_dirs: {
+          type: "boolean",
+          description: "缺省 true：写入时创建本地 cache、index、logs 目录。",
+        },
+        dry_run: {
+          type: "boolean",
+          description: "缺省 true：只返回 diff 与将要创建的目录，不写任何文件、不建目录。",
+        },
+      },
+      required: ["config"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -27,6 +53,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name } = request.params;
   if (name === "health") {
     const result = await health();
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+  if (name === "write_config") {
+    const result = write_config((request.params.arguments ?? {}) as WriteConfigInput);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   }
   throw new McpError(ErrorCode.MethodNotFound, `未知工具：${name}`);
