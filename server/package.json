@@ -1,0 +1,20 @@
+{
+  "name": "script2shot-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "script2shot 本地 MCP Server",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/server.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
