@@ -78,11 +78,11 @@ git commit -m "docs: record MCP server stack decision and expand phase plans"
 
 - [ ] **Step 1: 写失败的清单测试**
 
-`plugin_manifest`：解析 `plugin.json`，断言 `name=="script2shot"`、`version` 匹配 semver、`description` 非空、`$schema` 为 `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`；解析 `mcp.json`，断言存在 `$schema` 与 `mcpServers.script2shot`，且 `mcpServers.script2shot.type` 非空、命令路径最终落到 `server/` 内；断言 `skills/` 目录存在。
+`plugin_manifest`：解析 `plugin.json`，断言 `name=="script2shot"`、`version` 匹配 semver、`description` 非空、`$schema` 为 `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`；解析 `mcp.json`，断言存在 `$schema` 与 `mcpServers.script2shot`，且 `mcpServers.script2shot.type` 非空；断言 `skills/` 目录存在、两个启动脚本存在且启动目标为 `server/dist/server.mjs`。
 
 ```text
 test("plugin manifest declares identity, mcp server and skills path")
-test("mcp server entry command stays inside the plugin root")
+test("launcher scripts exist and start server/dist/server.mjs")
 ```
 
 - [ ] **Step 2: 运行并确认失败**
