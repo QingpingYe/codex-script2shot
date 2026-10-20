@@ -72,6 +72,7 @@ describe("mcp handshake", () => {
 
       const result = await client.listTools();
       expect(Array.isArray(result.tools)).toBe(true);
+      expect(result.tools.map((tool) => tool.name)).toContain("health");
       for (const tool of result.tools) {
         expect(typeof tool.name).toBe("string");
         expect(tool.name.length).toBeGreaterThan(0);

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // 假 lark-cli：Task 4 起的封闭测试替身，只实现只读命令（--help / --version / auth status）。
+// Task 5 追加 wiki +node-list 与 base +table-list 的只读应答。
 // 行为开关：
-//   FAKE_SCENARIO        ok | no-auth | old-version | missing-capability | bad-json（默认 ok）
+//   FAKE_SCENARIO        ok | no-auth | old-version | missing-capability | bad-json |
+//                        space-unreachable | base-unreachable | table-missing（默认 ok）
 //   FAKE_AUTH_EXIT_CODE  覆盖 auth status 的退出码，用于覆盖 ok:false 且退出码为 0 的分支
 //   FAKE_LOG_FILE        把每次调用的 argv 以 JSON Lines 追加记录
 import { appendFileSync } from "node:fs";
@@ -82,6 +84,34 @@ if (group === "auth" && sub === "status") {
       },
     })}\n`,
   );
+  exit_with(0);
+}
+
+if (group === "wiki" && sub === "+node-list") {
+  if (scenario === "space-unreachable") {
+    process.stderr.write("fake-lark-cli: wiki space unreachable\n");
+    exit_with(1);
+  }
+  process.stdout.write(
+    `${JSON.stringify({ ok: true, data: { nodes: [], has_more: false, page_token: "" } })}\n`,
+  );
+  exit_with(0);
+}
+
+if (group === "base" && sub === "+table-list") {
+  if (scenario === "base-unreachable") {
+    process.stderr.write("fake-lark-cli: base unreachable\n");
+    exit_with(1);
+  }
+  const tables = [
+    { table_id: "tbl_cards", name: "KnowledgeCards" },
+    { table_id: "tbl_state", name: "SyncState" },
+  ];
+  const response =
+    scenario === "table-missing"
+      ? tables.filter((table) => table.table_id !== "tbl_state")
+      : tables;
+  process.stdout.write(`${JSON.stringify({ ok: true, data: { tables: response } })}\n`);
   exit_with(0);
 }
 
