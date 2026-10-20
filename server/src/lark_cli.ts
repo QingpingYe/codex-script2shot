@@ -1,0 +1,466 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { accessSync, constants, statSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import type { Script2ShotConfig } from "./config.js";
+
+/**
+ * lark-cli 适配层（架构 §7.3、§8）。
+ *
+ * - 只做发现、版本、登录状态和能力探测，全部是只读命令（--help / --version / auth status）。
+ * - 所有子进程调用都使用参数数组，不做 shell 字符串拼接。
+ * - 不向日志或错误信息写入 token / 凭据；错误详情只带截断后的 CLI 文本片段。
+ */
+
+export const DEFAULT_TIMEOUT_MS = 30_000;
+export const STDERR_LIMIT = 500;
+
+export type LarkCliSource = "env" | "config" | "path" | "common";
+export type LarkCliErrorCode = "LARK_CLI_NOT_FOUND" | "AUTH_REQUIRED" | "INTERNAL";
+
+export interface LarkCliError {
+  code: LarkCliErrorCode;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+export interface LarkCliFailure {
+  ok: false;
+  error: LarkCliError;
+}
+
+export interface ResolveLarkCliOptions {
+  /** 默认 process.env；测试可注入受控环境。 */
+  env?: NodeJS.ProcessEnv;
+  /** 默认 os.homedir()；用于展开 ~/.lark-cli 与 ~/.local/bin。 */
+  home_dir?: string;
+}
+
+export type ResolveLarkCliResult =
+  | { ok: true; path: string; source: LarkCliSource }
+  | LarkCliFailure;
+
+export interface RunCliOptions {
+  cwd?: string;
+  /** 默认 process.env；传入时会整体替换子进程环境。 */
+  env?: NodeJS.ProcessEnv;
+  /** 默认 30s。 */
+  timeout_ms?: number;
+  /** 为 true 时把退出码为 0 的 stdout 解析成 JSON；解析失败返回 INTERNAL。 */
+  expect_json?: boolean;
+}
+
+export type RunCliResult =
+  | { ok: true; code: number; stdout: string; stderr: string; json?: unknown }
+  | LarkCliFailure;
+
+export interface GetVersionOptions {
+  env?: NodeJS.ProcessEnv;
+  timeout_ms?: number;
+}
+
+export type GetVersionResult = { ok: true; version: string; raw: string } | LarkCliFailure;
+
+export interface GetAuthStatusOptions {
+  verify?: boolean;
+  env?: NodeJS.ProcessEnv;
+  timeout_ms?: number;
+}
+
+export type GetAuthStatusResult =
+  | { ok: true; logged_in: boolean; identity: string; user_name?: string }
+  | LarkCliFailure;
+
+export interface LarkCapabilities {
+  wiki_node_list: boolean;
+  docs_fetch: boolean;
+  base_table_create: boolean;
+  base_record_batch_create: boolean;
+  base_record_delete: boolean;
+  base_record_list: boolean;
+  auth_status: boolean;
+}
+
+export interface ProbeCapabilitiesOptions {
+  env?: NodeJS.ProcessEnv;
+  timeout_ms?: number;
+}
+
+/**
+ * 按 LARK_CLI_PATH → config.lark.cli_path → PATH → 常见目录的顺序查找 lark-cli（架构 §7.3）。
+ * 显式路径只接受存在的文件；找不到时返回 LARK_CLI_NOT_FOUND 并列出搜索过的位置。
+ */
+export function resolve_lark_cli(
+  config?: Script2ShotConfig,
+  options: ResolveLarkCliOptions = {},
+): ResolveLarkCliResult {
+  const env = options.env ?? process.env;
+  const home_dir = options.home_dir ?? os.homedir();
+  const searched: string[] = [];
+
+  const explicit_candidates: Array<{ source: LarkCliSource; value: string | undefined }> = [
+    { source: "env", value: first_non_empty(env.LARK_CLI_PATH) },
+    { source: "config", value: first_non_empty(config?.lark?.cli_path) },
+  ];
+  for (const candidate of explicit_candidates) {
+    if (candidate.value === undefined) {
+      continue;
+    }
+    const resolved = path.resolve(candidate.value);
+    searched.push(resolved);
+    if (is_usable_file(resolved)) {
+      return { ok: true, path: resolved, source: candidate.source };
+    }
+  }
+
+  const names = candidate_names();
+  for (const entry of path_entries(env.PATH)) {
+    for (const name of names) {
+      const candidate = path.join(entry, name);
+      searched.push(candidate);
+      if (is_usable_file(candidate)) {
+        return { ok: true, path: candidate, source: "path" };
+      }
+    }
+  }
+
+  for (const dir of common_directories(home_dir, env)) {
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      searched.push(candidate);
+      if (is_usable_file(candidate)) {
+        return { ok: true, path: candidate, source: "common" };
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    error: {
+      code: "LARK_CLI_NOT_FOUND",
+      message:
+        "未找到 lark-cli。请安装 lark-cli，或用 LARK_CLI_PATH 环境变量 / config.toml 的 lark.cli_path 指定路径。",
+      details: { searched },
+    },
+  };
+}
+
+/**
+ * 统一子进程封装：超时、退出码、stdout/stderr 捕获和错误归一化。
+ * `ok: true` 只表示进程跑完了；调用方需要自行按 `code` 判断业务结果。
+ */
+export function run_cli(
+  cli_path: string,
+  args: string[],
+  options: RunCliOptions = {},
+): Promise<RunCliResult> {
+  const timeout_ms = options.timeout_ms ?? DEFAULT_TIMEOUT_MS;
+  const target = spawn_target(cli_path, args);
+
+  return new Promise<RunCliResult>((resolve) => {
+    let settled = false;
+    const finish = (result: RunCliResult): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(result);
+    };
+
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(target.command, target.args, {
+        cwd: options.cwd,
+        env: options.env ?? process.env,
+        windowsHide: true,
+      });
+    } catch (error) {
+      resolve(internal_error(`无法启动 lark-cli：${describe_error(error)}`, { path: cli_path }));
+      return;
+    }
+
+    const stdout_chunks: Buffer[] = [];
+    const stderr_chunks: Buffer[] = [];
+    const timer = setTimeout(() => {
+      child.kill();
+      // 超时立即结算：Windows 上 .cmd 包装的直接子进程是 cmd.exe，
+      // 直接子进程被结束时孙进程可能仍持有管道，不能等 close 事件。
+      finish(
+        internal_error(`lark-cli 调用超时（${timeout_ms} ms）。`, {
+          path: cli_path,
+          timeout_ms,
+        }),
+      );
+    }, timeout_ms);
+
+    child.stdout.on("data", (chunk: Buffer) => stdout_chunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr_chunks.push(chunk));
+
+    child.on("error", (error: Error) => {
+      clearTimeout(timer);
+      finish(internal_error(`无法启动 lark-cli：${error.message}`, { path: cli_path }));
+    });
+
+    child.on("close", (code: number | null) => {
+      clearTimeout(timer);
+      if (settled) {
+        return;
+      }
+
+      const stdout = Buffer.concat(stdout_chunks).toString("utf8");
+      const stderr = Buffer.concat(stderr_chunks).toString("utf8");
+      const exit_code = code ?? -1;
+
+      if (options.expect_json === true && exit_code === 0) {
+        try {
+          finish({ ok: true, code: exit_code, stdout, stderr, json: JSON.parse(stdout) });
+        } catch {
+          finish(
+            internal_error("lark-cli 返回的 JSON 无法解析。", {
+              path: cli_path,
+              stderr: truncate(stderr),
+              stderr_truncated: stderr.length > STDERR_LIMIT,
+            }),
+          );
+        }
+        return;
+      }
+
+      finish({ ok: true, code: exit_code, stdout, stderr });
+    });
+  });
+}
+
+/** 解析 `lark-cli version X.Y.Z`，同时保留原始输出片段。 */
+export async function get_version(
+  cli_path: string,
+  options: GetVersionOptions = {},
+): Promise<GetVersionResult> {
+  const run = await run_cli(cli_path, ["--version"], options);
+  if (!run.ok) {
+    return run;
+  }
+
+  const raw = (run.stdout.trim() === "" ? run.stderr : run.stdout).trim();
+  const match = /lark-cli version (\d+\.\d+\.\d+)/i.exec(raw);
+  if (run.code !== 0 || match === null) {
+    return internal_error("无法解析 lark-cli 版本输出。", {
+      path: cli_path,
+      exit_code: run.code,
+      output: truncate(raw, 200),
+    });
+  }
+  return { ok: true, version: match[1], raw };
+}
+
+/**
+ * 执行 `auth status --json [--verify]`。
+ * 退出码非 0 或解析结果显式 `ok: false` 视为未登录；JSON 解析失败归一化为 INTERNAL。
+ * 用户信息解析保持宽容：提不到 user_name 就缺省。
+ */
+export async function get_auth_status(
+  cli_path: string,
+  options: GetAuthStatusOptions = {},
+): Promise<GetAuthStatusResult> {
+  const args = ["auth", "status", "--json"];
+  if (options.verify === true) {
+    args.push("--verify");
+  }
+
+  const run = await run_cli(cli_path, args, {
+    env: options.env,
+    timeout_ms: options.timeout_ms,
+    expect_json: true,
+  });
+  if (!run.ok) {
+    return run;
+  }
+  if (run.code !== 0) {
+    return auth_required(cli_path, run.code, run.stderr);
+  }
+
+  const payload = is_record(run.json) ? run.json : {};
+  if (payload.ok === false) {
+    return auth_required(cli_path, run.code, run.stderr);
+  }
+
+  const identity =
+    extract_string(payload, [
+      ["data", "identity"],
+      ["data", "user", "open_id"],
+      ["data", "user", "id"],
+      ["data", "user", "user_id"],
+      ["data", "user", "email"],
+      ["data", "open_id"],
+      ["identity"],
+    ]) ?? "unknown";
+  const user_name = extract_string(payload, [
+    ["data", "user", "name"],
+    ["data", "user_name"],
+    ["data", "name"],
+    ["user", "name"],
+    ["user_name"],
+  ]);
+
+  return user_name === undefined
+    ? { ok: true, logged_in: true, identity }
+    : { ok: true, logged_in: true, identity, user_name };
+}
+
+/**
+ * 用各分组的 `--help` 输出探测能力（架构 §8），不发起真实写操作。
+ * 帮助文本缺失或命令失败时对应能力为 false。
+ */
+export async function probe_capabilities(
+  cli_path: string,
+  options: ProbeCapabilitiesOptions = {},
+): Promise<LarkCapabilities> {
+  const [wiki_help, docs_help, base_help, auth_help] = await Promise.all([
+    read_help(cli_path, "wiki", options),
+    read_help(cli_path, "docs", options),
+    read_help(cli_path, "base", options),
+    read_help(cli_path, "auth", options),
+  ]);
+
+  return {
+    wiki_node_list: wiki_help.includes("+node-list"),
+    docs_fetch: docs_help.includes("+fetch"),
+    base_table_create: base_help.includes("+table-create"),
+    base_record_batch_create: base_help.includes("+record-batch-create"),
+    base_record_delete: base_help.includes("+record-delete"),
+    base_record_list: base_help.includes("+record-list"),
+    auth_status: auth_help.includes("status"),
+  };
+}
+
+async function read_help(
+  cli_path: string,
+  command: string,
+  options: ProbeCapabilitiesOptions,
+): Promise<string> {
+  const run = await run_cli(cli_path, [command, "--help"], {
+    env: options.env,
+    timeout_ms: options.timeout_ms,
+  });
+  if (!run.ok || run.code !== 0) {
+    return "";
+  }
+  return `${run.stdout}\n${run.stderr}`;
+}
+
+function internal_error(message: string, details: Record<string, unknown> = {}): LarkCliFailure {
+  return { ok: false, error: { code: "INTERNAL", message, details } };
+}
+
+function auth_required(cli_path: string, exit_code: number, stderr: string): LarkCliFailure {
+  return {
+    ok: false,
+    error: {
+      code: "AUTH_REQUIRED",
+      message: "lark-cli 未登录或登录已过期，请运行 `lark-cli auth login` 后重试。",
+      details: {
+        path: cli_path,
+        exit_code,
+        stderr: truncate(stderr),
+        stderr_truncated: stderr.length > STDERR_LIMIT,
+      },
+    },
+  };
+}
+
+function spawn_target(cli_path: string, args: string[]): { command: string; args: string[] } {
+  if (process.platform === "win32" && /\.(cmd|bat)$/i.test(cli_path)) {
+    // Windows 不能直接 spawn .cmd/.bat。`/s` 会剥掉 libuv 为含空格路径自动添加的那对引号，
+    // 因此经 `call` 调用；参数仍以数组传递，不做字符串拼接。
+    return { command: "cmd.exe", args: ["/d", "/s", "/c", "call", cli_path, ...args] };
+  }
+  return { command: cli_path, args };
+}
+
+function first_non_empty(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+function candidate_names(): string[] {
+  return process.platform === "win32"
+    ? ["lark-cli.exe", "lark-cli.cmd", "lark-cli"]
+    : ["lark-cli"];
+}
+
+function is_usable_file(file_path: string): boolean {
+  try {
+    if (!statSync(file_path).isFile()) {
+      return false;
+    }
+    if (process.platform !== "win32") {
+      accessSync(file_path, constants.X_OK);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function path_entries(value: string | undefined): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const entries: string[] = [];
+  for (const entry of value.split(path.delimiter)) {
+    const trimmed = entry.trim();
+    if (trimmed === "" || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    entries.push(trimmed);
+  }
+  return entries;
+}
+
+function common_directories(home_dir: string, env: NodeJS.ProcessEnv): string[] {
+  const dirs = [path.join(home_dir, ".lark-cli")];
+  if (process.platform === "win32") {
+    const local_app_data = first_non_empty(env.LOCALAPPDATA);
+    if (local_app_data !== undefined) {
+      dirs.push(path.join(local_app_data, "Programs", "lark-cli"));
+    }
+  } else {
+    dirs.push("/usr/local/bin");
+  }
+  dirs.push(path.join(home_dir, ".local", "bin"));
+  return dirs;
+}
+
+function truncate(text: string, limit = STDERR_LIMIT): string {
+  return text.length > limit ? text.slice(0, limit) : text;
+}
+
+function is_record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function extract_string(source: Record<string, unknown>, paths: string[][]): string | undefined {
+  for (const candidate_path of paths) {
+    let current: unknown = source;
+    for (const key of candidate_path) {
+      if (!is_record(current)) {
+        current = undefined;
+        break;
+      }
+      current = current[key];
+    }
+    if (typeof current === "string" && current.trim() !== "") {
+      return current;
+    }
+  }
+  return undefined;
+}
+
+function describe_error(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
