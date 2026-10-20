@@ -182,4 +182,21 @@ describe("write_config", () => {
     );
     expect(JSON.stringify(result)).not.toContain(OLD_BASE_B);
   });
+
+  test("masks the previous base token when the old config uses single quotes", () => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(
+      config_path(),
+      `[lark]\nspace_a = '${SPACE_A}'\nbase_b = '${OLD_BASE_B}'\n`,
+      "utf8",
+    );
+
+    const result = expect_success(write_config({ config: FULL_CONFIG }));
+
+    expect(result.diff).toContain(`base_b = '${OLD_BASE_B.slice(0, 6)}…'`);
+    expect(JSON.stringify(result), "no full token may appear in the returned diff").not.toContain(
+      BASE_B,
+    );
+    expect(JSON.stringify(result)).not.toContain(OLD_BASE_B);
+  });
 });
