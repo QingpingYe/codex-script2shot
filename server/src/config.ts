@@ -239,8 +239,15 @@ function build_config(
       message: `配置缺少 retrieval.default_top_k，使用默认值 ${SETUP_DEFAULTS.retrieval.default_top_k}。`,
       refs: ["retrieval.default_top_k"],
     });
-  } else if (typeof top_k_value !== "number" || !Number.isInteger(top_k_value)) {
-    return { invalid_message: field_type_message("retrieval.default_top_k", "整数", top_k_value) };
+  } else if (
+    typeof top_k_value !== "number" ||
+    !Number.isInteger(top_k_value) ||
+    top_k_value <= 0
+  ) {
+    return {
+      invalid_message: field_type_message("retrieval.default_top_k", "正整数", top_k_value),
+      invalid_field: "retrieval.default_top_k",
+    };
   } else {
     default_top_k = top_k_value;
   }
@@ -376,8 +383,8 @@ function describe_value(value: unknown): string {
   if (typeof value === "string" && value.trim() === "") {
     return "空字符串";
   }
-  if (typeof value === "number" && !Number.isInteger(value)) {
-    return "小数";
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? String(value) : "小数";
   }
   if (value === null) {
     return "空值";

@@ -110,6 +110,7 @@ interface ConfigOptions {
   base_b?: string | null;
   cards_table?: string | null;
   state_table?: string | null;
+  default_top_k?: number | null;
 }
 
 /** 写出一份测试配置；字段传 null 表示整行省略。 */
@@ -120,6 +121,7 @@ function write_config(options: ConfigOptions = {}): string {
   const base_b = options.base_b === undefined ? BASE_B : options.base_b;
   const cards = options.cards_table === undefined ? CARDS_TABLE : options.cards_table;
   const state = options.state_table === undefined ? STATE_TABLE : options.state_table;
+  const default_top_k = options.default_top_k === undefined ? 12 : options.default_top_k;
 
   const lines = ["[lark]"];
   if (cli_path !== null) {
@@ -140,7 +142,11 @@ function write_config(options: ConfigOptions = {}): string {
   if (state !== null) {
     lines.push(`sync_state_table_id = ${toml_string(state)}`);
   }
-  lines.push("", "[retrieval]", "default_top_k = 12", "");
+  lines.push("", "[retrieval]");
+  if (default_top_k !== null) {
+    lines.push(`default_top_k = ${default_top_k}`);
+  }
+  lines.push("");
 
   mkdirSync(homeDir, { recursive: true });
   const config_path = path.join(homeDir, "config.toml");
@@ -414,7 +420,36 @@ describe("health", () => {
       "SPACE_A_REACHABLE_SKIPPED",
       "BASE_B_REACHABLE_SKIPPED",
       "INDEX_NOT_BUILT",
+      "CONFIG_FIELD_MISSING",
     ]);
+  });
+
+  test("health merges config warnings once per code without leaking refs", async () => {
+    create_local_dirs();
+    write_config({ profile: null, cards_table: null, state_table: null, default_top_k: null });
+
+    const result = await run_health("ok");
+
+    const codes = result.warnings.map((warning) => warning.code);
+    // load_config 对每个缺失字段各发一条同 code warning；合并时按 code 去重，保留首条。
+    expect(codes.filter((code) => code === "CONFIG_FIELD_MISSING")).toHaveLength(1);
+    expect(codes.filter((code) => code === "CONFIG_FIELD_DEFAULTED")).toHaveLength(1);
+    expect(new Set(codes).size, "health.warnings 不应出现重复 code").toBe(codes.length);
+
+    const missing = result.warnings.find((warning) => warning.code === "CONFIG_FIELD_MISSING");
+    expect(missing?.message).toContain("lark.profile");
+    const defaulted = result.warnings.find((warning) => warning.code === "CONFIG_FIELD_DEFAULTED");
+    expect(defaulted?.message).toContain("retrieval.default_top_k");
+
+    for (const warning of result.warnings) {
+      expect(Object.keys(warning).sort(), "合并后的 warning 只保留 code 与 message").toEqual([
+        "code",
+        "message",
+      ]);
+    }
+    expect(codes.indexOf("INDEX_NOT_BUILT"), "check 自身的 warning 先于 config warning").toBeLessThan(
+      codes.indexOf("CONFIG_FIELD_MISSING"),
+    );
   });
 
   test("health passes base b with a warning when table ids are not configured", async () => {

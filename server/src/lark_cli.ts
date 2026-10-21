@@ -8,12 +8,15 @@ import type { Script2ShotConfig } from "./config.js";
  * lark-cli 适配层（架构 §7.3、§8）。
  *
  * - 只做发现、版本、登录状态和能力探测，全部是只读命令（--help / --version / auth status）。
- * - 所有子进程调用都使用参数数组，不做 shell 字符串拼接。
+ * - 子进程默认以参数数组直接 spawn；只有 Windows 的 .cmd/.bat 包装必须经 cmd.exe，
+ *   此时按 cmd 规则逐参数转义，并以 verbatim 命令行传入（见 spawn_target）。
  * - 不向日志或错误信息写入 token / 凭据；错误详情只带截断后的 CLI 文本片段。
  */
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const STDERR_LIMIT = 500;
+/** 每路输出（stdout / stderr）的累积上限；超限即终止子进程，避免输出无界占用内存。 */
+export const DEFAULT_MAX_OUTPUT_BYTES = 1 << 20;
 
 export type LarkCliSource = "env" | "config" | "path" | "common";
 export type LarkCliErrorCode = "LARK_CLI_NOT_FOUND" | "AUTH_REQUIRED" | "INTERNAL";
@@ -48,6 +51,8 @@ export interface RunCliOptions {
   timeout_ms?: number;
   /** 为 true 时把退出码为 0 的 stdout 解析成 JSON；解析失败返回 INTERNAL。 */
   expect_json?: boolean;
+  /** 默认 process.platform；注入后可在任意平台测试 Windows 的 cmd.exe 分支。 */
+  platform?: NodeJS.Platform;
 }
 
 export type RunCliResult =
@@ -162,7 +167,7 @@ export function run_cli(
   options: RunCliOptions = {},
 ): Promise<RunCliResult> {
   const timeout_ms = options.timeout_ms ?? DEFAULT_TIMEOUT_MS;
-  const target = spawn_target(cli_path, args);
+  const target = spawn_target(cli_path, args, options.platform ?? process.platform);
 
   return new Promise<RunCliResult>((resolve) => {
     let settled = false;
@@ -180,6 +185,7 @@ export function run_cli(
         cwd: options.cwd,
         env: options.env ?? process.env,
         windowsHide: true,
+        windowsVerbatimArguments: target.windows_verbatim_arguments,
       });
     } catch (error) {
       resolve(internal_error(`无法启动 lark-cli：${describe_error(error)}`, { path: cli_path }));
@@ -188,6 +194,7 @@ export function run_cli(
 
     const stdout_chunks: Buffer[] = [];
     const stderr_chunks: Buffer[] = [];
+    const stream_bytes = { stdout: 0, stderr: 0 };
     const timer = setTimeout(() => {
       child.kill();
       // 超时立即结算：Windows 上 .cmd 包装的直接子进程是 cmd.exe，
@@ -200,8 +207,44 @@ export function run_cli(
       );
     }, timeout_ms);
 
-    child.stdout.on("data", (chunk: Buffer) => stdout_chunks.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr_chunks.push(chunk));
+    const enforce_output_limit = (stream: "stdout" | "stderr"): void => {
+      child.kill();
+      // 与超时一致：立即结算，不等待可能仍持有管道的孙进程退出。
+      finish(
+        internal_error(
+          `lark-cli 的 ${stream} 输出超过上限（${DEFAULT_MAX_OUTPUT_BYTES} 字节），已终止子进程。`,
+          {
+            path: cli_path,
+            stream,
+            bytes_read: stream_bytes[stream],
+            limit_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+          },
+        ),
+      );
+    };
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (settled) {
+        return;
+      }
+      stdout_chunks.push(chunk);
+      stream_bytes.stdout += chunk.length;
+      if (stream_bytes.stdout > DEFAULT_MAX_OUTPUT_BYTES) {
+        clearTimeout(timer);
+        enforce_output_limit("stdout");
+      }
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (settled) {
+        return;
+      }
+      stderr_chunks.push(chunk);
+      stream_bytes.stderr += chunk.length;
+      if (stream_bytes.stderr > DEFAULT_MAX_OUTPUT_BYTES) {
+        clearTimeout(timer);
+        enforce_output_limit("stderr");
+      }
+    });
 
     child.on("error", (error: Error) => {
       clearTimeout(timer);
@@ -454,13 +497,55 @@ function auth_required(
   };
 }
 
-function spawn_target(cli_path: string, args: string[]): { command: string; args: string[] } {
-  if (process.platform === "win32" && /\.(cmd|bat)$/i.test(cli_path)) {
-    // Windows 不能直接 spawn .cmd/.bat。`/s` 会剥掉 libuv 为含空格路径自动添加的那对引号，
-    // 因此经 `call` 调用；参数仍以数组传递，不做字符串拼接。
-    return { command: "cmd.exe", args: ["/d", "/s", "/c", "call", cli_path, ...args] };
+const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
+
+export interface SpawnTarget {
+  command: string;
+  args: string[];
+  /** .cmd/.bat 的整条命令行由这里拼好，禁止 libuv 再加一层引号。 */
+  windows_verbatim_arguments: boolean;
+}
+
+/**
+ * 计算最终要 spawn 的命令与参数。
+ * Windows 不能直接 spawn .cmd/.bat，必须经 cmd.exe；而 cmd.exe 会把参数当命令行
+ * 二次解析（`%VAR%`、`&` 等会被改写），因此这里按 cmd 规则逐参数转义，并以
+ * verbatim 方式传入整条命令行。其余平台保持参数数组直传，不做 shell 拼接。
+ */
+export function spawn_target(
+  cli_path: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): SpawnTarget {
+  if (platform === "win32" && /\.(cmd|bat)$/i.test(cli_path)) {
+    // .cmd 包装会把参数再解析一次（%* 展开），所以参数比命令路径多转义一层。
+    const command_line = [
+      escape_cmd_argument(cli_path, 1),
+      ...args.map((arg) => escape_cmd_argument(arg, 2)),
+    ].join(" ");
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/s", "/c", `"${command_line}"`],
+      windows_verbatim_arguments: true,
+    };
   }
-  return { command: cli_path, args };
+  return { command: cli_path, args, windows_verbatim_arguments: false };
+}
+
+/**
+ * 把一个参数转义成 cmd.exe 能原样转交的形式：
+ * - 先按 CRT 规则处理内嵌双引号（`\"`）与结尾反斜杠，保证子进程能还原引号本身；
+ * - 整体加引号后，再按解析层数对空格与 cmd 元字符逐字符加 `^`，
+ *   避免 cmd 与 .cmd 包装再次解析（层数由调用方按 cmd 的解析次数给出）。
+ */
+function escape_cmd_argument(value: string, escape_layers: number): string {
+  let escaped = value.replace(/(\\*)"/g, "$1$1\\\"");
+  escaped = escaped.replace(/(\\*)$/, "$1$1");
+  escaped = `"${escaped}"`;
+  for (let layer = 0; layer < escape_layers; layer += 1) {
+    escaped = escaped.replace(CMD_META_CHARS, "^$1");
+  }
+  return escaped;
 }
 
 function first_non_empty(value: string | undefined): string | undefined {

@@ -263,8 +263,31 @@ describe("config", () => {
     if ("error" in result) {
       expect(result.error.code).toBe("CONFIG_INVALID");
       expect(result.error.details.path).toBe(configPath(tempRoot));
+      expect(result.error.details.field).toBe("retrieval.default_top_k");
       expect(result.error.message).toContain("retrieval.default_top_k");
     }
+  });
+
+  test("load_config requires retrieval.default_top_k to be a positive integer", () => {
+    const rejected = ["0", "-3", "2.5"];
+    for (const value of rejected) {
+      const toml = `[retrieval]\ndefault_top_k = ${value}\n`;
+      writeFileSync(configPath(tempRoot), toml, "utf8");
+
+      const result = load_config();
+      expect("error" in result, `default_top_k = ${value} 必须被拒绝`).toBe(true);
+      if ("error" in result) {
+        expect(result.error.code).toBe("CONFIG_INVALID");
+        expect(result.error.details.path).toBe(configPath(tempRoot));
+        expect(result.error.details.field).toBe("retrieval.default_top_k");
+        expect(result.error.message).toContain("retrieval.default_top_k");
+        expect(result.error.message).toContain("正整数");
+        expect(readFileSync(configPath(tempRoot), "utf8")).toBe(toml);
+      }
+    }
+
+    writeFileSync(configPath(tempRoot), "[retrieval]\ndefault_top_k = 1\n", "utf8");
+    expect(expect_loaded(load_config()).config.retrieval.default_top_k).toBe(1);
   });
 
   test("ensure_local_dirs creates cache, index and logs once", () => {

@@ -4,6 +4,7 @@ import {
   CONFIG_FILE_NAME,
   load_config,
   resolve_home,
+  type ConfigWarning,
   type LoadConfigResult,
   type Script2ShotConfig,
 } from "../config.js";
@@ -45,7 +46,7 @@ export interface HealthCheck {
 }
 
 export interface HealthWarning {
-  /** SCREAMING_SNAKE 语义码，供下游按 code + message 聚合去重。 */
+  /** SCREAMING_SNAKE 语义码；health.warnings 内按 code 去重，先到先得。 */
   code: string;
   message: string;
 }
@@ -363,6 +364,11 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
     "INDEX_NOT_BUILT",
   );
 
+  // config 层 warnings（字段缺失 / 使用了默认值）同样对调用方可见，附在 check 自身的 warning 之后。
+  if (!("error" in config_result) && config_result.exists) {
+    merge_config_warnings(warnings, config_result.warnings);
+  }
+
   const ok = checks.every((entry) => entry.status !== "fail");
   return { ok, checks, warnings };
 }
@@ -403,6 +409,25 @@ function push_skipped(
     },
     `${id.toUpperCase()}_SKIPPED`,
   );
+}
+
+/**
+ * 合并 config 层 warnings：只保留 {code, message}，不回传 refs。
+ * 按 code 去重、先到先得：load_config 会对每个缺失字段各发一条同 code 的
+ * CONFIG_FIELD_MISSING，health.warnings 作为聚合摘要只保留首条。
+ */
+function merge_config_warnings(
+  warnings: HealthWarning[],
+  config_warnings: ConfigWarning[],
+): void {
+  const seen_codes = new Set(warnings.map((warning) => warning.code));
+  for (const warning of config_warnings) {
+    if (seen_codes.has(warning.code)) {
+      continue;
+    }
+    seen_codes.add(warning.code);
+    warnings.push({ code: warning.code, message: warning.message });
+  }
 }
 
 function probe_ok(run: RunCliResult): run is Extract<RunCliResult, { ok: true }> {

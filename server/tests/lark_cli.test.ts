@@ -1,16 +1,27 @@
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { Script2ShotConfig } from "../src/config.js";
 import {
+  DEFAULT_MAX_OUTPUT_BYTES,
   get_active_profile,
   get_auth_status,
   get_version,
   probe_capabilities,
   resolve_lark_cli,
   run_cli,
+  spawn_target,
 } from "../src/lark_cli.js";
 
 const FIXTURES_DIR = fileURLToPath(new URL("./fixtures", import.meta.url));
@@ -62,6 +73,15 @@ function config_with_cli_path(cli_path?: string): Script2ShotConfig {
     },
     retrieval: { default_top_k: 12 },
   };
+}
+
+/** 子进程脚本：写出超过输出上限的字节，600ms 后留下存活标记，然后保持存活。 */
+function overflow_script(stream: "stdout" | "stderr", marker: string): string {
+  return [
+    `process.${stream}.write("x".repeat(${DEFAULT_MAX_OUTPUT_BYTES + 4096}));`,
+    `setTimeout(() => { require("node:fs").writeFileSync(${JSON.stringify(marker)}, "alive"); }, 600);`,
+    "setTimeout(() => {}, 30000);",
+  ].join("\n");
 }
 
 describe("lark_cli", () => {
@@ -333,6 +353,145 @@ describe("lark_cli", () => {
       expect(result.error.message).toContain("超时");
     }
   });
+
+  test.each(["stdout", "stderr"] as const)(
+    "run_cli terminates the cli and reports the %s stream when output exceeds the cap",
+    async (stream) => {
+      const marker = path.join(tempRoot, `alive-${stream}.txt`);
+      const started_at = Date.now();
+
+      const result = await run_cli(process.execPath, ["-e", overflow_script(stream, marker)], {
+        timeout_ms: 2000,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INTERNAL");
+        expect(result.error.details?.stream).toBe(stream);
+        expect(result.error.details?.bytes_read).toBeGreaterThan(DEFAULT_MAX_OUTPUT_BYTES);
+        expect(result.error.details?.limit_bytes).toBe(DEFAULT_MAX_OUTPUT_BYTES);
+        expect(result.error.message).toContain(stream);
+      }
+      expect(Date.now() - started_at, "超限必须立即结算，而不是等到超时").toBeLessThan(1500);
+
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      expect(existsSync(marker), "超限后子进程必须被终止").toBe(false);
+    },
+  );
+
+  test("run_cli honours the injected platform instead of the host platform", async () => {
+    const cli = install_fake_cli(path.join(tempRoot, "bin"));
+    // 注入另一半平台：Windows 上不再经 cmd.exe 包装（直接 exec .cmd 被拒绝），
+    // POSIX 上改走 cmd.exe（不存在）——两条路径都归一化为 INTERNAL。
+    const foreign_platform = IS_WINDOWS ? "linux" : "win32";
+
+    const result = await run_cli(cli, ["--version"], {
+      env: scenario_env("ok"),
+      platform: foreign_platform,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INTERNAL");
+      expect(result.error.details?.path).toBe(cli);
+    }
+  });
+
+  test("run_cli reports INTERNAL when the executable path cannot be spawned", async () => {
+    const missing = path.join(tempRoot, "missing-bin", "lark-cli");
+
+    const result = await run_cli(missing, ["--version"], {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INTERNAL");
+      expect(result.error.message).toContain("无法启动");
+      expect(result.error.details?.path).toBe(missing);
+    }
+  });
+
+  test("spawn_target routes .cmd through cmd.exe only on win32", () => {
+    const win_target = spawn_target("C:\\tools\\lark-cli.cmd", ["%PATH%"], "win32");
+    expect(win_target.command).toBe("cmd.exe");
+    expect(win_target.windows_verbatim_arguments).toBe(true);
+    expect(win_target.args.slice(0, 3)).toEqual(["/d", "/s", "/c"]);
+    expect(win_target.args, "整条命令行作为一个 verbatim 参数").toHaveLength(4);
+    expect(win_target.args[3].startsWith('"')).toBe(true);
+
+    expect(spawn_target("/usr/local/bin/lark-cli", ["--version"], "linux")).toEqual({
+      command: "/usr/local/bin/lark-cli",
+      args: ["--version"],
+      windows_verbatim_arguments: false,
+    });
+  });
+
+  test.skipIf(IS_WINDOWS)("POSIX rejects a cli path without the execute bit", async () => {
+    const dir = path.join(tempRoot, "no-exec-bin");
+    mkdirSync(dir, { recursive: true });
+    const cli = path.join(dir, "lark-cli");
+    writeFileSync(cli, "#!/bin/sh\nexit 0\n", "utf8");
+    chmodSync(cli, 0o644);
+
+    const resolved = resolve_lark_cli(config_with_cli_path(cli), {
+      env: isolated_env({ PATH: path.join(tempRoot, "empty-path") }),
+      home_dir: path.join(tempRoot, "home"),
+    });
+    expect(resolved.ok).toBe(false);
+    if (!resolved.ok) {
+      expect(resolved.error.code).toBe("LARK_CLI_NOT_FOUND");
+    }
+
+    const run = await run_cli(cli, ["--version"], {});
+    expect(run.ok).toBe(false);
+    if (!run.ok) {
+      expect(run.error.code).toBe("INTERNAL");
+    }
+  });
+
+  test.skipIf(!IS_WINDOWS)(
+    "cmd.exe wrapper delivers argv unchanged for quoted and meta characters",
+    async () => {
+      const cli = install_fake_cli(path.join(tempRoot, "fake lark cli 中文 目录"), "fake-lark-cli");
+      const log_file = path.join(tempRoot, "argv.jsonl");
+      const json_arg = JSON.stringify({
+        create_records: [{ fields: { title: '中文 "引号" 与 \\ 反斜杠', path: "a\\b" } }],
+      });
+      const args = [
+        "auth",
+        "status",
+        "--json",
+        "has space",
+        "中文 参数",
+        "%PATH%",
+        "50%",
+        "a&b",
+        "a|b",
+        "<in>",
+        "(x)",
+        "caret^",
+        "semi;",
+        'dq"x',
+        "trail\\",
+        "路径&中文 空格",
+        json_arg,
+      ];
+
+      const result = await run_cli(cli, args, {
+        env: scenario_env("ok", { FAKE_LOG_FILE: log_file }),
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.code).toBe(0);
+      }
+      const calls = readFileSync(log_file, "utf8")
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => JSON.parse(line) as { args: string[] });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].args).toEqual(args);
+    },
+  );
 
   test("probe reports all capabilities of the current cli", async () => {
     const cli = install_fake_cli(path.join(tempRoot, "bin"));
