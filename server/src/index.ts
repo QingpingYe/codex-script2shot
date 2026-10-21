@@ -19,6 +19,14 @@ import {
   type RefreshLocalIndexInput,
 } from "./tools/refresh_local_index.js";
 import {
+  KNOWLEDGE_CATEGORY_VALUES,
+  KNOWLEDGE_SCOPE_VALUES,
+  SEARCH_KNOWLEDGE_FIELDS,
+  search_knowledge,
+  TARGET_MODEL_VALUES,
+  type SearchKnowledgeInput,
+} from "./tools/search_knowledge.js";
+import {
   replace_doc_cards,
   type ReplaceDocCardsInput,
 } from "./tools/replace_doc_cards.js";
@@ -206,6 +214,60 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "search_knowledge",
+    description:
+      "只读关键词检索本地知识索引：按 scope → project_id → category → target_model → 关键词 → " +
+      "排序（命中级别升序 → priority 降序 → updated_at 降序 → card_id 升序）返回候选卡、" +
+      "上下文文本与被预算截断的 card_id；索引不可用时按 priority 降序回退到本地缓存并写 warning。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "关键词：标题/实体精确命中(1) 优先于 标题/标签子串(2)，再是正文子串(3)。",
+        },
+        scope: {
+          type: "string",
+          enum: [...KNOWLEDGE_SCOPE_VALUES],
+          description: "可选：知识范围过滤。",
+        },
+        project_id: {
+          type: "string",
+          description: "可选：项目过滤（scope=project 的卡）。",
+        },
+        categories: {
+          type: "array",
+          items: { type: "string", enum: [...KNOWLEDGE_CATEGORY_VALUES] },
+          description: "可选：知识分类过滤；缺省或空数组表示不过滤。",
+        },
+        target_model: {
+          type: "string",
+          enum: [...TARGET_MODEL_VALUES],
+          description: "可选：目标模型；target_models 为空的通用卡一律放行。",
+        },
+        max_cards: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "可选：候选上限（含 0），缺省取配置 retrieval.default_top_k；超出的卡记入 dropped_by_budget。",
+        },
+        char_budget: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "可选：上下文正文预算（字符，不含来源标注）；超预算时从最低排序开始截断。",
+        },
+        explain: {
+          type: "boolean",
+          description: "Phase 5 的诊断输出；本期接受参数并返回 EXPLAIN_NOT_AVAILABLE warning。",
+        },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -260,6 +322,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (name === "refresh_local_index") {
     const parsed = parse_refresh_local_index_arguments(request.params.arguments);
     return parsed.ok ? tool_json(await refresh_local_index(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "search_knowledge") {
+    const parsed = parse_search_knowledge_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(search_knowledge(parsed.value)) : tool_json(parsed);
   }
   throw new McpError(ErrorCode.MethodNotFound, `未知工具：${name}`);
 });
@@ -522,6 +588,23 @@ function parse_refresh_local_index_arguments(
     return invalid_arguments('入参字段 "dry_run" 期望布尔值。', { field: "dry_run" });
   }
   return { ok: true, value: dry_run === undefined ? {} : { dry_run } };
+}
+
+/**
+ * 分发层只做「对象 + 未知字段」这层 fail-closed 校验；字段类型与取值范围由
+ * `search_knowledge` 内部统一校验（同一套 CONFIG_INVALID 形状 + details.field），
+ * 避免两处校验漂移。
+ */
+function parse_search_knowledge_arguments(raw: unknown): Parsed<SearchKnowledgeInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, SEARCH_KNOWLEDGE_FIELDS);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  return { ok: true, value: parsed.value as SearchKnowledgeInput };
 }
 
 function is_record(value: unknown): value is Record<string, unknown> {
