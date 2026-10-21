@@ -158,9 +158,10 @@ Phase 1 插件骨架与飞书连接
 
 | 事实 | 来源 | 核对日期 |
 | --- | --- | --- |
-| `wiki +node-list`（`wiki.nodes.list`）返回 `node_token`、`obj_token`、`obj_type`、`parent_node_token`、`title`、`obj_edit_time`、`node_type`（`origin`/`shortcut`）、`has_child`；`--page-all --page-limit` 控制翻页 | 本机 `lark-cli schema wiki.nodes.list` 与 `lark-cli skills read lark-wiki references/lark-wiki-node-list.md` | 2026-10-20 |
+| `wiki +node-list`（快捷命令）输出被裁剪：实测不含 `obj_edit_time`；原始 API `wiki nodes list` 返回完整字段（`obj_edit_time`、`node_create_time`、`obj_create_time`、`origin_space_id`、`url` 等）；分页用 `--page-token` 手动翻页 | 本机 lark-cli 1.0.98 live 探测（`docs/lark-cli-capability-notes.md` §2.2） | 2026-10-21 |
 | `docs +fetch --doc <URL 或 token> --doc-format markdown --detail with-ids --revision-id -1` 返回 `data.document.{document_id, revision_id, content, reference_map, tips}` | 本机 `lark-cli skills read lark-doc/references/lark-doc-fetch.md` | 2026-10-20 |
 | `base +table-create` 用 `--fields` JSON 建表；`base +record-batch-create` 用 `--json {"create_records":[...]}`，单次上限 200 条；datetime CellValue 形如 `2026-03-24 10:00` | 本机 `lark-cli base ... --help` | 2026-10-20 |
+| `base +record-list --format json` 返回矩阵形状：`data.fields` + `data.data` 行数组 + `data.record_id_list`（不是对象数组）；`base +record-batch-create` 返回 `data.record_id_list` | 本机 lark-cli 1.0.98 live 探测（`docs/lark-cli-capability-notes.md` §3、§4） | 2026-10-21 |
 | `auth status --json` 可读登录状态；`auth login` 走设备码登录 | 本机 `lark-cli auth --help` | 2026-10-20 |
 | 可移植插件布局：根目录 `plugin.json`（agent-plugins schema 1.0.0）+ `mcp.json`（`mcpServers` 每项声明 transport `type`）+ `skills/`；OpenAI 专属元数据放 `extensions.com.openai`（`interface`、`onboardingSkill`）。Codex 兼容布局是 `.codex-plugin/plugin.json` + `.mcp.json`，两者不混用 | https://developers.openai.com/plugins/build/plugins | 2026-10-20 |
 | Codex 桌面端自带 Node 24.19.0；官方插件启动脚本按 `CODEX_MCP_NODE_PATH` -> Codex 资源目录 -> Codex 缓存 runtime -> 系统 node 解析；实测自带 Node 的 `node:sqlite`（`DatabaseSync`）可用 | 本机 `codex-app-tools 0.1.6` 启动脚本与本机 runtime 实测 | 2026-10-20 |

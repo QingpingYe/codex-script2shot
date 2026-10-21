@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "document": {
+      "document_id": "doccnEXAMPLEFIXTURE",
+      "revision_id": 13,
+      "content": "# 示例文档标题\n\n这是合成的占位正文段落，仅用于离线解析测试。\n\n- 要点一：占位内容。\n- 要点二：占位内容。\n",
+      "reference_map": {},
+      "tips": ""
+    }
+  }
+}

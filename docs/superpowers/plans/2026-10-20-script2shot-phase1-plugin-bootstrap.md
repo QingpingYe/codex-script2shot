@@ -307,9 +307,11 @@ git commit -m "feat: add setup skill"
 
 **Files:**
 - Create: `docs/lark-cli-capability-notes.md`
-- Create: `server/tests/fixtures/lark-wiki-node-list.sample.json`
+- Create: `server/tests/fixtures/lark-wiki-nodes-list.sample.json`
 - Create: `server/tests/fixtures/lark-docs-fetch.sample.json`
 - Create: `server/tests/fixtures/lark-base-table-list.sample.json`
+- Create: `server/tests/fixtures/lark-base-record-batch-create.sample.json`
+- Create: `server/tests/fixtures/lark-base-record-list.sample.json`
 
 **Interfaces:**
 - Consumes: 前六个任务的全部交付。

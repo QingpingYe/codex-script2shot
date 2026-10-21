@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "data": [
+      [
+        "示例文本一",
+        "待处理",
+        null,
+        "2026-01-02 03:04"
+      ],
+      [
+        "示例文本二",
+        null,
+        null,
+        null
+      ]
+    ],
+    "field_id_list": [
+      "fldEXAMPLE0001",
+      "fldEXAMPLE0002",
+      "fldEXAMPLE0003",
+      "fldEXAMPLE0004"
+    ],
+    "field_type_list": [
+      "text",
+      "select",
+      "attachment",
+      "datetime"
+    ],
+    "fields": [
+      "标题",
+      "状态",
+      "附件",
+      "日期"
+    ],
+    "has_more": false,
+    "record_id_list": [
+      "recEXAMPLE0002",
+      "recEXAMPLE0003"
+    ],
+    "rev": 1,
+    "timezone": "Asia/Shanghai"
+  }
+}

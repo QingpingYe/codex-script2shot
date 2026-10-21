@@ -30,7 +30,7 @@
 2. 同一文档重复执行 `replace_doc_cards`：最终卡片集合不重复、数量稳定（Task 5 用例 `replace.is_idempotent_across_two_runs`）。
 3. 删除文档：卡片与 SyncState 一并清理，且重复删除幂等（Task 5 用例 `delete.removes_cards_and_state`、`delete.is_idempotent_when_records_missing`）。
 4. 写入中途失败：旧卡仍在、SyncState 保持旧值、重试后收敛到正确集合（Task 5 用例 `replace.failure_keeps_old_cards_and_allows_retry`、`update_state.not_called_when_replace_failed`）。
-5. 扫描遇到非 docx 节点、shortcut 节点、路径不在 `通用知识/` 或 `项目知识/` 下：跳过并写 warning，不中断扫描（Task 3 用例 `scan.skips_non_doc_shortcut_and_unclassified_with_warnings`）。
+5. 扫描遇到非 docx 节点、shortcut 节点、根节点不在映射配置中：跳过并写 warning，不中断扫描（Task 3 用例 `scan.skips_non_doc_shortcut_and_unclassified_with_warnings`）。
 
 ---
 
@@ -109,6 +109,7 @@ git commit -m "feat: add knowledge card and sync state schemas with base mapping
 **Interfaces:**
 - Consumes: Task 1 的字段定义；Phase 1 的 config 与 lark-cli 封装。
 - Produces: `list_tables(base)`、`create_table(base, name, fields)`、`list_fields(base, table_id)`、`list_records(base, table_id, { filter?, fields?, page_size? })`、`batch_create_records(base, table_id, fields[])`、`batch_update_records(base, table_id, updates[])`、`delete_records(base, table_id, record_ids[])`，全部经子进程参数数组调用 lark-cli；`init_knowledge_b({ dry_run }) -> { action: created|validated|drift, tables: { knowledge_cards, sync_state }, drift[], warnings[] }`。
+- `list_records` 输出说明：`--format json` 的 inline 输出是矩阵形状（`data.fields` + `data.data` 行数组 + `data.record_id_list`），不是对象数组；适配器按 `fields × data rows` 拼装对象数组，或改用 ndjson 输出。二选一并保持确定性（2026-10-21 实测，见 `docs/lark-cli-capability-notes.md` §4）。
 
 表与字段（表名固定，首字段为主字段）：
 
@@ -159,13 +160,13 @@ git commit -m "feat: add knowledge base table init and validation tool"
 - Create: `server/src/sync_plan.ts`（纯函数：变化分类和 dry-run 清单）
 - Create: `server/tests/sync_plan.test.ts`
 - Create: `server/tests/scan_knowledge_a.test.ts`
-- Modify: `docs/architecture.md` §6.1（补 shortcut 与路径归类规则）
+- Modify: `docs/architecture.md` §6.1（补 shortcut、根节点映射与扫描命令规则）
 
 **Interfaces:**
 - Consumes: Task 2 的 `list_records`；Phase 1 的 config 与 `run_cli`。
 - Produces: `scan_knowledge_a() -> { nodes[], skipped[], warnings[] }`，`nodes[].{node_token, obj_token, obj_type, parent_node_token, title, obj_edit_time, path, scope, project_id}`；`read_sync_state() -> { records[] }`；`build_sync_plan(nodes, sync_records) -> { to_add[], to_update[], to_move[], to_delete[], unchanged[], warnings[] }`，条目含 `{source_doc_token, source_node_token, title, path, reason}`。
 
-扫描实现：`wiki +node-list --space-id <space_a> --parent-node-token ? --page-size 50 --page-token ? --as user` 手动翻页 + BFS 递归（不依赖 `--page-all` 上限）。`source_doc_token` 取 `obj_token`。
+扫描实现：`wiki nodes list --space-id <space_a> --parent-node-token ? --page-size 50 --page-token ? --as user --format json` 手动翻页 + BFS 递归（不依赖 `--page-all` 上限；快捷 `wiki +node-list` 输出被裁剪、实测不含 `obj_edit_time`，不能用于扫描，2026-10-21 实测）。`source_doc_token` 取 `obj_token`。
 
 分类规则（按优先级）：
 
@@ -175,11 +176,13 @@ git commit -m "feat: add knowledge base table init and validation tool"
 4. `obj_edit_time` 相同但 `path` 或 `title` 不同 ⇒ `to_move`（只更新元数据）。
 5. 其余 ⇒ `unchanged`。
 
-跳过规则（写 warning，不中断）：`obj_type != "docx"`（`NON_DOC_NODE_SKIPPED`）；`node_type == "shortcut"`（`SHORTCUT_NODE_SKIPPED`，同步写进架构 §6.1）；路径前缀不属于 `通用知识/` 或 `项目知识/<project_id>/`（`UNCLASSIFIED_NODE_SKIPPED`）。
+scope/project 推导（分类前执行）：按根节点映射给出——`通用知识` 根节点 → `scope=general`；其他 origin docx 根节点 → `scope=project`，`project_id` 由配置中的根节点映射给出。路径推导保留为建议目录，只用于 `source_path` 展示。
+
+跳过规则（写 warning，不中断）：`obj_type != "docx"`（`NON_DOC_NODE_SKIPPED`）；`node_type == "shortcut"`（`SHORTCUT_NODE_SKIPPED`，同步写进架构 §6.1）；根节点不在映射配置中（`UNMAPPED_ROOT_NODE_SKIPPED`）。
 
 - [ ] **Step 1: 写失败的分类测试**
 
-fixture 覆盖矩阵：新增、修改、仅移动、仅改名、修改+移动、删除、未变化、shortcut、非 docx、未归类路径。
+fixture 覆盖矩阵：新增、修改、仅移动、仅改名、修改+移动、删除、未变化、shortcut、非 docx、未映射根节点。
 
 ```text
 test("classify detects every change kind")
@@ -203,11 +206,13 @@ Expected: FAIL。
 ```text
 test("scan pages through nested nodes and builds full paths")
 test("scan skips non doc shortcut and unclassified with warnings")
-test("scan derives scope and project id from path")
+test("scan derives scope and project id from root mapping")
 test("move only doc triggers no fetch")
 ```
 
 最后一条：对只移动的文档跑「plan 到处理」的干跑路径，断言调用日志里没有 `docs +fetch`。
+
+fixture 引用：扫描用例基于 `server/tests/fixtures/lark-wiki-nodes-list.sample.json`（Phase 1 Task 7 录制，原始 API 形状）扩展。
 
 - [ ] **Step 5: 实现 `scan_knowledge_a` 与 `read_sync_state`，更新架构 §6.1**
 
@@ -230,7 +235,7 @@ git commit -m "feat: add knowledge a scan, sync state read and change classifica
 - Create: `server/tests/fetch_knowledge_a_doc.test.ts`
 
 **Interfaces:**
-- Consumes: Phase 1 的 `run_cli`；Phase 1 Task 7 录制的 `lark-docs-fetch.sample.json`。
+- Consumes: Phase 1 的 `run_cli`；Phase 1 Task 7 录制的 `server/tests/fixtures/lark-docs-fetch.sample.json`。
 - Produces: `fetch_knowledge_a_doc({ doc }) -> { doc_token, revision_id, title, content, tips, warnings[] }`。
 
 输入解析顺序：`/wiki/<token>` URL ⇒ 先 `wiki +node-get` 解析出 `obj_token` 再读；`/docx/<token>` 或 `doccn*` token ⇒ 直接读；`wikcn*` token ⇒ 先 `node-get`；其他原始 token ⇒ 先按文档读，失败再按节点解析一次。读取命令：`docs +fetch --doc <token> --doc-format markdown --detail with-ids --revision-id -1 --format json`（flag 以 `--help` 复核）。`revision_id` 取 `data.document.revision_id`；`title` 取 `content` 首个标题行，取不到时回退节点标题并写 warning。失败返回 `error.code=DOC_FETCH_FAILED`，`details.doc` 带输入原文。

@@ -182,6 +182,17 @@ A 是一个飞书知识库（Wiki 空间）：每个文档是一个 Wiki 节点�
 
 每个 Wiki 文档是一个独立同步单元。一个文档只生成属于该文档的知识卡。
 
+#### 实现约定（2026-10-21 实测）
+
+- 节点扫描使用原始 API `wiki nodes list`（`--space-id` / `--parent-node-token` /
+  `--page-size` / `--page-token` 手动翻页）。快捷命令 `wiki +node-list` 的输出会被裁剪，
+  实测不含 `obj_edit_time`，不能用于增量判断。
+- `scope` / `project_id` 按根节点映射给出：「通用知识」根节点 → `scope=general`；
+  其他 origin docx 根节点 → `scope=project`，`project_id` 由配置中的根节点映射给出。
+  未映射根节点与非 docx 节点跳过并写 warning。
+- 上面的路径推导规则保留为建议目录：路径继续用于 `source_path` 展示与人工组织，
+  不再作为 `scope` / `project_id` 的唯一推导依据。
+
 ### 4.5 用户操作
 
 用户可以随时修改知识库 A。修改后，由约定的同步人员运行 `knowledge-sync` Skill，把最新知识重新归纳到知识库 B。
@@ -343,11 +354,14 @@ Base 字段类型固定为：`obj_edit_time` 保存原始时间字符串；
 
 | 信息 | 来源 |
 | --- | --- |
-| `node_token` | `wiki +node-list` |
-| `obj_token` | `wiki +node-list` |
-| `obj_edit_time` | `wiki +node-list` |
-| `title` | `wiki +node-list` |
-| `parent_node_token` | `wiki +node-list` |
+| `node_token` | `wiki nodes list`（原始 API） |
+| `obj_token` | `wiki nodes list`（原始 API） |
+| `obj_edit_time` | `wiki nodes list`（原始 API） |
+| `title` | `wiki nodes list`（原始 API） |
+| `parent_node_token` | `wiki nodes list`（原始 API） |
+
+来源以原始 API `wiki nodes list` 为准（2026-10-21 实测）：快捷命令 `wiki +node-list`
+会裁剪字段，实测不含 `obj_edit_time`，不得用于扫描阶段。
 
 上表只用于扫描阶段。确认文档需要处理后，插件调用 `docs +fetch`，再保存
 返回的 `revision_id` 作为 `source_revision`。

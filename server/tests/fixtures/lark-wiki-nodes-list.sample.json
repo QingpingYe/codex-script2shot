@@ -1,0 +1,46 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "has_more": false,
+    "items": [
+      {
+        "creator": "ouEXAMPLE0001",
+        "has_child": true,
+        "node_create_time": "1760000000",
+        "node_token": "wikcnEXAMPLE0001",
+        "node_type": "origin",
+        "obj_create_time": "1760000000",
+        "obj_edit_time": "1760007200",
+        "obj_token": "doccnEXAMPLE0001",
+        "obj_type": "docx",
+        "origin_node_token": "wikcnEXAMPLE0001",
+        "origin_space_id": "EXAMPLESPACE0001",
+        "owner": "ouEXAMPLE0001",
+        "parent_node_token": "",
+        "space_id": "EXAMPLESPACE0001",
+        "title": "示例根节点A",
+        "url": "https://example.feishu.cn/wiki/wikcnEXAMPLE0001"
+      },
+      {
+        "creator": "ouEXAMPLE0001",
+        "has_child": true,
+        "node_create_time": "1760003600",
+        "node_token": "wikcnEXAMPLE0002",
+        "node_type": "origin",
+        "obj_create_time": "1760003600",
+        "obj_edit_time": "1760010800",
+        "obj_token": "doccnEXAMPLE0002",
+        "obj_type": "docx",
+        "origin_node_token": "wikcnEXAMPLE0002",
+        "origin_space_id": "EXAMPLESPACE0001",
+        "owner": "ouEXAMPLE0001",
+        "parent_node_token": "",
+        "space_id": "EXAMPLESPACE0001",
+        "title": "示例根节点B",
+        "url": "https://example.feishu.cn/wiki/wikcnEXAMPLE0002"
+      }
+    ],
+    "page_token": ""
+  }
+}
