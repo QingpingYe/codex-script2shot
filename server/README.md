@@ -1,9 +1,20 @@
 # script2shot 本地 MCP Server
 
-本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册 10 个工具：
+本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册 13 个工具：
 `health`、`write_config`、`init_knowledge_b`、`scan_knowledge_a`、`read_sync_state`、
 `build_sync_plan`、`fetch_knowledge_a_doc`、`replace_doc_cards`、`update_doc_sync_state`、
-`delete_doc_cards`；检索与阶段工具待 Phase 3+ 注册。
+`delete_doc_cards`、`refresh_local_index`、`search_knowledge`、`load_knowledge_pack`。
+
+Phase 3 注册的三个本地检索工具：
+
+- `refresh_local_index`：按知识库 B 的 SyncState 只增量刷新变化文档的本地缓存与
+  关键词索引；`dry_run` 缺省 true，写操作先预览。
+- `search_knowledge`：按 `scope` / `project_id` / `categories` / `target_model`
+  过滤后做三级关键词检索；索引不可用时按 priority 降序回退到本地缓存。
+- `load_knowledge_pack`：组装 general -> project -> seedance 三段知识包；
+  Seedance 软知识按 target model 过滤；索引不可用时用本地缓存降级组装。
+
+阶段运行工具（`init_run` 等）由后续阶段注册。
 
 ## 环境要求
 
@@ -108,6 +119,6 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
 
 ## 已知限制
 
-- 已注册上列 10 个工具（健康检查、配置写入、知识库 B 初始化与知识库同步）；
-  检索与阶段工具由 Phase 3+ 注册。
+- 已注册上列 13 个工具（健康检查、配置写入、知识库 B 初始化与知识库同步、
+  本地检索）；阶段运行工具由后续阶段注册。
 - 启动依赖已构建的 `server/dist/server.mjs`，源码目录不直接运行。

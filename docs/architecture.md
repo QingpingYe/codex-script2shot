@@ -643,6 +643,14 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 
 本地缓存标记不是同步状态，只用于避免重复下载和重复建索引。知识库 B 的 `SyncState` 始终是权威同步状态。
 
+本地缓存的 wire format：`<home>/cache/cards.json` 顶层是 `version: 1` 与 `docs`，
+`docs` 以 `source_doc_token` 为键，每个条目记录 `source_revision`、`last_synced_at`
+和该文档的全部知识卡 `cards[]`（卡片字段与索引行同源）。缓存文件损坏、版本不受
+支持或读不到时，`load_cache()` 返回 `rebuild_needed: true` 与对应 warning
+（`CACHE_CORRUPT` / `CACHE_VERSION_UNSUPPORTED` / `CACHE_UNREADABLE`），并把
+`docs` 视为空；它绝不自动覆盖缓存文件，是否重建（重新拉取全部文档）由
+`refresh_local_index` 决定。
+
 ## 8. MCP Tool
 
 本地 MCP Server 只负责确定性操作，不负责 LLM 归纳。
@@ -857,6 +865,12 @@ $script2shot 只执行 shot-prompting，run_id 是 <run_id>
 
 知识包只包含当前项目需要的内容，避免其他项目知识混入。
 
+Seedance 软知识是模型级条款，不受 `scope` / `project_id` 限定：`project_id` 不是
+访问边界（见第 12 章），凡是 `category = "seedance_rule"` 且通过目标模型门
+（`target_models` 含当前模型，或为空/缺失）的卡片都属于知识包的 Seedance 块，
+无论它挂在 general 还是某个项目下；这类卡片也只由 Seedance 块承接，不再被
+general / project 块重复归类。
+
 ### 10.4 诊断输出（explain）
 
 `search_knowledge` 和 `load_knowledge_pack` 支持 `explain` 参数，默认关闭。
@@ -1054,7 +1068,7 @@ Base 权限，而不是依赖 `project_id` 过滤承担访问控制。
 | 单个文档正文读取失败 | 跳过该文档，其他文档继续同步 |
 | 单个文档知识卡写入失败 | 不更新该文档 SyncState，下次只重试该文档 |
 | 本地缓存过期 | 只刷新发生变化文档对应的索引数据 |
-| 关键词索引不可用 | 按 `priority` 降序回退并写 warning |
+| 关键词索引不可用 | 回退到本地缓存并写 `INDEX_UNAVAILABLE` warning：`search_knowledge` 按 `priority` 降序返回缓存候选，`load_knowledge_pack` 用缓存卡片按同一套来源块 / target model 规则组装知识包；缓存也不可用时才报错 |
 | 阶段产物缺失或 schema 校验失败 | 停止该阶段，提示缺少的上游产物或字段，不进入下一阶段 |
 | 阶段产物被人工修改 | 重新校验通过后，从该阶段之后继续运行 |
 | `run.json` 与产物不一致 | 以产物为准重新校验，并修正 `run.json` 的阶段状态 |
