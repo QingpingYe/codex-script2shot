@@ -1,8 +1,8 @@
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import type { KnowledgeCategory, KnowledgeScope, TargetModel } from "../base_mapping.js";
 import { cache_file_path, load_cache, type CacheLoadResult } from "../cache.js";
 import { load_config } from "../config.js";
-import { index_file_path, index_status, open_index } from "../index_store.js";
+import { index_file_path, index_status } from "../index_store.js";
 import { normalize_text } from "../normalize.js";
 import {
   assemble_context,
@@ -26,7 +26,9 @@ import { SETUP_DEFAULTS } from "../setup_defaults.js";
  *   `char_budget` 可选，按「候选顺序拼接的正文」（不含来源标注）的长度比较。
  *   两类截断（超出 `max_cards`、超出 `char_budget`）都从最低排序端开始，
  *   被截断的 `card_id` 按「排序结果的反序」记入 `dropped_by_budget`（§3.5）。
- * - 空/全空白查询 ⇒ 空候选 + warning `EMPTY_QUERY`（索引就绪时不再落任何检索）。
+ * - 空/全空白查询 ⇒ 空候选 + warning `EMPTY_QUERY`，在任何索引/缓存状态下都
+ *   短路（不探测索引、不读缓存、`degraded: false`）：没有查询就没有关键词结果，
+ *   用不上回退候选集。
  * - 索引不可用（`index_status` 为 missing / corrupt，或读取中途失败）⇒ 回退到
  *   Task 1 缓存：仍应用同样的四个过滤条件，按 `priority` 降序取候选，
  *   `degraded: true` + warning `INDEX_UNAVAILABLE`，`match_level` 一律为 `null`
@@ -174,23 +176,24 @@ export function search_knowledge(input: SearchKnowledgeInput = {}): SearchKnowle
     return parsed;
   }
   const options = parsed.value;
-  const empty_query = normalize_text(options.query) === "";
+
+  // 空/全空白查询在任何索引/缓存状态下都短路：没有查询就没有关键词结果，
+  // 因此不探测索引、不读缓存，degraded 恒为 false，只给 EMPTY_QUERY（+ explain）。
+  if (normalize_text(options.query) === "") {
+    return {
+      candidates: [],
+      dropped_by_budget: [],
+      degraded: false,
+      context: "",
+      warnings: collect_warnings({ empty_query: true, explain: options.explain }),
+    };
+  }
 
   const index_path = index_file_path();
   const status = index_status(index_path);
-  let index_read_failed = false;
   if (status.state === "ready") {
     const indexed = read_index_cards(index_path, options.filters);
     if (indexed !== undefined) {
-      if (empty_query) {
-        return {
-          candidates: [],
-          dropped_by_budget: [],
-          degraded: false,
-          context: "",
-          warnings: collect_warnings({ empty_query: true, explain: options.explain }),
-        };
-      }
       const ranked = rank_matching_cards(indexed, options.filters, options.query);
       const ordered: OrderedCard[] = ranked.map((entry) => ({
         card: entry.card,
@@ -205,7 +208,6 @@ export function search_knowledge(input: SearchKnowledgeInput = {}): SearchKnowle
     }
     // 索引状态为 ready 但读取失败（并发重建、文件被占用等）：与 missing/corrupt
     // 同样按「索引不可用」处理，走缓存回退，不把内部异常抛给调用方。
-    index_read_failed = true;
   }
 
   const cached = read_cache_cards();
@@ -216,14 +218,13 @@ export function search_knowledge(input: SearchKnowledgeInput = {}): SearchKnowle
       {
         index_path,
         index_state: status.state,
-        index_read_failed,
+        index_read_failed: status.state === "ready",
         cache_path: cache_file_path(),
       },
     );
   }
 
-  // 回退路径不重跑关键词匹配，查询本身不参与筛选：空查询在这里同样只应用四个
-  // 过滤条件并给 EMPTY_QUERY warning（Task 4 简报：空查询仍要应用过滤走回退）。
+  // 回退路径不重跑关键词匹配，只应用四个过滤条件并按 priority 降序取候选。
   const filtered = cached.filter((card) => card_passes_filters(card, options.filters));
   filtered.sort(compare_priority_rank);
   const ordered: OrderedCard[] = filtered.map((card) => ({ card, match_level: null }));
@@ -231,11 +232,7 @@ export function search_knowledge(input: SearchKnowledgeInput = {}): SearchKnowle
     ordered,
     options,
     true,
-    collect_warnings({
-      index_unavailable: true,
-      empty_query,
-      explain: options.explain,
-    }),
+    collect_warnings({ index_unavailable: true, explain: options.explain }),
   );
 }
 
@@ -403,13 +400,17 @@ function build_cards_query(filters: CardFilters): { sql: string; params: string[
 }
 
 /**
- * 读取索引卡片；任何失败（打开、查询、关闭前抛错）都返回 undefined，由调用方
- * 按「索引不可用」走缓存回退。句柄一律在 `finally` 里关闭。
+ * 读取索引卡片。**只读打开**（不复用 `open_index()` 的建库/建表路径）：探测与
+ * 打开之间索引文件被删或被换成非法文件时，这里会直接失败 ⇒ 调用方按「索引不可用」
+ * 走缓存回退，而不是重建一个空索引再谎报健康结果。
+ *
+ * 任何失败（打开、查询、关闭前抛错）都返回 undefined；句柄一律在 `finally`
+ * 里关闭。
  */
 function read_index_cards(index_path: string, filters: CardFilters): LocalCard[] | undefined {
   let db: DatabaseSync | undefined;
   try {
-    db = open_index(index_path);
+    db = new DatabaseSync(index_path, { readOnly: true });
     const { sql, params } = build_cards_query(filters);
     const rows = db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
     return rows.map(from_index_row);

@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -383,6 +392,19 @@ describe("search_knowledge", () => {
     const empty = expect_success(search_knowledge({ query: "" }));
     expect(empty.candidates).toEqual([]);
     expect(warning_codes(empty)).toEqual(["EMPTY_QUERY"]);
+
+    // 索引不可用时同样短路：不探测索引、不给降级候选、不带 INDEX_UNAVAILABLE。
+    mkdirSync(path.dirname(index_file_path()), { recursive: true });
+    writeFileSync(index_file_path(), "", "utf8");
+    seed_cache([make_card("card-cached", { priority: 9 })]);
+    const degraded_blank = expect_success(search_knowledge({ query: "   " }));
+    expect(degraded_blank).toMatchObject({
+      candidates: [],
+      dropped_by_budget: [],
+      degraded: false,
+      context: "",
+    });
+    expect(warning_codes(degraded_blank)).toEqual(["EMPTY_QUERY"]);
   });
 
   test("search falls back to priority when index unavailable", () => {
@@ -410,21 +432,48 @@ describe("search_knowledge", () => {
     expect(corrupt.degraded).toBe(true);
     expect(candidate_ids(corrupt)).toEqual(["card-high", "card-mid", "card-low"]);
 
-    // 回退路径不重跑关键词匹配：空查询仍应用过滤、仍给出 EMPTY_QUERY。
+    // 空查询在任何索引状态下都短路（见空查询用例）：不会给出降级候选。
     const blank = expect_success(search_knowledge({ query: "   " }));
-    expect(blank.degraded).toBe(true);
-    expect(candidate_ids(blank)).toEqual(["card-high", "card-mid", "card-low"]);
-    expect(warning_codes(blank)).toEqual(["INDEX_UNAVAILABLE", "EMPTY_QUERY"]);
-
-    const blank_filtered = expect_success(
-      search_knowledge({ query: "   ", scope: "project", project_id: "prj-404" }),
-    );
-    expect(blank_filtered.candidates).toEqual([]);
+    expect(blank).toMatchObject({ candidates: [], degraded: false });
+    expect(warning_codes(blank)).toEqual(["EMPTY_QUERY"]);
 
     // 连缓存都没有：返回 INDEX_UNAVAILABLE 错误。
     rmSync(cache_file_path(), { force: true });
     const failed = search_knowledge({ query: "夜景" });
     expect(failed).toMatchObject({ ok: false, error: { code: "INDEX_UNAVAILABLE" } });
+  });
+
+  test("search never creates an index file when the index is absent", () => {
+    seed_cache([make_card("card-cache-only", { priority: 4 })]);
+
+    expect(existsSync(index_file_path()), "前置：索引文件不存在").toBe(false);
+    expect(existsSync(path.dirname(index_file_path())), "前置：index/ 目录不存在").toBe(false);
+
+    const result = expect_success(search_knowledge({ query: "内容" }));
+
+    expect(result.degraded).toBe(true);
+    expect(warning_codes(result)).toEqual(["INDEX_UNAVAILABLE"]);
+    expect(candidate_ids(result)).toEqual(["card-cache-only"]);
+    expect(existsSync(index_file_path()), "检索路径不得创建索引文件").toBe(false);
+    expect(existsSync(path.dirname(index_file_path())), "检索路径不得创建 index/ 目录").toBe(
+      false,
+    );
+  });
+
+  test("search reads a ready index without writing to it", () => {
+    seed_index([make_card("card-ready", { title: "只读校验" })]);
+    const index_path = index_file_path();
+    const frozen_time = new Date("2000-01-01T00:00:00Z");
+    utimesSync(index_path, frozen_time, frozen_time);
+    const mtime_before = statSync(index_path).mtimeMs;
+    const bytes_before = readFileSync(index_path);
+
+    const result = expect_success(search_knowledge({ query: "只读校验" }));
+
+    expect(candidate_ids(result)).toEqual(["card-ready"]);
+    expect(result.degraded).toBe(false);
+    expect(statSync(index_path).mtimeMs, "检索不得写索引文件").toBe(mtime_before);
+    expect(readFileSync(index_path).equals(bytes_before), "索引字节不得变化").toBe(true);
   });
 
   test("search returns the frozen candidate shape with source metadata", () => {
