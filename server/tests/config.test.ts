@@ -19,6 +19,7 @@ const FULL_CONFIG: Script2ShotConfig = {
     base_b: "base-token-b",
     knowledge_cards_table_id: "tbl_cards",
     sync_state_table_id: "tbl_state",
+    project_roots: [{ node_token: "wikcn-project-root-a", project_id: "demo" }],
   },
   retrieval: { default_top_k: 12 },
 };
@@ -172,9 +173,77 @@ describe("config", () => {
 
     writeFileSync(configPath(tempRoot), "", "utf8");
     const empty = expect_loaded(load_config());
-    expect(empty.config.lark).toEqual({});
+    expect(empty.config.lark).toEqual({ project_roots: [] });
     expect(empty.config.retrieval.default_top_k).toBe(12);
     expect(empty.warnings.length).toBeGreaterThan(0);
+    expect(
+      empty.warnings.flatMap((warning) => warning.refs ?? []),
+      "缺少 project_roots 属于缺省语义，不应产生 warning",
+    ).not.toContain("lark.project_roots");
+  });
+
+  test("config roundtrips project roots array", () => {
+    const config: Script2ShotConfig = {
+      ...FULL_CONFIG,
+      lark: {
+        ...FULL_CONFIG.lark,
+        project_roots: [
+          { node_token: "Ou9Vw0emviJajPklYjQc4fqjnie", project_id: "wufu-linmen" },
+          { node_token: "wikcn-project-root-b", project_id: "another-project" },
+        ],
+      },
+    };
+
+    save_config(config, { dry_run: false });
+
+    const text = readFileSync(configPath(tempRoot), "utf8");
+    expect(text.match(/^\[\[lark\.project_roots\]\]$/gm)?.length).toBe(2);
+    expect(text).toContain('node_token = "Ou9Vw0emviJajPklYjQc4fqjnie"');
+    expect(text).toContain('project_id = "wufu-linmen"');
+    expect(expect_loaded(load_config()).config).toEqual(config);
+    expect(
+      save_config(config, { dry_run: true }).diff,
+      "相同内容的重复序列化必须保持确定性",
+    ).toContain("（无变化）");
+  });
+
+  test("load_config rejects invalid project_roots entries with CONFIG_INVALID", () => {
+    const cases: Array<{ toml: string; field: string }> = [
+      { toml: '[lark]\nproject_roots = "wikcn-root"\n', field: "lark.project_roots" },
+      { toml: '[lark]\nproject_roots = ["wikcn-root"]\n', field: "lark.project_roots[0]" },
+      {
+        toml: '[[lark.project_roots]]\nproject_id = "demo"\n',
+        field: "lark.project_roots[0].node_token",
+      },
+      {
+        toml: '[[lark.project_roots]]\nnode_token = ""\nproject_id = "demo"\n',
+        field: "lark.project_roots[0].node_token",
+      },
+      {
+        toml: '[[lark.project_roots]]\nnode_token = 7\nproject_id = "demo"\n',
+        field: "lark.project_roots[0].node_token",
+      },
+      {
+        toml: '[[lark.project_roots]]\nnode_token = "wikcn-root"\n',
+        field: "lark.project_roots[0].project_id",
+      },
+      {
+        toml: '[[lark.project_roots]]\nnode_token = "wikcn-root"\nproject_id = "  "\n',
+        field: "lark.project_roots[0].project_id",
+      },
+    ];
+
+    for (const { toml, field } of cases) {
+      writeFileSync(configPath(tempRoot), toml, "utf8");
+      const result = load_config();
+      expect("error" in result, `${field} 应被拒绝`).toBe(true);
+      if ("error" in result) {
+        expect(result.error.code).toBe("CONFIG_INVALID");
+        expect(result.error.details.field).toBe(field);
+        expect(result.error.message).toContain(field);
+        expect(readFileSync(configPath(tempRoot), "utf8")).toBe(toml);
+      }
+    }
   });
 
   test("load_config rejects mistyped known fields with CONFIG_INVALID", () => {

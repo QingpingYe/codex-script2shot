@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { load_config, type Script2ShotConfig } from "../src/config.js";
+import { SETUP_DEFAULTS } from "../src/setup_defaults.js";
 import { write_config, type WriteConfigResult } from "../src/tools/write_config.js";
 
 const SPACE_A = "space-a-1";
@@ -26,6 +27,7 @@ const FULL_CONFIG: Script2ShotConfig = {
     base_b: BASE_B,
     knowledge_cards_table_id: "tbl_cards",
     sync_state_table_id: "tbl_state",
+    project_roots: [{ node_token: "wikcn-project-root-a", project_id: "demo" }],
   },
   retrieval: { default_top_k: 12 },
 };
@@ -134,13 +136,106 @@ describe("write_config", () => {
     expect(readdirSync(home)).toEqual(["config.toml"]);
   });
 
-  test("rejects missing required keys before touching the filesystem", () => {
-    const result = expect_error(write_config({ config: {}, dry_run: false }));
+  test("rejects explicit blank required keys before touching the filesystem", () => {
+    const result = expect_error(
+      write_config({ config: { lark: { space_a: "", base_b: "" } }, dry_run: false }),
+    );
 
     expect(result.ok).toBe(false);
     expect(result.error.code).toBe("CONFIG_INVALID");
     expect(result.error.details?.missing_keys).toEqual(["lark.space_a", "lark.base_b"]);
     expect(existsSync(home), "invalid input must not create anything").toBe(false);
+  });
+
+  test("write_config applies setup defaults when omitted", () => {
+    const preview = expect_success(write_config({ config: { lark: {} } }));
+
+    expect(preview.applied_defaults).toEqual([
+      "lark.profile",
+      "lark.space_a",
+      "lark.base_b",
+      "lark.project_roots",
+    ]);
+    expect(preview.diff).toContain(SETUP_DEFAULTS.lark.space_a);
+    expect(preview.diff).toContain(`base_b = "${SETUP_DEFAULTS.lark.base_b.slice(0, 6)}…"`);
+    expect(preview.diff).toContain(SETUP_DEFAULTS.lark.project_roots[0].node_token);
+    expect(
+      JSON.stringify(preview),
+      "默认 base_b 在返回值里同样必须掩码",
+    ).not.toContain(SETUP_DEFAULTS.lark.base_b);
+    expect(existsSync(home), "dry run must not create the home directory").toBe(false);
+
+    const written = expect_success(write_config({ config: {}, dry_run: false }));
+    expect(written.applied_defaults).toEqual(preview.applied_defaults);
+
+    const loaded = load_config();
+    if (!("exists" in loaded) || !loaded.exists) {
+      throw new Error(`expected an existing config, got ${JSON.stringify(loaded)}`);
+    }
+    expect(loaded.config.lark).toEqual({
+      profile: SETUP_DEFAULTS.lark.profile,
+      space_a: SETUP_DEFAULTS.lark.space_a,
+      base_b: SETUP_DEFAULTS.lark.base_b,
+      project_roots: SETUP_DEFAULTS.lark.project_roots,
+    });
+    expect(loaded.config.retrieval.default_top_k).toBe(SETUP_DEFAULTS.retrieval.default_top_k);
+  });
+
+  test("write_config explicit values override defaults", () => {
+    const explicit: Script2ShotConfig = {
+      lark: {
+        profile: "profile-2",
+        space_a: SPACE_A,
+        base_b: BASE_B,
+        project_roots: [],
+      },
+      retrieval: { default_top_k: 5 },
+    };
+
+    const result = expect_success(write_config({ config: explicit, dry_run: false }));
+
+    expect(result.applied_defaults).toEqual([]);
+    const text = readFileSync(config_path(), "utf8");
+    expect(text, "显式值优先，默认 base_b 不得写入").not.toContain(SETUP_DEFAULTS.lark.base_b);
+    expect(text).toContain('profile = "profile-2"');
+
+    const loaded = load_config();
+    if (!("exists" in loaded) || !loaded.exists) {
+      throw new Error(`expected an existing config, got ${JSON.stringify(loaded)}`);
+    }
+    expect(loaded.config).toEqual(explicit);
+    expect(loaded.config.lark.project_roots).toEqual([]);
+  });
+
+  test("write_config reports applied defaults", () => {
+    const result = expect_success(
+      write_config({
+        config: { lark: { space_a: SPACE_A, base_b: BASE_B }, retrieval: { default_top_k: 12 } },
+      }),
+    );
+
+    expect(result.applied_defaults).toEqual(["lark.profile", "lark.project_roots"]);
+    expect(result.diff).toContain(`profile = "${SETUP_DEFAULTS.lark.profile}"`);
+    expect(result.diff).toContain(SETUP_DEFAULTS.lark.project_roots[0].node_token);
+  });
+
+  test("rejects invalid project_roots entries with CONFIG_INVALID", () => {
+    for (const [roots, field] of [
+      ["wikcn-root", "lark.project_roots"],
+      [[{ node_token: "", project_id: "demo" }], "lark.project_roots[0].node_token"],
+      [[{ node_token: "wikcn-root", project_id: "" }], "lark.project_roots[0].project_id"],
+      [[{ node_token: "wikcn-root" }], "lark.project_roots[0].project_id"],
+    ] as Array<[unknown, string]>) {
+      const result = expect_error(
+        write_config({
+          config: { ...FULL_CONFIG, lark: { ...FULL_CONFIG.lark, project_roots: roots } },
+        }),
+      );
+
+      expect(result.error.code).toBe("CONFIG_INVALID");
+      expect(result.error.details?.field).toBe(field);
+      expect(existsSync(home), "invalid input must not create anything").toBe(false);
+    }
   });
 
   test("rejects blank required keys with the specific missing key list", () => {

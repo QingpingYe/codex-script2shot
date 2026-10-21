@@ -1,20 +1,24 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import {
-  DEFAULT_TOP_K,
   ensure_local_dirs,
   load_config,
+  parse_project_roots,
   resolve_home,
   save_config,
   type LarkConfig,
   type Script2ShotConfig,
 } from "../config.js";
+import { SETUP_DEFAULTS } from "../setup_defaults.js";
 
 /**
  * `write_config` MCP Tool（架构 §8）。
  *
  * - `dry_run` 缺省为 true：只返回将写入的 config.toml diff 和将创建的目录，不落盘。
  * - `dry_run: false`：按需执行 `ensure_local_dirs()`，再原子写入 config.toml。
+ * - `config` 里缺省的字段（profile / space_a / base_b / project_roots）用
+ *   `SETUP_DEFAULTS` 填充，显式提供的值（包括显式空数组）优先；
+ *   返回值用 `applied_defaults` 列出实际套用的默认键路径。
  * - 返回值与错误信息里的 base_b 一律掩码（前 6 位 + `…`）；完整 token 只出现在配置文件里。
  */
 
@@ -35,6 +39,8 @@ export interface WriteConfigSuccess {
   diff: string;
   created_dirs: string[];
   written: boolean;
+  /** 本次按缺省语义填充的键路径，例如 `["lark.profile", "lark.space_a"]`。 */
+  applied_defaults: string[];
 }
 
 export interface WriteConfigFailure {
@@ -51,6 +57,12 @@ export type WriteConfigResult = WriteConfigSuccess | WriteConfigFailure;
 /** 与 config.ts `ensure_local_dirs` 创建的目录保持一致（架构 §7.2）。 */
 const LOCAL_DIR_NAMES = ["cache", "index", "logs"] as const;
 const BASE_TOKEN_PREFIX_LENGTH = 6;
+const DEFAULTED_LARK_STRING_KEYS = ["profile", "space_a", "base_b"] as const;
+const PASSTHROUGH_LARK_STRING_KEYS = [
+  "cli_path",
+  "knowledge_cards_table_id",
+  "sync_state_table_id",
+] as const;
 
 export function write_config(input: WriteConfigInput = {}): WriteConfigResult {
   const normalized = normalize_config(input.config);
@@ -58,6 +70,7 @@ export function write_config(input: WriteConfigInput = {}): WriteConfigResult {
     return normalized;
   }
   const config = normalized.config;
+  const applied_defaults = normalized.applied_defaults;
   const dry_run = input.dry_run ?? true;
   const create_local_dirs = input.create_local_dirs ?? true;
 
@@ -71,6 +84,7 @@ export function write_config(input: WriteConfigInput = {}): WriteConfigResult {
         diff: mask_base_b(preview.diff, [config.lark.base_b, previous_base_b]),
         created_dirs: create_local_dirs ? missing_local_dirs() : [],
         written: false,
+        applied_defaults,
       };
     }
 
@@ -82,6 +96,7 @@ export function write_config(input: WriteConfigInput = {}): WriteConfigResult {
       diff: mask_base_b(saved.diff, [config.lark.base_b, previous_base_b]),
       created_dirs: created,
       written: true,
+      applied_defaults,
     };
   } catch (error) {
     return internal_error(`写入本地配置失败：${describe_error(error)}`);
@@ -97,15 +112,52 @@ function existing_base_b(): string | undefined {
   return loaded.config.lark.base_b;
 }
 
-function normalize_config(raw: unknown): { config: Script2ShotConfig } | WriteConfigFailure {
+function normalize_config(
+  raw: unknown,
+): { config: Script2ShotConfig; applied_defaults: string[] } | WriteConfigFailure {
   const record = is_record(raw) ? raw : {};
   const lark = is_record(record.lark) ? record.lark : {};
+  const applied_defaults: string[] = [];
 
+  const lark_config: LarkConfig = { project_roots: [] };
+  for (const key of DEFAULTED_LARK_STRING_KEYS) {
+    const value = lark[key];
+    if (value === undefined) {
+      lark_config[key] = SETUP_DEFAULTS.lark[key];
+      applied_defaults.push(`lark.${key}`);
+    } else if (typeof value === "string") {
+      lark_config[key] = value;
+    } else {
+      return config_invalid(`配置字段 "lark.${key}" 期望字符串。`, { field: `lark.${key}` });
+    }
+  }
+
+  for (const key of PASSTHROUGH_LARK_STRING_KEYS) {
+    const value = lark[key];
+    if (typeof value === "string") {
+      lark_config[key] = value;
+    }
+  }
+
+  const raw_roots = lark.project_roots;
+  if (raw_roots === undefined) {
+    // 克隆默认映射，避免调用方改动返回值时波及 SETUP_DEFAULTS。
+    lark_config.project_roots = SETUP_DEFAULTS.lark.project_roots.map((root) => ({ ...root }));
+    applied_defaults.push("lark.project_roots");
+  } else {
+    const parsed_roots = parse_project_roots(raw_roots);
+    if (!("roots" in parsed_roots)) {
+      return config_invalid(parsed_roots.invalid_message, { field: parsed_roots.field });
+    }
+    lark_config.project_roots = parsed_roots.roots;
+  }
+
+  // 默认值应用后仍执行原有的必填校验：显式空值不会被默认值悄悄覆盖。
   const missing_keys: string[] = [];
-  if (!has_text(lark.space_a)) {
+  if (!has_text(lark_config.space_a)) {
     missing_keys.push("lark.space_a");
   }
-  if (!has_text(lark.base_b)) {
+  if (!has_text(lark_config.base_b)) {
     missing_keys.push("lark.base_b");
   }
   if (missing_keys.length > 0) {
@@ -115,7 +167,7 @@ function normalize_config(raw: unknown): { config: Script2ShotConfig } | WriteCo
     );
   }
 
-  let default_top_k = DEFAULT_TOP_K;
+  let default_top_k = SETUP_DEFAULTS.retrieval.default_top_k;
   const raw_top_k = is_record(record.retrieval) ? record.retrieval.default_top_k : undefined;
   if (raw_top_k !== undefined) {
     if (typeof raw_top_k !== "number" || !Number.isInteger(raw_top_k)) {
@@ -126,14 +178,10 @@ function normalize_config(raw: unknown): { config: Script2ShotConfig } | WriteCo
     default_top_k = raw_top_k;
   }
 
-  const lark_config: LarkConfig = {};
-  for (const [key, value] of Object.entries(lark)) {
-    if (typeof value === "string") {
-      lark_config[key as keyof LarkConfig] = value;
-    }
-  }
-
-  return { config: { lark: lark_config, retrieval: { default_top_k } } };
+  return {
+    config: { lark: lark_config, retrieval: { default_top_k } },
+    applied_defaults,
+  };
 }
 
 /** dry-run 下不调用 `ensure_local_dirs()`，只预测缺失目录；创建规则与其保持一致。 */

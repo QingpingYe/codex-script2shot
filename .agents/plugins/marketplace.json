@@ -1,0 +1,12 @@
+{
+  "name": "script2shot-local",
+  "interface": { "displayName": "Script2Shot (Local)" },
+  "plugins": [
+    {
+      "name": "script2shot",
+      "source": { "source": "local", "path": "./" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

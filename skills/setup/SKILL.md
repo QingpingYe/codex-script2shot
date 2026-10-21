@@ -27,21 +27,45 @@ description: 安装后的一次性引导：确认 lark-cli 与登录状态，收
    - `auth` 为 fail（`AUTH_REQUIRED`）时，指引用户在自己的终端运行
      `lark-cli auth login`，按输出里的设备码 / 授权链接完成登录，然后重新运行
      `health`，确认 `auth` 已通过。
-4. **收集知识库 A（Wiki）**：请用户提供知识库 A 的飞书 Wiki URL 或 `space_id`。
+4. **收集知识库 A（Wiki）**：先说明插件自带默认知识库 A（见「默认知识库」），
+   请用户选择直接采用默认或替换。
+   - 采用默认时记录默认 `space_id`，进入下一步；
+   - 替换时请用户提供知识库 A 的飞书 Wiki URL 或 `space_id`；
    - 用户给 URL 时，先用 `lark-cli wiki +node-get` / `wiki +space-list` 把 URL
      解析成数字 `space_id`，并把解析结果显示给用户确认；
    - 用户直接给数字 `space_id` 时，原样确认；
    - 访问个人知识库（`my_library`）时必须加 `--as user`。
-5. **收集知识库 B（Base）**：请用户提供知识库 B 的 Base URL 或 base token。
-   本阶段只记录 token；不建表、不校验数据表（建表由 Phase 2 的 `$knowledge-sync` 负责）。
+5. **收集知识库 B（Base）**：先说明插件自带默认知识库 B，请用户选择直接采用默认
+   或替换。
+   - 采用默认时记录默认 base token（回显只显示掩码），进入下一步；
+   - 替换时请用户提供知识库 B 的 Base URL 或 base token；不要复述用户粘贴的完整 token。
+   - 本阶段只记录 token；不建表、不校验数据表（建表由 Phase 2 的 `$knowledge-sync` 负责）。
 6. **组装 config 并预览**：按「配置项」拼出完整 config 对象，调用 MCP 工具
    `write_config`（缺省 `dry_run: true`），把返回的 `diff` 与 `created_dirs` 展示给
-   用户，提示 diff 中的 `base_b` 已掩码。**等用户明确确认后**，再调用
+   用户，一并说明返回的 `applied_defaults` 套用了哪些插件默认值，提示 diff 中的
+   `base_b` 已掩码。**等用户明确确认后**，再调用
    `write_config` 并传 `dry_run: false` 执行写入与本地目录创建。
 7. **复查**：重新调用 `health`，逐项报告结果。Phase 1 中 `index` 为 `not_built`
    属预期状态，无需处理。
 8. **后续占位**：Phase 2 起，知识库 B 的建表与首次同步改由 `$knowledge-sync` 完成。
    本阶段只提示用户「Phase 2 可以运行 `$knowledge-sync` 做首次同步」，不在这里执行。
+
+## 默认知识库
+
+插件自带一组默认知识库配置（架构 §7.3），默认值唯一来源是
+`server/src/setup_defaults.ts` 的 `SETUP_DEFAULTS`：
+
+- 知识库 A（Wiki）：`space_id` 默认 `7695983197091302359`；
+- 知识库 B（Base）：默认 base token 前 6 位为 `WRrVbl…`（完整默认值见
+  `SETUP_DEFAULTS`，任何日志、回显与摘要都按掩码规则处理）；
+- `lark.project_roots` 默认把《五夫临门》影游项目知识根节点
+  `Ou9Vw0emviJajPklYjQc4fqjnie` 映射为 `project_id` = `wufu-linmen`；
+- `lark.profile` 默认 `default`，`retrieval.default_top_k` 默认 `12`。
+
+setup 时可直接采用这些默认值，也可以替换：改
+`~/.codex-script2shot/config.toml` 里对应字段，或在 setup 流程中收集新值后传给
+`write_config`。显式提供的值优先；`project_roots` 显式传空数组表示不做项目映射。
+`write_config` 会在 `applied_defaults[]` 中列出本次实际套用的默认键路径。
 
 ## 配置项
 
@@ -50,15 +74,19 @@ description: 安装后的一次性引导：确认 lark-cli 与登录状态，收
 | 字段 | 含义 | 取值来源 |
 | --- | --- | --- |
 | `lark.cli_path` | lark-cli 可执行文件路径 | `health` 的 `lark_cli.detail.path`、`LARK_CLI_PATH`，或用户提供的路径 |
-| `lark.profile` | lark-cli 使用的 profile | 用户确认，缺省 `default` |
-| `lark.space_a` | 知识库 A 的 Wiki 数字 `space_id` | 用户提供，或从 Wiki URL 解析 |
-| `lark.base_b` | 知识库 B 的 Base token | 用户提供的 Base URL 或 token |
+| `lark.profile` | lark-cli 使用的 profile | 用户确认，缺省 `default`（插件默认值，可替换） |
+| `lark.space_a` | 知识库 A 的 Wiki 数字 `space_id` | 用户提供或从 Wiki URL 解析；未提供时采用插件默认知识库 A |
+| `lark.base_b` | 知识库 B 的 Base token | 用户提供的 Base URL 或 token；未提供时采用插件默认知识库 B（回显只显示 `WRrVbl…`） |
+| `lark.project_roots` | 知识库 A 根节点到项目 ID 的映射表 | 缺省为《五夫临门》影游项目映射，可在 config.toml 里替换 |
 | `lark.knowledge_cards_table_id` | 知识库 B `KnowledgeCards` 表的 `table_id` | Phase 2 首次同步后回填；Phase 1 允许留空 |
 | `lark.sync_state_table_id` | 知识库 B `SyncState` 表的 `table_id` | 同上一行 |
 | `retrieval.default_top_k` | 默认检索条数 | 用户确认，缺省 `12` |
 
-write_config 只强制要求 `lark.space_a` 与 `lark.base_b` 非空；其余字段缺失时按上表取
-缺省值或留待 Phase 2 回填。
+write_config 的缺省语义：`lark.profile`、`lark.space_a`、`lark.base_b`、
+`lark.project_roots` 为 `undefined` 时用 `SETUP_DEFAULTS` 填充，显式提供（含显式
+空数组）的值优先，并在返回值 `applied_defaults[]` 里列出实际套用的键路径；填充后
+仍强制 `lark.space_a` 与 `lark.base_b` 非空。`retrieval.default_top_k` 缺省 `12`；
+其余字段缺失时留待 Phase 2 回填。
 
 ## 失败处理
 

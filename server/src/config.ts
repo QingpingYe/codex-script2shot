@@ -34,6 +34,12 @@ export interface LarkConfig {
   base_b?: string;
   knowledge_cards_table_id?: string;
   sync_state_table_id?: string;
+  project_roots: ProjectRoot[];
+}
+
+export interface ProjectRoot {
+  node_token: string;
+  project_id: string;
 }
 
 export interface RetrievalConfig {
@@ -56,7 +62,7 @@ export interface ConfigError {
   error: {
     code: "CONFIG_INVALID";
     message: string;
-    details: { path: string };
+    details: { path: string; field?: string };
   };
 }
 
@@ -104,7 +110,7 @@ export function load_config(): LoadConfigResult {
 
   const built = build_config(parsed);
   if ("invalid_message" in built) {
-    return invalid_config(file_path, built.invalid_message);
+    return invalid_config(file_path, built.invalid_message, built.invalid_field);
   }
   return { exists: true, config: built.config, warnings: built.warnings };
 }
@@ -169,13 +175,19 @@ function read_config_text(file_path: string): string | undefined {
   }
 }
 
-function invalid_config(file_path: string, message: string): ConfigError {
-  return { ok: false, error: { code: "CONFIG_INVALID", message, details: { path: file_path } } };
+function invalid_config(file_path: string, message: string, field?: string): ConfigError {
+  const details: { path: string; field?: string } = { path: file_path };
+  if (field !== undefined) {
+    details.field = field;
+  }
+  return { ok: false, error: { code: "CONFIG_INVALID", message, details } };
 }
 
 function build_config(
   parsed: Record<string, unknown>,
-): { config: Script2ShotConfig; warnings: ConfigWarning[] } | { invalid_message: string } {
+):
+  | { config: Script2ShotConfig; warnings: ConfigWarning[] }
+  | { invalid_message: string; invalid_field?: string } {
   const warnings: ConfigWarning[] = [];
 
   const lark_value = parsed.lark;
@@ -183,7 +195,7 @@ function build_config(
     return { invalid_message: field_type_message("lark", "表（table）", lark_value) };
   }
   const lark_table = is_table(lark_value) ? lark_value : {};
-  const lark: LarkConfig = {};
+  const lark: LarkConfig = { project_roots: [] };
   for (const key of LARK_KEYS) {
     const value = lark_table[key];
     if (value === undefined) {
@@ -198,6 +210,19 @@ function build_config(
       return { invalid_message: field_type_message(`lark.${key}`, "字符串", value) };
     }
     lark[key] = value;
+  }
+
+  const roots_value = lark_table.project_roots;
+  if (roots_value !== undefined) {
+    // 缺省即「没有项目根节点映射」：保持空数组，不算配置缺失、不产生 warning。
+    const parsed_roots = parse_project_roots(roots_value);
+    if (!("roots" in parsed_roots)) {
+      return {
+        invalid_message: parsed_roots.invalid_message,
+        invalid_field: parsed_roots.field,
+      };
+    }
+    lark.project_roots = parsed_roots.roots;
   }
 
   const retrieval_value = parsed.retrieval;
@@ -223,13 +248,63 @@ function build_config(
   return { config: { lark, retrieval: { default_top_k } }, warnings };
 }
 
+/**
+ * 校验 `lark.project_roots`：必须是数组表，每项含非空字符串 `node_token` 与
+ * `project_id`。失败时返回出错字段的完整路径，供 load / write_config 回填
+ * `details.field`。
+ */
+export function parse_project_roots(
+  value: unknown,
+): { roots: ProjectRoot[] } | { invalid_message: string; field: string } {
+  if (!Array.isArray(value)) {
+    return {
+      invalid_message: field_type_message("lark.project_roots", "数组表（array of tables）", value),
+      field: "lark.project_roots",
+    };
+  }
+
+  const roots: ProjectRoot[] = [];
+  for (const [index, entry] of value.entries()) {
+    const entry_field = `lark.project_roots[${index}]`;
+    if (!is_table(entry)) {
+      return { invalid_message: field_type_message(entry_field, "表（table）", entry), field: entry_field };
+    }
+
+    const node_token = entry.node_token;
+    if (typeof node_token !== "string" || node_token.trim() === "") {
+      return {
+        invalid_message: field_type_message(`${entry_field}.node_token`, "非空字符串", node_token),
+        field: `${entry_field}.node_token`,
+      };
+    }
+
+    const project_id = entry.project_id;
+    if (typeof project_id !== "string" || project_id.trim() === "") {
+      return {
+        invalid_message: field_type_message(
+          `${entry_field}.project_id`,
+          "非空字符串",
+          project_id,
+        ),
+        field: `${entry_field}.project_id`,
+      };
+    }
+
+    roots.push({ node_token, project_id });
+  }
+  return { roots };
+}
+
 function stringify_config(config: Script2ShotConfig): string {
-  const lark: Record<string, string> = {};
+  const lark: Record<string, string | ProjectRoot[]> = {};
   for (const key of LARK_KEYS) {
     const value = config.lark[key];
     if (value !== undefined) {
       lark[key] = value;
     }
+  }
+  if (config.lark.project_roots !== undefined) {
+    lark.project_roots = config.lark.project_roots.map((root) => ({ ...root }));
   }
   return stringify({ lark, retrieval: { default_top_k: config.retrieval.default_top_k } });
 }
@@ -297,6 +372,9 @@ function is_table(value: unknown): value is Record<string, unknown> {
 function describe_value(value: unknown): string {
   if (Array.isArray(value)) {
     return "数组";
+  }
+  if (typeof value === "string" && value.trim() === "") {
+    return "空字符串";
   }
   if (typeof value === "number" && !Number.isInteger(value)) {
     return "小数";

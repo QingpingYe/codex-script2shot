@@ -566,6 +566,29 @@ origin docx 根节点归入 `scope=project`：每项包含 `node_token`（根节
 `project_id`（该根节点下文档所属项目）。该结构的字段与语义以本节为准；缺省值由
 插件默认配置提供，用户可整体替换。
 
+**默认知识库（2026-10-21）。** 插件自带默认知识库配置，默认值唯一来源是
+`server/src/setup_defaults.ts` 的 `SETUP_DEFAULTS`：
+
+- `lark.profile` = `"default"`；
+- `lark.space_a` = `"7695983197091302359"`（知识库 A 空间）；
+- `lark.base_b` = `"WRrVblDbqaEFOSs39P0cFzilnfd"`（知识库 B 的 Base obj_token；
+  完整值只出现在源码与配置文件里，运行期输出仍按掩码规则处理）；
+- `lark.project_roots` = 一项映射：`node_token = "Ou9Vw0emviJajPklYjQc4fqjnie"`
+  （《五夫临门》影游项目知识根节点）→ `project_id = "wufu-linmen"`；
+- `retrieval.default_top_k` = `12`。
+
+默认知识库可替换：在 `~/.codex-script2shot/config.toml` 中改对应字段，或在 setup
+时提供新值；setup Skill 与 `write_config` 都引用 `SETUP_DEFAULTS`，不重复硬编码。
+
+`write_config` 的缺省填充语义：`lark.profile`、`lark.space_a`、`lark.base_b`、
+`lark.project_roots` 为 `undefined` 时套用上述默认值；显式提供（包括显式空数组）
+的值优先。填充后仍校验 `lark.space_a` 与 `lark.base_b` 非空，返回值通过
+`applied_defaults[]` 列出本次实际套用的默认键路径。
+
+`lark.project_roots` 非法时按 `CONFIG_INVALID` 处理：字段缺省视为 `[]` 且不产生
+warning；条目非表，或 `node_token` / `project_id` 非字符串或为空时，在 `details.field`
+中返回出错字段路径（如 `lark.project_roots[0].node_token`）。
+
 ### 7.4 本地缓存和索引
 
 本地缓存和索引是从知识库 B 派生出来的临时数据。
