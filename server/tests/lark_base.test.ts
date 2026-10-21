@@ -246,6 +246,8 @@ describe("lark_base", () => {
     ]);
   });
 
+  // 假 CLI 默认不再返回 data.next_offset（与真实 payload 一致），因此本用例走的是
+  // offset + 本页行数的兜底分支：0 → 2。
   test("list records pages until has_more is false", async () => {
     write_state({
       tables: [
@@ -297,6 +299,38 @@ describe("lark_base", () => {
         "json",
       ],
     ]);
+  });
+
+  // 显式 next_offset 分支：假 CLI 故意报告一个只有跟随 data.next_offset 才会出现的
+  // 偏移（0 → 3），用它证明适配层优先使用服务端给出的令牌。
+  test("list records follows the explicit next offset when the payload provides one", async () => {
+    write_state({
+      tables: [
+        {
+          id: "tbl_cards",
+          name: "KnowledgeCards",
+          fields: with_field_ids([{ name: "card_id", type: "text" }]),
+        },
+      ],
+      records: {
+        tbl_cards: [
+          { record_id: "rec_1", fields: { card_id: "c1" } },
+          { record_id: "rec_2", fields: { card_id: "c2" } },
+          { record_id: "rec_3", fields: { card_id: "c3" } },
+          { record_id: "rec_4", fields: { card_id: "c4" } },
+        ],
+      },
+    });
+    env.FAKE_RECORD_LIST_FIRST_NEXT_OFFSET = "3";
+
+    const result = expect_ok(await list_records(context(), "tbl_cards", { page_size: 2 }));
+
+    expect(result.records.map((record) => record.record_id)).toEqual(["rec_1", "rec_2", "rec_4"]);
+    const offsets = read_calls().map((call) => {
+      const index = call.args.indexOf("--offset");
+      return call.args[index + 1];
+    });
+    expect(offsets).toEqual(["0", "3"]);
   });
 
   test("list records passes filter projection and page size", async () => {

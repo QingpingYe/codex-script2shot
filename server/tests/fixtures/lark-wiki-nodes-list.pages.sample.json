@@ -1,0 +1,32 @@
+{
+  "space_id": "EXAMPLESPACE0001",
+  "page_size": 50,
+  "note": "wiki nodes list 录制索引：每条对应一次 (parent_node_token, page_token) 请求，file 指向该页的原始 API 形状响应。",
+  "pages": [
+    {
+      "parent_node_token": "",
+      "page_token": "",
+      "file": "lark-wiki-nodes-list.sample.json"
+    },
+    {
+      "parent_node_token": "",
+      "page_token": "pt-sample-roots-2",
+      "file": "lark-wiki-nodes-list.roots-page-2.sample.json"
+    },
+    {
+      "parent_node_token": "wikcnSAMPLEGEN00",
+      "page_token": "",
+      "file": "lark-wiki-nodes-list.general-children.sample.json"
+    },
+    {
+      "parent_node_token": "wikcnSAMPLEPROJ0",
+      "page_token": "",
+      "file": "lark-wiki-nodes-list.project-children.sample.json"
+    },
+    {
+      "parent_node_token": "wikcnSAMPLEGENLENS",
+      "page_token": "",
+      "file": "lark-wiki-nodes-list.lens-children.sample.json"
+    }
+  ]
+}

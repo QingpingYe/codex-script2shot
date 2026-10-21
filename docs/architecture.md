@@ -363,6 +363,29 @@ Base 字段类型固定为：`obj_edit_time` 保存原始时间字符串；
 来源以原始 API `wiki nodes list` 为准（2026-10-21 实测）：快捷命令 `wiki +node-list`
 会裁剪字段，实测不含 `obj_edit_time`，不得用于扫描阶段。
 
+扫描命令固定为（`--parent-node-token` 在根层省略，`--page-token` 在每页首页省略）：
+
+```bash
+lark-cli wiki nodes list --space-id <space_a> [--parent-node-token <token>] \
+  --page-size 50 [--page-token <token>] --as user --format json
+```
+
+扫描规则（2026-10-21 固定）：
+
+- 手动翻页 + BFS：跟随响应中的 `has_more` / `page_token` 遍历整棵节点树；不使用
+  `--page-all`（其翻页范围有上限）。
+- 根节点映射决定归属（配置结构见 §7.3）：根节点标题为「通用知识」⇒
+  `scope=general`、`project_id` 为空；其他 origin docx 根节点 ⇒ `scope=project`、
+  `project_id` 取 `lark.project_roots` 中该根节点的映射。子节点继承所属根节点的
+  `scope` / `project_id`。
+- 跳过规则（写 warning，不中断扫描）：根节点不在 `project_roots` 中且标题不是
+  「通用知识」⇒ `UNMAPPED_ROOT_NODE_SKIPPED`（整个子树不再扫描）；
+  `node_type=shortcut` ⇒ `SHORTCUT_NODE_SKIPPED`（快捷方式不作为独立同步单元）；
+  `obj_type != docx` ⇒ `NON_DOC_NODE_SKIPPED`。
+- 变化分类按固定优先级：SyncState 有、扫描结果没有 ⇒ 删除；扫描结果有、SyncState
+  没有 ⇒ 新增；`obj_edit_time` 不同 ⇒ 修改（即使同时移动或改名）；`obj_edit_time`
+  相同但 `path` 或 `title` 不同 ⇒ 移动或改名（只更新元数据）；其余 ⇒ 未变化。
+
 上表只用于扫描阶段。确认文档需要处理后，插件调用 `docs +fetch`，再保存
 返回的 `revision_id` 作为 `source_revision`。
 

@@ -11,10 +11,15 @@
 //   FAKE_AUTH_EXIT_CODE  覆盖 auth status 的退出码，用于覆盖 ok:false 且退出码为 0 的分支
 //   FAKE_ACTIVE_PROFILE  覆盖 profile list 返回的活动 profile（默认 default）
 //   FAKE_LOG_FILE        把每次调用的 argv 以 JSON Lines 追加记录
+//   FAKE_WIKI_NODES_FILE wiki nodes list 录制索引（父级/分页令牌 → 原始响应页文件）；
+//                        未设置时 wiki nodes list 返回空页
+//   FAKE_RECORD_LIST_FIRST_NEXT_OFFSET  仅用于覆盖显式 next_offset 分支：
+//                        设置时第一页返回该值作为 data.next_offset（默认真实形状不带该字段）
 //   FAKE_BASE_STATE_FILE Base 状态文件：存在时替代内置默认表/字段/记录，写命令后回写；
 //                        文件不存在视为空 Base
 //   FAKE_TABLE_CREATE_ID_KEY  覆盖 +table-create 返回的 id 位置：table（默认）| id | table_id
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 const scenario = process.env.FAKE_SCENARIO ?? "ok";
 const args = process.argv.slice(2);
@@ -229,6 +234,54 @@ if (group === "wiki" && sub === "+node-list") {
   exit_with(0);
 }
 
+if (group === "wiki" && sub === "nodes" && args[2] === "list") {
+  if (scenario === "space-unreachable") {
+    process.stderr.write("fake-lark-cli: wiki space unreachable\n");
+    exit_with(1);
+  }
+  const manifest_file = process.env.FAKE_WIKI_NODES_FILE;
+  if (!manifest_file) {
+    process.stdout.write(
+      `${JSON.stringify({ ok: true, data: { has_more: false, items: [], page_token: "" } })}\n`,
+    );
+    exit_with(0);
+  }
+  const manifest = JSON.parse(readFileSync(manifest_file, "utf8"));
+  const space_id = arg_value(args, "--space-id");
+  if (manifest.space_id !== undefined && space_id !== manifest.space_id) {
+    process.stderr.write(`fake-lark-cli: unexpected --space-id "${space_id}"\n`);
+    exit_with(1);
+  }
+  const page_size = Number.parseInt(arg_value(args, "--page-size") ?? "", 10);
+  if (manifest.page_size !== undefined && page_size !== manifest.page_size) {
+    process.stderr.write(
+      `fake-lark-cli: wiki nodes list must use --page-size ${manifest.page_size} for this recording\n`,
+    );
+    exit_with(1);
+  }
+  if (arg_value(args, "--as") !== "user" || arg_value(args, "--format") !== "json") {
+    process.stderr.write("fake-lark-cli: wiki nodes list requires --as user --format json\n");
+    exit_with(1);
+  }
+  const parent_node_token = arg_value(args, "--parent-node-token") ?? "";
+  const page_token = arg_value(args, "--page-token") ?? "";
+  const entry = manifest.pages.find(
+    (page) => page.parent_node_token === parent_node_token && page.page_token === page_token,
+  );
+  if (!entry) {
+    process.stderr.write(
+      "fake-lark-cli: no recorded wiki nodes list page for " +
+        `parent="${parent_node_token}" page_token="${page_token}"\n`,
+    );
+    exit_with(1);
+  }
+  const page_payload = JSON.parse(
+    readFileSync(path.join(path.dirname(manifest_file), entry.file), "utf8"),
+  );
+  process.stdout.write(`${JSON.stringify(page_payload)}\n`);
+  exit_with(0);
+}
+
 if (group === "base") {
   if (scenario === "base-unreachable") {
     process.stderr.write("fake-lark-cli: base unreachable\n");
@@ -336,8 +389,11 @@ if (group === "base") {
       rev: 1,
       timezone: "Asia/Shanghai",
     };
-    if (has_more) {
-      data.next_offset = next_offset;
+    // 真实 payload 的 data 里没有 next_offset（2026-10-21 实测）：默认省略，
+    // 让适配层走 offset + 本页行数的兜底分支；显式分支用环境变量单独覆盖。
+    const first_next_offset = process.env.FAKE_RECORD_LIST_FIRST_NEXT_OFFSET;
+    if (has_more && offset === 0 && first_next_offset !== undefined) {
+      data.next_offset = Number.parseInt(first_next_offset, 10);
     }
     process.stdout.write(`${JSON.stringify({ ok: true, data })}\n`);
     exit_with(0);
