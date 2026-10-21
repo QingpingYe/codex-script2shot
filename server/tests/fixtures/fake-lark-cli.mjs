@@ -13,6 +13,10 @@
 //   FAKE_LOG_FILE        把每次调用的 argv 以 JSON Lines 追加记录
 //   FAKE_WIKI_NODES_FILE wiki nodes list 录制索引（父级/分页令牌 → 原始响应页文件）；
 //                        未设置时 wiki nodes list 返回空页
+//   FAKE_WIKI_NODE_GET_FILE wiki +node-get 录制索引（node token → 原始响应 payload）；
+//                        未录制的 token 直接失败
+//   FAKE_DOCS_FETCH_FILE docs +fetch 录制索引（document token → 原始响应 payload）；
+//                        未录制的 token 直接失败
 //   FAKE_RECORD_LIST_FIRST_NEXT_OFFSET  仅用于覆盖显式 next_offset 分支：
 //                        设置时第一页返回该值作为 data.next_offset（默认真实形状不带该字段）
 //   FAKE_BASE_STATE_FILE Base 状态文件：存在时替代内置默认表/字段/记录，写命令后回写；
@@ -234,6 +238,24 @@ if (group === "wiki" && sub === "+node-list") {
   exit_with(0);
 }
 
+if (group === "wiki" && sub === "+node-get") {
+  const node_token = arg_value(args, "--node-token") ?? arg_value(args, "--token");
+  if (typeof node_token !== "string" || node_token === "") {
+    process.stderr.write("fake-lark-cli: wiki +node-get requires --node-token\n");
+    exit_with(1);
+  }
+  const nodes = load_recorded_map(process.env.FAKE_WIKI_NODE_GET_FILE);
+  const payload = nodes?.[node_token];
+  if (payload === undefined) {
+    process.stderr.write(
+      `fake-lark-cli: no recorded wiki +node-get payload for "${node_token}"\n`,
+    );
+    exit_with(1);
+  }
+  process.stdout.write(`${JSON.stringify(payload)}\n`);
+  exit_with(0);
+}
+
 if (group === "wiki" && sub === "nodes" && args[2] === "list") {
   if (scenario === "space-unreachable") {
     process.stderr.write("fake-lark-cli: wiki space unreachable\n");
@@ -279,6 +301,40 @@ if (group === "wiki" && sub === "nodes" && args[2] === "list") {
     readFileSync(path.join(path.dirname(manifest_file), entry.file), "utf8"),
   );
   process.stdout.write(`${JSON.stringify(page_payload)}\n`);
+  exit_with(0);
+}
+
+if (group === "docs" && sub === "+fetch") {
+  if (scenario === "docs-unreachable") {
+    process.stderr.write("fake-lark-cli: docs unreachable\n");
+    exit_with(1);
+  }
+  const doc = arg_value(args, "--doc");
+  if (typeof doc !== "string" || doc === "") {
+    process.stderr.write("fake-lark-cli: docs +fetch requires --doc\n");
+    exit_with(1);
+  }
+  if (
+    arg_value(args, "--doc-format") !== "markdown" ||
+    arg_value(args, "--revision-id") !== "-1" ||
+    arg_value(args, "--format") !== "json"
+  ) {
+    process.stderr.write(
+      "fake-lark-cli: docs +fetch requires --doc-format markdown --revision-id -1 --format json\n",
+    );
+    exit_with(1);
+  }
+  if (args.includes("--detail")) {
+    process.stderr.write("fake-lark-cli: markdown 模式不支持 --detail\n");
+    exit_with(1);
+  }
+  const documents = load_recorded_map(process.env.FAKE_DOCS_FETCH_FILE);
+  const payload = documents?.[doc];
+  if (payload === undefined) {
+    process.stderr.write(`fake-lark-cli: no recorded docs +fetch payload for "${doc}"\n`);
+    exit_with(1);
+  }
+  process.stdout.write(`${JSON.stringify(payload)}\n`);
   exit_with(0);
 }
 
@@ -567,6 +623,13 @@ function parse_json_argument(args, flag) {
   } catch {
     return undefined;
   }
+}
+
+function load_recorded_map(file) {
+  if (!file) {
+    return undefined;
+  }
+  return JSON.parse(readFileSync(file, "utf8"));
 }
 
 function cell_matches(cell, operator, expected) {
