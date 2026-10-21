@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "description": "script2shot 本地 MCP Server",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/server.mjs",
     "test": "vitest run"
   },

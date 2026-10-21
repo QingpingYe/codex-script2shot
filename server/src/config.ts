@@ -290,7 +290,7 @@ export function parse_project_roots(
       };
     }
 
-    roots.push({ node_token, project_id });
+    roots.push({ node_token: node_token.trim(), project_id: project_id.trim() });
   }
   return { roots };
 }

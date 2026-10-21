@@ -56,7 +56,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   }
   if (name === "write_config") {
-    const result = write_config((request.params.arguments ?? {}) as WriteConfigInput);
+    const result = write_config(
+      (request.params.arguments ?? {}) as unknown as WriteConfigInput,
+    );
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   }
   throw new McpError(ErrorCode.MethodNotFound, `未知工具：${name}`);

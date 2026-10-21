@@ -566,6 +566,12 @@ origin docx 根节点归入 `scope=project`：每项包含 `node_token`（根节
 `project_id`（该根节点下文档所属项目）。该结构的字段与语义以本节为准；缺省值由
 插件默认配置提供，用户可整体替换。
 
+`lark.profile` 表示插件期望当前生效的 lark-cli 活动 profile，不是每命令参数。
+lark-cli 的 profile 由全局 `lark-cli profile use` 切换，且 CLI 明确要求 AI agents
+不得自行切换或删除 profile；插件只通过只读的 `lark-cli profile list` 读取活动
+profile 并与配置比对，不调用 `profile use` / `profile remove`。不一致时 `health`
+返回 warning，提示用户本人确认后运行 `lark-cli profile use <name>`。
+
 **默认知识库（2026-10-21）。** 插件自带默认知识库配置，默认值唯一来源是
 `server/src/setup_defaults.ts` 的 `SETUP_DEFAULTS`：
 
@@ -584,8 +590,10 @@ origin docx 根节点归入 `scope=project`：每项包含 `node_token`（根节
 `lark.project_roots`、`retrieval.default_top_k` 为 `undefined` 时套用上述默认值；
 显式提供（包括显式空数组）的值优先。填充后仍校验 `lark.space_a` 与
 `lark.base_b` 非空，返回值通过 `applied_defaults[]` 列出本次实际套用的默认
-键路径。`config`、`lark`、`retrieval` 容器出现时必须是普通对象（fail-closed），
-否则返回 `CONFIG_INVALID` 并在 `details.field` 指明字段。
+键路径。`config` 必须提供且为普通对象；`lark`、`retrieval` 容器出现时也必须是
+普通对象（fail-closed），否则返回 `CONFIG_INVALID` 并在 `details.field` 指明字段。
+`dry_run` 与 `create_local_dirs` 只接受布尔值，字符串或数字均按 `CONFIG_INVALID`
+拒绝；所有字符串字段在写入前 trim。`project_roots` 同样按 trim 后的值校验与保存。
 
 `lark.project_roots` 非法时按 `CONFIG_INVALID` 处理：字段缺省视为 `[]` 且不产生
 warning；条目非表，或 `node_token` / `project_id` 非字符串或为空时，在 `details.field`

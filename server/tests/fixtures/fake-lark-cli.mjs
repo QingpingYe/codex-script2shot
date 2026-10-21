@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// 假 lark-cli：Task 4 起的封闭测试替身，只实现只读命令（--help / --version / auth status）。
-// Task 5 追加 wiki +node-list 与 base +table-list 的只读应答。
+// 假 lark-cli：封闭测试替身，只实现只读命令
+// （--help / --version / auth status / profile list / wiki +node-list / base +table-list）。
 // 行为开关：
-//   FAKE_SCENARIO        ok | no-auth | old-version | missing-capability | bad-json |
-//                        space-unreachable | base-unreachable | table-missing（默认 ok）
+//   FAKE_SCENARIO        ok | no-auth | auth-expired | legacy-no-auth | legacy-auth |
+//                        old-version | missing-capability | bad-json | space-unreachable |
+//                        base-unreachable | table-missing | legacy-table-list（默认 ok）
 //   FAKE_AUTH_EXIT_CODE  覆盖 auth status 的退出码，用于覆盖 ok:false 且退出码为 0 的分支
+//   FAKE_ACTIVE_PROFILE  覆盖 profile list 返回的活动 profile（默认 default）
 //   FAKE_LOG_FILE        把每次调用的 argv 以 JSON Lines 追加记录
 import { appendFileSync } from "node:fs";
 
@@ -20,6 +22,7 @@ const HELP_COMMANDS = {
   docs: ["+fetch", "+create", "+update"],
   base: ["+table-create", "+table-list", "+record-batch-create", "+record-list", "+record-delete"],
   auth: ["status", "login", "logout", "list"],
+  profile: ["list", "use", "add", "remove", "rename"],
 };
 
 function help_text(group) {
@@ -60,7 +63,13 @@ if (sub === "--help" && help_text(group) !== undefined) {
 }
 
 if (group === "auth" && sub === "status") {
-  if (scenario === "no-auth") {
+  if (scenario === "bad-json") {
+    process.stdout.write("not-json{\n");
+    process.stderr.write(`fake-lark-cli: invalid json payload ${"x".repeat(600)}\n`);
+    exit_with(0);
+  }
+
+  if (scenario === "legacy-no-auth") {
     const override = process.env.FAKE_AUTH_EXIT_CODE;
     const exit_code = override === undefined ? 1 : Number.parseInt(override, 10);
     process.stdout.write(
@@ -69,20 +78,93 @@ if (group === "auth" && sub === "status") {
     process.stderr.write("fake-lark-cli: not logged in, run `lark-cli auth login`\n");
     exit_with(Number.isNaN(exit_code) ? 1 : exit_code);
   }
-  if (scenario === "bad-json") {
-    process.stdout.write("not-json{\n");
-    process.stderr.write(`fake-lark-cli: invalid json payload ${"x".repeat(600)}\n`);
+
+  if (scenario === "legacy-auth") {
+    process.stdout.write(
+      `${JSON.stringify({
+        ok: true,
+        data: {
+          identity: "fake-identity-1",
+          user: { name: "测试用户", open_id: "ou_fake_1" },
+          verified: args.includes("--verify"),
+        },
+      })}\n`,
+    );
     exit_with(0);
   }
+
+  if (scenario === "no-auth" || scenario === "auth-expired") {
+    const override = process.env.FAKE_AUTH_EXIT_CODE;
+    const default_exit_code = 0;
+    const exit_code =
+      override === undefined ? default_exit_code : Number.parseInt(override, 10);
+    const user =
+      scenario === "auth-expired"
+        ? {
+            status: "ready",
+            available: true,
+            message: "User identity: ready",
+            openId: "ou_fake_1",
+            userName: "测试用户",
+            tokenStatus: "expired",
+          }
+        : {
+            status: "missing",
+            available: false,
+            message: "User identity: missing",
+            tokenStatus: "missing",
+          };
+    process.stdout.write(
+      `${JSON.stringify({
+        appId: "cli_fake",
+        brand: "feishu",
+        identities: {
+          bot: { status: "ready", available: true, message: "Bot identity: ready" },
+          user,
+        },
+        identity: "user",
+      })}\n`,
+    );
+    process.stderr.write("fake-lark-cli: user identity unavailable\n");
+    exit_with(Number.isNaN(exit_code) ? default_exit_code : exit_code);
+  }
+
   process.stdout.write(
     `${JSON.stringify({
-      ok: true,
-      data: {
-        identity: "fake-identity-1",
-        user: { name: "测试用户", open_id: "ou_fake_1" },
-        verified: args.includes("--verify"),
+      appId: "cli_fake",
+      brand: "feishu",
+      identities: {
+        bot: { status: "ready", available: true, message: "Bot identity: ready" },
+        user: {
+          status: "ready",
+          available: true,
+          message: "User identity: ready",
+          openId: "ou_fake_1",
+          userName: "测试用户",
+          tokenStatus: "valid",
+        },
       },
+      identity: "user",
     })}\n`,
+  );
+  exit_with(0);
+}
+
+if (group === "profile" && sub === "list") {
+  const active_profile = process.env.FAKE_ACTIVE_PROFILE ?? "default";
+  process.stdout.write(
+    `${JSON.stringify([
+      {
+        name: active_profile,
+        appId: "cli_fake",
+        brand: "feishu",
+        active: true,
+        effective: true,
+        effectiveSource: "config",
+        user: "测试用户",
+        tokenStatus: "valid",
+      },
+    ])}\n`,
   );
   exit_with(0);
 }
@@ -103,13 +185,19 @@ if (group === "base" && sub === "+table-list") {
     process.stderr.write("fake-lark-cli: base unreachable\n");
     exit_with(1);
   }
-  const tables = [
-    { table_id: "tbl_cards", name: "KnowledgeCards" },
-    { table_id: "tbl_state", name: "SyncState" },
-  ];
+  const legacy_shape = scenario === "legacy-table-list";
+  const tables = legacy_shape
+    ? [
+        { table_id: "tbl_cards", name: "KnowledgeCards" },
+        { table_id: "tbl_state", name: "SyncState" },
+      ]
+    : [
+        { id: "tbl_cards", name: "KnowledgeCards" },
+        { id: "tbl_state", name: "SyncState" },
+      ];
   const response =
     scenario === "table-missing"
-      ? tables.filter((table) => table.table_id !== "tbl_state")
+      ? tables.filter((table) => (table.id ?? table.table_id) !== "tbl_state")
       : tables;
   process.stdout.write(`${JSON.stringify({ ok: true, data: { tables: response } })}\n`);
   exit_with(0);

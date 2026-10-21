@@ -235,6 +235,31 @@ describe("write_config", () => {
     }
   });
 
+  test("rejects missing config before any filesystem work", () => {
+    const result = expect_error(write_config({} as WriteConfigInput));
+
+    expect(result.error.code).toBe("CONFIG_INVALID");
+    expect(result.error.details?.field).toBe("config");
+    expect(existsSync(home)).toBe(false);
+  });
+
+  test("rejects non-boolean dry_run and create_local_dirs", () => {
+    for (const field of ["dry_run", "create_local_dirs"] as const) {
+      for (const value of [0, "false"]) {
+        const result = expect_error(
+          write_config({
+            config: FULL_CONFIG,
+            [field]: value,
+          } as unknown as WriteConfigInput),
+        );
+
+        expect(result.error.code).toBe("CONFIG_INVALID");
+        expect(result.error.details?.field).toBe(field);
+        expect(existsSync(home), "invalid input must not create anything").toBe(false);
+      }
+    }
+  });
+
   test("write_config explicit values override defaults", () => {
     const explicit: Script2ShotConfig = {
       lark: {
@@ -259,6 +284,44 @@ describe("write_config", () => {
     }
     expect(loaded.config).toEqual(explicit);
     expect(loaded.config.lark.project_roots).toEqual([]);
+  });
+
+  test("write_config trims every string field before writing", () => {
+    const result = expect_success(
+      write_config({
+        config: {
+          lark: {
+            cli_path: "  D:\\lark-cli\\lark-cli.exe  ",
+            profile: "  profile-2  ",
+            space_a: "  space-a  ",
+            base_b: "  base-token-b  ",
+            knowledge_cards_table_id: "  tbl_cards  ",
+            sync_state_table_id: "  tbl_state  ",
+            project_roots: [{ node_token: "  wikcn-root  ", project_id: "  demo  " }],
+          },
+          retrieval: { default_top_k: 12 },
+        },
+        dry_run: false,
+      }),
+    );
+
+    expect(result.written).toBe(true);
+    expect(result.diff).toContain('profile = "profile-2"');
+    expect(result.diff).toContain('space_a = "space-a"');
+
+    const loaded = load_config();
+    if (!("exists" in loaded) || !loaded.exists) {
+      throw new Error(`expected an existing config, got ${JSON.stringify(loaded)}`);
+    }
+    expect(loaded.config.lark).toEqual({
+      cli_path: "D:\\lark-cli\\lark-cli.exe",
+      profile: "profile-2",
+      space_a: "space-a",
+      base_b: "base-token-b",
+      knowledge_cards_table_id: "tbl_cards",
+      sync_state_table_id: "tbl_state",
+      project_roots: [{ node_token: "wikcn-root", project_id: "demo" }],
+    });
   });
 
   test("write_config reports applied defaults", () => {

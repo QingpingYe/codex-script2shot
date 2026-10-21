@@ -105,6 +105,7 @@ function toml_string(value: string): string {
 
 interface ConfigOptions {
   cli_path?: string | null;
+  profile?: string | null;
   space_a?: string | null;
   base_b?: string | null;
   cards_table?: string | null;
@@ -114,6 +115,7 @@ interface ConfigOptions {
 /** 写出一份测试配置；字段传 null 表示整行省略。 */
 function write_config(options: ConfigOptions = {}): string {
   const cli_path = options.cli_path === undefined ? fakeCli : options.cli_path;
+  const profile = options.profile === undefined ? "default" : options.profile;
   const space_a = options.space_a === undefined ? SPACE_A : options.space_a;
   const base_b = options.base_b === undefined ? BASE_B : options.base_b;
   const cards = options.cards_table === undefined ? CARDS_TABLE : options.cards_table;
@@ -122,6 +124,9 @@ function write_config(options: ConfigOptions = {}): string {
   const lines = ["[lark]"];
   if (cli_path !== null) {
     lines.push(`cli_path = ${toml_string(cli_path)}`);
+  }
+  if (profile !== null) {
+    lines.push(`profile = ${toml_string(profile)}`);
   }
   if (space_a !== null) {
     lines.push(`space_a = ${toml_string(space_a)}`);
@@ -196,10 +201,38 @@ describe("health", () => {
     const calls = read_calls(log_file);
     expect(calls.map((call) => call.args)).toEqual([
       ["--version"],
-      ["auth", "status", "--json"],
+      ["auth", "status", "--json", "--verify"],
+      ["profile", "list"],
       ["wiki", "+node-list", "--space-id", SPACE_A, "--page-size", "1", "--as", "user"],
       ["base", "+table-list", "--base-token", BASE_B],
     ]);
+  });
+
+  test("health warns on profile mismatch without switching profiles", async () => {
+    create_local_dirs();
+    write_config({ profile: "expected-profile" });
+    const log_file = path.join(tempRoot, "calls.jsonl");
+
+    const result = await run_health("ok", {
+      FAKE_ACTIVE_PROFILE: "actual-profile",
+      FAKE_LOG_FILE: log_file,
+    });
+
+    expect(result.ok).toBe(true);
+    const profile = check(result, "lark_profile");
+    expect(profile.status).toBe("warn");
+    expect(profile.message).toContain("lark-cli profile use expected-profile");
+    expect(profile.message).toContain("需你本人确认");
+    expect(profile.detail).toMatchObject({
+      code: "LARK_PROFILE_MISMATCH",
+      expected_profile: "expected-profile",
+      active_profile: "actual-profile",
+      plugin_switches_profile: false,
+    });
+
+    const calls = read_calls(log_file).map((call) => call.args);
+    expect(calls).toContainEqual(["profile", "list"]);
+    expect(calls).not.toContainEqual(["profile", "use", "expected-profile"]);
   });
 
   test("health fails with login hint when auth missing", async () => {
@@ -221,7 +254,23 @@ describe("health", () => {
     expect(check(result, "config").status).toBe("pass");
     expect(check(result, "local_dirs").status).toBe("pass");
     expect(check(result, "index").status).toBe("warn");
-    expect(read_calls(log_file), "reachability probes must be skipped").toHaveLength(2);
+    expect(read_calls(log_file), "reachability probes must be skipped").toHaveLength(3);
+  });
+
+  test("health fails when the user token is expired", async () => {
+    create_local_dirs();
+    write_config();
+
+    const result = await run_health("auth-expired");
+
+    expect(result.ok).toBe(false);
+    expect(check(result, "auth")).toMatchObject({
+      status: "fail",
+      detail: { code: "AUTH_REQUIRED" },
+    });
+    for (const id of ["space_a_reachable", "base_b_reachable"] as const) {
+      expect(check(result, id).status).toBe("warn");
+    }
   });
 
   test("health fails when space a unreachable", async () => {
@@ -263,7 +312,19 @@ describe("health", () => {
     expect(base_b.status).toBe("fail");
     expect(base_b.detail?.missing_tables).toEqual([STATE_TABLE]);
     expect(base_b.detail?.base_token_prefix).toBe(BASE_B.slice(0, 6));
+    expect(base_b.message).toContain("Phase 2");
+    expect(base_b.message).toContain("init_knowledge_b");
     expect(JSON.stringify(result), "full base token must not appear").not.toContain(BASE_B);
+  });
+
+  test("health keeps compatibility with legacy table_id responses", async () => {
+    create_local_dirs();
+    write_config();
+
+    const result = await run_health("legacy-table-list");
+
+    expect(result.ok).toBe(true);
+    expect(check(result, "base_b_reachable").status).toBe("pass");
   });
 
   test("health fails when config missing and never writes it", async () => {

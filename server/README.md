@@ -1,12 +1,13 @@
 # script2shot 本地 MCP Server
 
 本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册
-`health`；其余工具在后续任务中注册。
+`health` 与 `write_config`；其余工具在后续任务中注册。
 
 ## 环境要求
 
 - Node.js >= 24（本机实测：系统 Node v26.8.2、npm 11.19.1，2026-10-20）。
 - Codex 桌面端自带 Node 运行时；启动脚本会优先使用它，系统 Node 只是最后兜底。
+- `package.json` 的 `"engines": {"node": ">=24"}` 是安装和运行时的最低版本约束。
 
 ## 安装、构建、测试
 
@@ -14,9 +15,12 @@
 
 ```powershell
 npm --prefix server install
+npm --prefix server run typecheck   # tsc --noEmit
 npm --prefix server run build   # esbuild 打包为 server/dist/server.mjs
 npm --prefix server test        # vitest run
 ```
+
+验证顺序固定为 `typecheck → build → test`。
 
 构建产物 `server/dist/` 和依赖目录 `server/node_modules/` 不入库；
 `server/package-lock.json` 入库。
@@ -52,7 +56,7 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
 `server/dist/server.mjs` 不存在时输出构建提示并退出（提示包含
 `npm --prefix server run build`）。
 
-## `mcp.json` 字段对照（核对日期 2026-10-20）
+## `mcp.json` 字段对照（核对日期 2026-10-21）
 
 | 字段 | 取值 | 依据 |
 | --- | --- | --- |
@@ -61,7 +65,7 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
 | `mcpServers.script2shot.command` | `"./scripts/launch_script2shot_mcp"` | 可移植包中 `command` 只能是裸命令名或插件内 `./` 相对路径；Windows 上由 Codex 的 MCP 程序解析器按 `PATHEXT` 解析到同目录的 `launch_script2shot_mcp.cmd` |
 | `mcpServers.script2shot.cwd` | `"${PLUGIN_ROOT}"` | 官方本地 stdio 示例使用 `${PLUGIN_ROOT}` 占位符 |
 
-核对来源（均为 2026-10-20 读取）：
+核对来源（均为 2026-10-21 读取）：
 
 - OpenAI Docs：Package your plugin
   https://developers.openai.com/plugins/build/plugins
@@ -80,12 +84,14 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
   `codex-rs/rmcp-client/src/program_resolver.rs`（Windows 用 `which` +
   `PATHEXT` 解析无扩展名命令，因此无扩展名的启动脚本在 Windows 上会命中
   同名的 `.cmd`）。
-- 本机官方插件缓存样例 `codex-security`（2026-10-20 核对）：
-  `.mcp.json` 使用 `"command": "./scripts/launch_codex_security_mcp"`，
-  并在同目录提供 `launch_codex_security_mcp.cmd`。
+- 本机官方插件缓存样例 `code-review` 与 `codex-app-tools`（2026-10-21 核对）：
+  `code-review` 的 `.mcp.json` 使用显式 `cmd.exe` 调用
+  `"args": ["/d", "/c", "scripts\\launch_code_review_mcp.cmd"]`；
+  `codex-app-tools` 使用
+  `"args": ["/d", "/s", "/c", "call", "./scripts/launch_codex_app_tools_mcp.cmd", "./server.mjs"]`。
+  两者都是 Codex 兼容布局，并在同目录提供对应的 `.cmd` 启动脚本。
 
 ## Phase 1 已知限制
 
-- 已注册 `health`（只读健康检查）；其余工具由后续任务注册。
-- 不包含 lark-cli 路径发现、登录检查、知识库读写；Phase 1 只实现连接类能力。
+- 已注册 `health`（只读健康检查）与 `write_config`（配置预览/写入）；其余工具由后续任务注册。
 - 启动依赖已构建的 `server/dist/server.mjs`，源码目录不直接运行。

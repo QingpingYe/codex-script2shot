@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { Script2ShotConfig } from "../src/config.js";
 import {
+  get_active_profile,
   get_auth_status,
   get_version,
   probe_capabilities,
@@ -55,7 +56,10 @@ function scenario_env(scenario: string, overrides: NodeJS.ProcessEnv = {}): Node
 
 function config_with_cli_path(cli_path?: string): Script2ShotConfig {
   return {
-    lark: cli_path === undefined ? {} : { cli_path },
+    lark: {
+      ...(cli_path === undefined ? {} : { cli_path }),
+      project_roots: [],
+    },
     retrieval: { default_top_k: 12 },
   };
 }
@@ -174,6 +178,17 @@ describe("lark_cli", () => {
     await expect(get_auth_status(cli, { env: scenario_env("ok") })).resolves.toEqual({
       ok: true,
       logged_in: true,
+      identity: "user",
+      user_name: "测试用户",
+    });
+  });
+
+  test("auth status keeps compatibility with the legacy ok/data shape", async () => {
+    const cli = install_fake_cli(path.join(tempRoot, "bin"));
+
+    await expect(get_auth_status(cli, { env: scenario_env("legacy-auth") })).resolves.toEqual({
+      ok: true,
+      logged_in: true,
       identity: "fake-identity-1",
       user_name: "测试用户",
     });
@@ -187,15 +202,28 @@ describe("lark_cli", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe("AUTH_REQUIRED");
-      expect(String(result.error.details?.stderr)).toContain("not logged in");
+      expect(result.error.details?.user_status).toBe("missing");
+      expect(result.error.details?.user_available).toBe(false);
     }
   });
 
-  test("auth status treats ok:false payload as AUTH_REQUIRED", async () => {
+  test("auth status treats an expired token as AUTH_REQUIRED", async () => {
+    const cli = install_fake_cli(path.join(tempRoot, "bin"));
+
+    const result = await get_auth_status(cli, { env: scenario_env("auth-expired") });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("AUTH_REQUIRED");
+      expect(result.error.details?.token_status).toBe("expired");
+    }
+  });
+
+  test("auth status treats a legacy ok:false payload as AUTH_REQUIRED", async () => {
     const cli = install_fake_cli(path.join(tempRoot, "bin"));
 
     const result = await get_auth_status(cli, {
-      env: scenario_env("no-auth", { FAKE_AUTH_EXIT_CODE: "0" }),
+      env: scenario_env("legacy-no-auth", { FAKE_AUTH_EXIT_CODE: "0" }),
     });
 
     expect(result.ok).toBe(false);
@@ -237,6 +265,23 @@ describe("lark_cli", () => {
     }
   });
 
+  test("active profile reads profile list JSON without switching profiles", async () => {
+    const cli = install_fake_cli(path.join(tempRoot, "bin"));
+    const log_file = path.join(tempRoot, "calls.jsonl");
+
+    await expect(
+      get_active_profile(cli, {
+        env: scenario_env("ok", { FAKE_ACTIVE_PROFILE: "profile-2", FAKE_LOG_FILE: log_file }),
+      }),
+    ).resolves.toEqual({ ok: true, profile: "profile-2" });
+
+    const calls = readFileSync(log_file, "utf8")
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { scenario: string; args: string[] });
+    expect(calls).toEqual([{ scenario: "ok", args: ["profile", "list"] }]);
+  });
+
   test("run_cli captures stdout, stderr and exit code", async () => {
     const cli = install_fake_cli(path.join(tempRoot, "bin"));
 
@@ -249,7 +294,7 @@ describe("lark_cli", () => {
     }
 
     const failed_run = await run_cli(cli, ["auth", "status", "--json"], {
-      env: scenario_env("no-auth"),
+      env: scenario_env("legacy-no-auth"),
     });
     expect(failed_run.ok).toBe(true);
     if (failed_run.ok) {

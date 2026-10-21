@@ -71,6 +71,13 @@ export type GetAuthStatusResult =
   | { ok: true; logged_in: boolean; identity: string; user_name?: string }
   | LarkCliFailure;
 
+export interface GetActiveProfileOptions {
+  env?: NodeJS.ProcessEnv;
+  timeout_ms?: number;
+}
+
+export type GetActiveProfileResult = { ok: true; profile: string } | LarkCliFailure;
+
 export interface LarkCapabilities {
   wiki_node_list: boolean;
   docs_fetch: boolean;
@@ -255,8 +262,8 @@ export async function get_version(
 
 /**
  * 执行 `auth status --json [--verify]`。
- * 退出码非 0 或解析结果显式 `ok: false` 视为未登录；JSON 解析失败归一化为 INTERNAL。
- * 用户信息解析保持宽容：提不到 user_name 就缺省。
+ * 退出码非 0、解析结果显式 `ok: false`，或真实形状中的用户身份不可用视为未登录；
+ * JSON 解析失败归一化为 INTERNAL。兼容旧 `{ ok, data }` 形状。
  */
 export async function get_auth_status(
   cli_path: string,
@@ -284,6 +291,36 @@ export async function get_auth_status(
     return auth_required(cli_path, run.code, run.stderr);
   }
 
+  const identities = is_record(payload.identities) ? payload.identities : undefined;
+  if (identities !== undefined) {
+    const user = is_record(identities.user) ? identities.user : {};
+    const status = extract_string(user, [["status"]]);
+    const available = typeof user.available === "boolean" ? user.available : undefined;
+    const token_status = extract_string(user, [["tokenStatus"]]);
+    const identity =
+      extract_string(payload, [
+        ["identity"],
+        ["identities", "user", "openId"],
+        ["identities", "bot", "openId"],
+      ]) ?? "unknown";
+    const user_name = extract_string(user, [["userName"]]);
+
+    // 真实 auth status 以 identities.user 为准：只有 ready + available 才算已登录。
+    if (token_status === "expired" || available !== true || status !== "ready") {
+      return auth_required(cli_path, run.code, run.stderr, {
+        identity,
+        user_status: status,
+        user_available: available,
+        token_status,
+      });
+    }
+
+    return user_name === undefined
+      ? { ok: true, logged_in: true, identity }
+      : { ok: true, logged_in: true, identity, user_name };
+  }
+
+  // 兼容旧形状：顶层 ok 不为 false 时，沿用 data.* / snake_case 解析。
   const identity =
     extract_string(payload, [
       ["data", "identity"],
@@ -305,6 +342,49 @@ export async function get_auth_status(
   return user_name === undefined
     ? { ok: true, logged_in: true, identity }
     : { ok: true, logged_in: true, identity, user_name };
+}
+
+/**
+ * 读取 lark-cli 当前活动 profile。`profile list` 默认输出 JSON 数组，没有 `--json`
+ * flag；这里只读列表，不调用 `profile use`，不切换 profile。
+ */
+export async function get_active_profile(
+  cli_path: string,
+  options: GetActiveProfileOptions = {},
+): Promise<GetActiveProfileResult> {
+  const run = await run_cli(cli_path, ["profile", "list"], {
+    env: options.env,
+    timeout_ms: options.timeout_ms,
+    expect_json: true,
+  });
+  if (!run.ok) {
+    return run;
+  }
+  if (run.code !== 0) {
+    return internal_error("无法读取 lark-cli 活动 profile。", {
+      path: cli_path,
+      exit_code: run.code,
+      stderr: truncate(run.stderr),
+      stderr_truncated: run.stderr.length > STDERR_LIMIT,
+    });
+  }
+  if (!Array.isArray(run.json)) {
+    return internal_error("lark-cli profile list 返回的 JSON 不是数组。", {
+      path: cli_path,
+    });
+  }
+
+  const active_profiles = run.json
+    .filter(is_record)
+    .filter((profile) => profile.active === true)
+    .map((profile) => (typeof profile.name === "string" ? profile.name.trim() : ""))
+    .filter((name) => name !== "");
+  if (active_profiles.length !== 1) {
+    return internal_error(`无法确定唯一的活动 profile（找到 ${active_profiles.length} 个）。`, {
+      path: cli_path,
+    });
+  }
+  return { ok: true, profile: active_profiles[0] };
 }
 
 /**
@@ -352,7 +432,12 @@ function internal_error(message: string, details: Record<string, unknown> = {}):
   return { ok: false, error: { code: "INTERNAL", message, details } };
 }
 
-function auth_required(cli_path: string, exit_code: number, stderr: string): LarkCliFailure {
+function auth_required(
+  cli_path: string,
+  exit_code: number,
+  stderr: string,
+  extra_details: Record<string, unknown> = {},
+): LarkCliFailure {
   return {
     ok: false,
     error: {
@@ -363,6 +448,7 @@ function auth_required(cli_path: string, exit_code: number, stderr: string): Lar
         exit_code,
         stderr: truncate(stderr),
         stderr_truncated: stderr.length > STDERR_LIMIT,
+        ...extra_details,
       },
     },
   };

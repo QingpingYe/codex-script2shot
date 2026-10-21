@@ -8,6 +8,7 @@ import {
   type Script2ShotConfig,
 } from "../config.js";
 import {
+  get_active_profile,
   get_auth_status,
   get_version,
   resolve_lark_cli,
@@ -26,6 +27,7 @@ import {
 export type HealthCheckId =
   | "lark_cli"
   | "lark_cli_version"
+  | "lark_profile"
   | "auth"
   | "config"
   | "space_a_reachable"
@@ -116,7 +118,7 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
   if (cli_path === undefined) {
     push_skipped(checks, warnings, "auth", "lark-cli 不可用");
   } else {
-    const auth = await get_auth_status(cli_path, { env });
+    const auth = await get_auth_status(cli_path, { env, verify: true });
     if (auth.ok) {
       auth_ok = true;
       push_check(checks, warnings, {
@@ -179,6 +181,47 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
         message: `配置已加载：${config_path}`,
         detail: { path: config_path },
       });
+    }
+  }
+
+  const expected_profile = config?.lark.profile;
+  if (cli_path !== undefined && has_text(expected_profile)) {
+    const active_profile = await get_active_profile(cli_path, { env });
+    if (!active_profile.ok) {
+      push_check(
+        checks,
+        warnings,
+        {
+          id: "lark_profile",
+          status: "warn",
+          message: `无法读取当前活动 profile，未能校验配置中的 "${expected_profile}"。`,
+          detail: {
+            code: "LARK_PROFILE_UNKNOWN",
+            expected_profile,
+            reason: active_profile.error.message,
+          },
+        },
+        "LARK_PROFILE_UNKNOWN",
+      );
+    } else if (active_profile.profile !== expected_profile) {
+      push_check(
+        checks,
+        warnings,
+        {
+          id: "lark_profile",
+          status: "warn",
+          message:
+            `配置期望活动 profile 为 "${expected_profile}"，当前为 "${active_profile.profile}"。` +
+            `请运行 \`lark-cli profile use ${expected_profile}\`（需你本人确认）；插件不会自动切换 profile。`,
+          detail: {
+            code: "LARK_PROFILE_MISMATCH",
+            expected_profile,
+            active_profile: active_profile.profile,
+            plugin_switches_profile: false,
+          },
+        },
+        "LARK_PROFILE_MISMATCH",
+      );
     }
   }
 
@@ -263,9 +306,12 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
           push_check(checks, warnings, {
             id: "base_b_reachable",
             status: "fail",
-            message: `知识库 B 缺少配置的数据表：${missing_tables.join("、")}。请运行 $setup 初始化。`,
+            message:
+              `知识库 B 缺少配置的数据表：${missing_tables.join("、")}。` +
+              `请在 Phase 2 运行 $setup（调用 init_knowledge_b）建表。`,
             detail: {
               code: "KB_B_TABLE_MISSING",
+              hint: "Phase 2 运行 $setup 并调用 init_knowledge_b。",
               base_token_prefix,
               missing_tables,
               tables: table_ids,
@@ -369,6 +415,22 @@ function probe_ok(run: RunCliResult): run is Extract<RunCliResult, { ok: true }>
 function extract_table_ids(payload: unknown): string[] {
   const table_ids: string[] = [];
   const seen = new Set<string>();
+
+  // 真实 `base +table-list` 形状：data.tables[].id；旧形状的 table_id 继续兼容。
+  if (is_record(payload) && is_record(payload.data) && Array.isArray(payload.data.tables)) {
+    for (const table of payload.data.tables) {
+      if (!is_record(table)) {
+        continue;
+      }
+      const table_id = first_table_id(table);
+      if (table_id !== undefined && !seen.has(table_id)) {
+        seen.add(table_id);
+        table_ids.push(table_id);
+      }
+    }
+    return table_ids;
+  }
+
   const visit = (value: unknown): void => {
     if (Array.isArray(value)) {
       for (const item of value) {
@@ -379,8 +441,8 @@ function extract_table_ids(payload: unknown): string[] {
     if (!is_record(value)) {
       return;
     }
-    const table_id = value.table_id;
-    if (typeof table_id === "string" && table_id !== "" && !seen.has(table_id)) {
+    const table_id = first_table_id(value, ["table_id"]);
+    if (table_id !== undefined && !seen.has(table_id)) {
       seen.add(table_id);
       table_ids.push(table_id);
     }
@@ -390,6 +452,19 @@ function extract_table_ids(payload: unknown): string[] {
   };
   visit(payload);
   return table_ids;
+}
+
+function first_table_id(
+  table: Record<string, unknown>,
+  keys: readonly string[] = ["id", "table_id"],
+): string | undefined {
+  for (const key of keys) {
+    const value = table[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+  return undefined;
 }
 
 function is_record(value: unknown): value is Record<string, unknown> {

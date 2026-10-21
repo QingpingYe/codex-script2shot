@@ -27,11 +27,11 @@ export type WriteConfigErrorCode = "CONFIG_INVALID" | "INTERNAL";
 
 export interface WriteConfigInput {
   /** 完整配置对象：`{ lark, retrieval }`，见架构 §7.3。 */
-  config?: unknown;
+  config: unknown;
   /** 缺省 true：写入时创建本地 cache/index/logs 目录。 */
-  create_local_dirs?: boolean;
+  create_local_dirs?: unknown;
   /** 缺省 true：只预览不写入。 */
-  dry_run?: boolean;
+  dry_run?: unknown;
 }
 
 export interface WriteConfigSuccess {
@@ -65,31 +65,41 @@ const PASSTHROUGH_LARK_STRING_KEYS = [
   "sync_state_table_id",
 ] as const;
 
-export function write_config(input: WriteConfigInput = {}): WriteConfigResult {
+export function write_config(input: WriteConfigInput): WriteConfigResult {
   const normalized = normalize_config(input.config);
   if ("error" in normalized) {
     return normalized;
   }
   const config = normalized.config;
   const applied_defaults = normalized.applied_defaults;
-  const dry_run = input.dry_run ?? true;
-  const create_local_dirs = input.create_local_dirs ?? true;
+  const dry_run = parse_boolean_flag(input.dry_run, "dry_run", true);
+  if ("error" in dry_run) {
+    return dry_run;
+  }
+  const create_local_dirs = parse_boolean_flag(
+    input.create_local_dirs,
+    "create_local_dirs",
+    true,
+  );
+  if ("error" in create_local_dirs) {
+    return create_local_dirs;
+  }
 
   try {
     const previous_base_b = existing_base_b();
-    if (dry_run) {
+    if (dry_run.value) {
       const preview = save_config(config, { dry_run: true });
       return {
         dry_run: true,
         config_path: preview.path,
         diff: mask_base_b(preview.diff, [config.lark.base_b, previous_base_b]),
-        created_dirs: create_local_dirs ? missing_local_dirs() : [],
+        created_dirs: create_local_dirs.value ? missing_local_dirs() : [],
         written: false,
         applied_defaults,
       };
     }
 
-    const created = create_local_dirs ? ensure_local_dirs().created : [];
+    const created = create_local_dirs.value ? ensure_local_dirs().created : [];
     const saved = save_config(config, { dry_run: false });
     return {
       dry_run: false,
@@ -117,10 +127,10 @@ function normalize_config(
   raw: unknown,
 ): { config: Script2ShotConfig; applied_defaults: string[] } | WriteConfigFailure {
   // 容器类型必须 fail-closed：null / 数组等非对象输入不得被当作空配置套默认值。
-  if (raw !== undefined && !is_record(raw)) {
-    return config_invalid('配置字段 "config" 期望普通对象。', { field: "config" });
+  if (!is_record(raw)) {
+    return config_invalid('配置字段 "config" 必须提供且为普通对象。', { field: "config" });
   }
-  const record = is_record(raw) ? raw : {};
+  const record = raw;
 
   const raw_lark = record.lark;
   if (raw_lark !== undefined && !is_record(raw_lark)) {
@@ -142,7 +152,7 @@ function normalize_config(
       lark_config[key] = SETUP_DEFAULTS.lark[key];
       applied_defaults.push(`lark.${key}`);
     } else if (typeof value === "string") {
-      lark_config[key] = value;
+      lark_config[key] = value.trim();
     } else {
       return config_invalid(`配置字段 "lark.${key}" 期望字符串。`, { field: `lark.${key}` });
     }
@@ -151,7 +161,9 @@ function normalize_config(
   for (const key of PASSTHROUGH_LARK_STRING_KEYS) {
     const value = lark[key];
     if (typeof value === "string") {
-      lark_config[key] = value;
+      lark_config[key] = value.trim();
+    } else if (value !== undefined) {
+      return config_invalid(`配置字段 "lark.${key}" 期望字符串。`, { field: `lark.${key}` });
     }
   }
 
@@ -200,6 +212,20 @@ function normalize_config(
     config: { lark: lark_config, retrieval: { default_top_k } },
     applied_defaults,
   };
+}
+
+function parse_boolean_flag(
+  value: unknown,
+  field: "dry_run" | "create_local_dirs",
+  default_value: boolean,
+): { value: boolean } | WriteConfigFailure {
+  if (value === undefined) {
+    return { value: default_value };
+  }
+  if (typeof value !== "boolean") {
+    return config_invalid(`配置字段 "${field}" 期望布尔值。`, { field });
+  }
+  return { value };
 }
 
 /** dry-run 下不调用 `ensure_local_dirs()`，只预测缺失目录；创建规则与其保持一致。 */
