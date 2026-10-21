@@ -1,10 +1,20 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { describe, expect, test } from "vitest";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const skillsRoot = path.join(repoRoot, "skills");
+const isWindows = process.platform === "win32";
+const launcherFileName = isWindows ? "launch_script2shot_mcp.cmd" : "launch_script2shot_mcp";
+
+const inheritedEnv = Object.fromEntries(
+  Object.entries(process.env).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined,
+  ),
+);
 
 function listSkillFiles(): { skillDir: string; skillFile: string }[] {
   if (!existsSync(skillsRoot)) {
@@ -45,4 +55,121 @@ describe("skills contract", () => {
       }
     },
   );
+});
+
+function launcherCommand(scriptPath: string): { command: string; args: string[] } {
+  if (isWindows) {
+    return { command: "cmd.exe", args: ["/d", "/c", scriptPath] };
+  }
+  return { command: "sh", args: [scriptPath] };
+}
+
+async function connect_server(): Promise<{ client: Client; errors: string[] }> {
+  const { command, args } = launcherCommand(path.join(repoRoot, "scripts", launcherFileName));
+  const transport = new StdioClientTransport({
+    command,
+    args,
+    cwd: repoRoot,
+    env: inheritedEnv,
+    stderr: "pipe",
+  });
+  const errors: string[] = [];
+  transport.stderr?.on("data", (chunk: Buffer) => errors.push(chunk.toString("utf8")));
+  const client = new Client({ name: "script2shot-skills-contract-test", version: "0.0.0" });
+  await client.connect(transport);
+  return { client, errors };
+}
+
+function parse_tool_json(result: unknown): Record<string, unknown> {
+  const content = (result as { content?: Array<{ type?: string; text?: string }> }).content;
+  const text = content?.find(
+    (entry) => entry.type === "text" && typeof entry.text === "string",
+  )?.text;
+  if (text === undefined) {
+    throw new Error(`tool result is missing text content: ${JSON.stringify(result)}`);
+  }
+  return JSON.parse(text) as Record<string, unknown>;
+}
+
+describe("knowledge-sync mcp tools contract", () => {
+  /** 本流程直接消费的工具；tools/list 必须全部暴露，否则 Skill 无法调用。 */
+  const requiredToolNames = [
+    "health",
+    "write_config",
+    "init_knowledge_b",
+    "scan_knowledge_a",
+    "read_sync_state",
+    "build_sync_plan",
+    "fetch_knowledge_a_doc",
+    "replace_doc_cards",
+    "update_doc_sync_state",
+    "delete_doc_cards",
+  ];
+
+  test("tools/list exposes every MCP tool consumed by knowledge-sync", async () => {
+    const { client, errors } = await connect_server();
+    try {
+      const result = await client.listTools();
+      const toolsByName = new Map(result.tools.map((tool) => [tool.name, tool]));
+
+      for (const name of requiredToolNames) {
+        expect(toolsByName.has(name), `tools/list 应包含工具 ${name}`).toBe(true);
+        const schema = toolsByName.get(name)?.inputSchema as
+          | { additionalProperties?: unknown }
+          | undefined;
+        expect(
+          schema?.additionalProperties,
+          `工具 ${name} 的 inputSchema 应声明 additionalProperties: false`,
+        ).toBe(false);
+      }
+      expect(errors.join(""), "server stderr should stay empty").toBe("");
+    } finally {
+      await client.close();
+    }
+  }, 30000);
+
+  test("build_sync_plan round-trips through stdio and rejects malformed arguments", async () => {
+    const { client, errors } = await connect_server();
+    try {
+      const plan = parse_tool_json(
+        await client.callTool({
+          name: "build_sync_plan",
+          arguments: {
+            nodes: [
+              {
+                node_token: "nod-new",
+                obj_token: "doc-new",
+                title: "新增文档",
+                path: "通用知识/拆镜方法/新增文档",
+                obj_edit_time: "1760000000",
+              },
+            ],
+            sync_records: [],
+          },
+        }),
+      );
+      expect(plan).toMatchObject({
+        to_add: [{ source_doc_token: "doc-new", title: "新增文档" }],
+        to_update: [],
+        to_move: [],
+        to_delete: [],
+        unchanged: [],
+        warnings: [],
+      });
+
+      const invalid = parse_tool_json(
+        await client.callTool({
+          name: "build_sync_plan",
+          arguments: { nodes: "not-an-array", sync_records: [] },
+        }),
+      );
+      expect(invalid).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "nodes" } },
+      });
+      expect(errors.join(""), "server stderr should stay empty").toBe("");
+    } finally {
+      await client.close();
+    }
+  }, 30000);
 });

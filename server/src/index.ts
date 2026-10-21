@@ -9,6 +9,17 @@ import {
 import { health } from "./tools/health.js";
 import { init_knowledge_b, type InitKnowledgeBInput } from "./tools/init_knowledge_b.js";
 import { write_config, type WriteConfigInput } from "./tools/write_config.js";
+import { build_sync_plan } from "./sync_plan.js";
+import type { SyncState } from "./base_mapping.js";
+import { delete_doc_cards } from "./tools/delete_doc_cards.js";
+import { fetch_knowledge_a_doc } from "./tools/fetch_knowledge_a_doc.js";
+import { read_sync_state } from "./tools/read_sync_state.js";
+import {
+  replace_doc_cards,
+  type ReplaceDocCardsInput,
+} from "./tools/replace_doc_cards.js";
+import { scan_knowledge_a, type ScannedNode } from "./tools/scan_knowledge_a.js";
+import { update_doc_sync_state, type UpdateDocSyncStateInput } from "./tools/update_doc_sync_state.js";
 
 const server = new Server(
   { name: "script2shot", version: "0.1.0" },
@@ -62,6 +73,118 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "scan_knowledge_a",
+    description:
+      "只读扫描知识库 A 的 Wiki 节点元数据（不读正文），返回 nodes[] / skipped[] / warnings[]；" +
+      "nodes[] 是 build_sync_plan 的输入。",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "read_sync_state",
+    description:
+      "只读读取知识库 B 的 SyncState 全表，返回 records[]（每条带 Base record_id）；" +
+      "records[] 是 build_sync_plan 的输入。",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "build_sync_plan",
+    description:
+      "对 scan_knowledge_a 的 nodes[] 与 read_sync_state 的 records[] 做变化分类，" +
+      "返回 to_add / to_update / to_move / to_delete / unchanged / warnings 的整批 dry-run 计划（原样 JSON）。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        nodes: {
+          type: "array",
+          description: "scan_knowledge_a 返回的 nodes[]。",
+        },
+        sync_records: {
+          type: "array",
+          description: "read_sync_state 返回的 records[]。",
+        },
+      },
+      required: ["nodes", "sync_records"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "fetch_knowledge_a_doc",
+    description:
+      "只读读取一个知识库 A 文档的 markdown 正文与 revision_id；" +
+      "正文标题取不到时回退节点标题并返回 warning。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        doc: { type: "string", description: "飞书文档 URL 或 token。" },
+      },
+      required: ["doc"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "replace_doc_cards",
+    description:
+      "替换模式（cards）或元数据模式（metadata_patch）二选一，dry_run 缺省 true：" +
+      "执行时先记录该文档旧卡的 record_id、写入新卡、再只删除旧 record_id；cards: [] 表示清空该文档全部卡片。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source_doc_token: {
+          type: "string",
+          description: "知识库 A 文档 token（即知识卡的 source_doc_token）。",
+        },
+        cards: {
+          type: "array",
+          description: "该文档的完整新卡集合；与 metadata_patch 二选一。",
+        },
+        metadata_patch: {
+          type: "object",
+          description:
+            "只更新现有卡的来源元数据：source_path / source_title / scope / project_id；与 cards 二选一。",
+        },
+        dry_run: { type: "boolean", description: "缺省 true：只预览，不写不删。" },
+      },
+      required: ["source_doc_token"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "update_doc_sync_state",
+    description:
+      "按 source_doc_token upsert 一个文档的 SyncState 记录；没有 dry-run 参数，" +
+      "只在用户确认整批、且该文档的卡片替换或元数据更新成功后才调用。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        record: {
+          type: "object",
+          description:
+            "SyncState 逻辑记录；可携带 read_sync_state 回读的 record_id（upsert 时忽略）。",
+        },
+      },
+      required: ["record"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "delete_doc_cards",
+    description:
+      "删除一个文档在知识库 B 中的全部知识卡与 SyncState 记录（不可逆）；" +
+      "dry_run 缺省 true 只预览，只有执行路径才带高风险确认 --yes，返回值中的 dry_run 字段区分预览与执行。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source_doc_token: {
+          type: "string",
+          description: "要删除知识卡与 SyncState 的知识库 A 文档 token。",
+        },
+        dry_run: { type: "boolean", description: "缺省 true：只预览，不真正删除。" },
+      },
+      required: ["source_doc_token"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -69,23 +192,298 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name } = request.params;
   if (name === "health") {
-    const result = await health();
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    return tool_json(await health());
   }
   if (name === "write_config") {
-    const result = write_config(
-      (request.params.arguments ?? {}) as unknown as WriteConfigInput,
+    return tool_json(
+      write_config((request.params.arguments ?? {}) as unknown as WriteConfigInput),
     );
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   }
   if (name === "init_knowledge_b") {
-    const result = await init_knowledge_b(
-      (request.params.arguments ?? {}) as unknown as InitKnowledgeBInput,
+    return tool_json(
+      await init_knowledge_b(
+        (request.params.arguments ?? {}) as unknown as InitKnowledgeBInput,
+      ),
     );
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+  if (name === "scan_knowledge_a") {
+    const parsed = parse_empty_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(await scan_knowledge_a()) : tool_json(parsed);
+  }
+  if (name === "read_sync_state") {
+    const parsed = parse_empty_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(await read_sync_state()) : tool_json(parsed);
+  }
+  if (name === "build_sync_plan") {
+    const parsed = parse_build_sync_plan_arguments(request.params.arguments);
+    return parsed.ok
+      ? tool_json(build_sync_plan(parsed.value.nodes, parsed.value.sync_records))
+      : tool_json(parsed);
+  }
+  if (name === "fetch_knowledge_a_doc") {
+    const parsed = parse_fetch_doc_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(await fetch_knowledge_a_doc(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "replace_doc_cards") {
+    const parsed = parse_replace_doc_cards_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(await replace_doc_cards(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "update_doc_sync_state") {
+    const parsed = parse_update_doc_sync_state_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(await update_doc_sync_state(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "delete_doc_cards") {
+    const parsed = parse_delete_doc_cards_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(await delete_doc_cards(parsed.value)) : tool_json(parsed);
   }
   throw new McpError(ErrorCode.MethodNotFound, `未知工具：${name}`);
 });
+
+/** 工具结果统一按原样 JSON 返回；分发层校验失败也走同一形状，不用 JSON-RPC 错误。 */
+function tool_json(value: unknown): { content: Array<{ type: "text"; text: string }> } {
+  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+}
+
+type DispatchFailure = {
+  ok: false;
+  error: { code: "CONFIG_INVALID"; message: string; details?: Record<string, unknown> };
+};
+
+type Parsed<T> = { ok: true; value: T } | DispatchFailure;
+
+function invalid_arguments(message: string, details?: Record<string, unknown>): DispatchFailure {
+  return {
+    ok: false,
+    error:
+      details === undefined
+        ? { code: "CONFIG_INVALID", message }
+        : { code: "CONFIG_INVALID", message, details },
+  };
+}
+
+/** arguments 省略等价于空对象；显式 null / 数组 / 标量按 fail-closed 拒绝。 */
+function parse_arguments_object(raw: unknown): Parsed<Record<string, unknown>> {
+  if (raw === undefined) {
+    return { ok: true, value: {} };
+  }
+  if (!is_record(raw)) {
+    return invalid_arguments("工具入参必须是 JSON 对象。", { field: "arguments" });
+  }
+  return { ok: true, value: raw };
+}
+
+function reject_unknown_keys(
+  record: Record<string, unknown>,
+  allowed: readonly string[],
+): DispatchFailure | undefined {
+  for (const key of Object.keys(record)) {
+    if (!allowed.includes(key)) {
+      return invalid_arguments(`入参包含不支持的字段 "${key}"。`, {
+        field: key,
+        allowed: [...allowed],
+      });
+    }
+  }
+  return undefined;
+}
+
+function parse_empty_arguments(raw: unknown): Parsed<Record<string, never>> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, []);
+  return unknown_key === undefined ? { ok: true, value: {} } : unknown_key;
+}
+
+function parse_fetch_doc_arguments(raw: unknown): Parsed<{ doc: string }> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, ["doc"]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  const doc = parsed.value.doc;
+  if (typeof doc !== "string" || doc.trim() === "") {
+    return invalid_arguments('入参字段 "doc" 期望非空字符串。', { field: "doc" });
+  }
+  return { ok: true, value: { doc } };
+}
+
+/** build_sync_plan 消费的字段；只校验类型，不改写调用方数据。 */
+const PLAN_NODE_STRING_FIELDS = [
+  "node_token",
+  "obj_token",
+  "title",
+  "path",
+  "obj_edit_time",
+] as const;
+const PLAN_SYNC_STATE_STRING_FIELDS = [
+  "source_doc_token",
+  "source_node_token",
+  "source_path",
+  "source_title",
+  "obj_edit_time",
+] as const;
+
+function parse_build_sync_plan_arguments(
+  raw: unknown,
+): Parsed<{ nodes: ScannedNode[]; sync_records: SyncState[] }> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, ["nodes", "sync_records"]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  const nodes = parsed.value.nodes;
+  if (!Array.isArray(nodes)) {
+    return invalid_arguments('入参字段 "nodes" 期望数组（scan_knowledge_a 返回的 nodes[]）。', {
+      field: "nodes",
+    });
+  }
+  const sync_records = parsed.value.sync_records;
+  if (!Array.isArray(sync_records)) {
+    return invalid_arguments(
+      '入参字段 "sync_records" 期望数组（read_sync_state 返回的 records[]）。',
+      { field: "sync_records" },
+    );
+  }
+  const node_error = require_string_fields(nodes, PLAN_NODE_STRING_FIELDS, "nodes");
+  if (node_error !== undefined) {
+    return node_error;
+  }
+  const state_error = require_string_fields(
+    sync_records,
+    PLAN_SYNC_STATE_STRING_FIELDS,
+    "sync_records",
+  );
+  if (state_error !== undefined) {
+    return state_error;
+  }
+  return { ok: true, value: { nodes: nodes as ScannedNode[], sync_records: sync_records as SyncState[] } };
+}
+
+function require_string_fields(
+  entries: readonly unknown[],
+  fields: readonly string[],
+  field_name: string,
+): DispatchFailure | undefined {
+  for (const [index, entry] of entries.entries()) {
+    if (!is_record(entry)) {
+      return invalid_arguments(`入参字段 "${field_name}[${index}]" 期望对象。`, {
+        field: `${field_name}[${index}]`,
+      });
+    }
+    for (const key of fields) {
+      if (typeof entry[key] !== "string") {
+        return invalid_arguments(`入参字段 "${field_name}[${index}].${key}" 期望字符串。`, {
+          field: `${field_name}[${index}].${key}`,
+        });
+      }
+    }
+  }
+  return undefined;
+}
+
+function parse_replace_doc_cards_arguments(raw: unknown): Parsed<ReplaceDocCardsInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, [
+    "source_doc_token",
+    "cards",
+    "metadata_patch",
+    "dry_run",
+  ]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  const source_doc_token = parsed.value.source_doc_token;
+  if (typeof source_doc_token !== "string" || source_doc_token.trim() === "") {
+    return invalid_arguments('入参字段 "source_doc_token" 期望非空字符串。', {
+      field: "source_doc_token",
+    });
+  }
+  const cards = parsed.value.cards;
+  if (cards !== undefined && !Array.isArray(cards)) {
+    return invalid_arguments('入参字段 "cards" 期望数组。', { field: "cards" });
+  }
+  const metadata_patch = parsed.value.metadata_patch;
+  if (metadata_patch !== undefined && !is_record(metadata_patch)) {
+    return invalid_arguments('入参字段 "metadata_patch" 期望对象。', { field: "metadata_patch" });
+  }
+  const dry_run = parsed.value.dry_run;
+  if (dry_run !== undefined && typeof dry_run !== "boolean") {
+    return invalid_arguments('入参字段 "dry_run" 期望布尔值。', { field: "dry_run" });
+  }
+  return {
+    ok: true,
+    value: {
+      source_doc_token,
+      ...(cards === undefined ? {} : { cards }),
+      ...(metadata_patch === undefined ? {} : { metadata_patch }),
+      ...(dry_run === undefined ? {} : { dry_run }),
+    },
+  };
+}
+
+function parse_update_doc_sync_state_arguments(
+  raw: unknown,
+): Parsed<UpdateDocSyncStateInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, ["record"]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  const record = parsed.value.record;
+  if (!is_record(record)) {
+    return invalid_arguments('入参字段 "record" 期望 SyncState 对象。', { field: "record" });
+  }
+  // record 的具体字段由 update_doc_sync_state 内部按 schema 校验；这里只挡非对象。
+  return {
+    ok: true,
+    value: { record: record as unknown as UpdateDocSyncStateInput["record"] },
+  };
+}
+
+function parse_delete_doc_cards_arguments(
+  raw: unknown,
+): Parsed<{ source_doc_token: string; dry_run?: boolean }> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, ["source_doc_token", "dry_run"]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  const source_doc_token = parsed.value.source_doc_token;
+  if (typeof source_doc_token !== "string" || source_doc_token.trim() === "") {
+    return invalid_arguments('入参字段 "source_doc_token" 期望非空字符串。', {
+      field: "source_doc_token",
+    });
+  }
+  const dry_run = parsed.value.dry_run;
+  if (dry_run !== undefined && typeof dry_run !== "boolean") {
+    return invalid_arguments('入参字段 "dry_run" 期望布尔值。', { field: "dry_run" });
+  }
+  return {
+    ok: true,
+    value: { source_doc_token, ...(dry_run === undefined ? {} : { dry_run }) },
+  };
+}
+
+function is_record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
