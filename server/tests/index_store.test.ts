@@ -1,6 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { KnowledgeCard } from "../src/base_mapping.js";
 import {
@@ -248,6 +256,27 @@ describe("index_store", () => {
 
     expect(() => index_status(file_path)).not.toThrow();
     expect(index_status(file_path)).toEqual({ state: "corrupt", card_count: 0 });
+  });
+
+  test("index status is a read-only probe for empty and schema-less files", () => {
+    const file_path = index_file_path();
+    mkdirSync(path.dirname(file_path), { recursive: true });
+
+    // 0 字节文件不可当空库使用：探测不得补建 schema，按 corrupt 处理。
+    writeFileSync(file_path, "");
+    expect(index_status(file_path)).toEqual({ state: "corrupt", card_count: 0 });
+    expect(statSync(file_path).size, "探测不得写入 0 字节文件").toBe(0);
+
+    // 合法 SQLite 文件但缺少 cards 表：同样是 corrupt，且探测不执行任何 DDL。
+    const other = new DatabaseSync(file_path);
+    try {
+      other.exec("CREATE TABLE other (id INTEGER)");
+    } finally {
+      other.close();
+    }
+    const size_before = statSync(file_path).size;
+    expect(index_status(file_path)).toEqual({ state: "corrupt", card_count: 0 });
+    expect(statSync(file_path).size, "探测不得修改缺少 cards 表的文件").toBe(size_before);
   });
 
   test("doc state marker roundtrips revision and sync time", () => {

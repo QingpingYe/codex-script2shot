@@ -1,4 +1,14 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -537,5 +547,22 @@ describe("health", () => {
     const index = check(corrupt, "index");
     expect(index).toMatchObject({ status: "warn", detail: { state: "corrupt", card_count: 0 } });
     expect(corrupt.warnings).toContainEqual({ code: "INDEX_CORRUPT", message: index.message });
+  });
+
+  test("health probes a 0-byte index file without modifying it", async () => {
+    create_local_dirs();
+    write_config();
+    const index_path = index_file_path();
+    mkdirSync(path.dirname(index_path), { recursive: true });
+    writeFileSync(index_path, "");
+
+    const result = await run_health("ok");
+
+    expect(result.ok).toBe(true);
+    const index = check(result, "index");
+    expect(index).toMatchObject({ status: "warn", detail: { state: "corrupt", card_count: 0 } });
+    expect(result.warnings).toContainEqual({ code: "INDEX_CORRUPT", message: index.message });
+    expect(statSync(index_path).size, "health 探测不得给 0 字节索引补建 schema").toBe(0);
+    expect(readFileSync(index_path).length).toBe(0);
   });
 });

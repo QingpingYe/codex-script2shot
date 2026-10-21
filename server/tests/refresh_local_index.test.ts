@@ -584,6 +584,148 @@ describe("refresh_local_index", () => {
     expect(existsSync(path.join(home, "index"))).toBe(false);
   });
 
+  test("refresh dry run leaves a 0-byte index file untouched and not ready", async () => {
+    const state_a = make_state(DOC_A);
+    write_base_state({
+      state: [state_row("rec_state_a", state_a)],
+      cards: [card_row("rec_card_a1", make_card("card-a1", DOC_A))],
+    });
+    const index_path = index_file_path();
+    mkdirSync(path.dirname(index_path), { recursive: true });
+    writeFileSync(index_path, "");
+
+    const dry = expect_success(await run_refresh({ dry_run: true }));
+
+    expect(dry.index_status, "0 字节索引不得被探测成 ready").toEqual({
+      state: "corrupt",
+      card_count: 0,
+    });
+    expect(statSync(index_path).size, "dry run 不得给 0 字节索引补建 schema").toBe(0);
+    expect(readFileSync(index_path).length).toBe(0);
+
+    // 执行路径仍能重建这个不可用的索引文件。
+    const applied = expect_success(await run_refresh({ dry_run: false }));
+    expect(applied.index_status).toEqual({ state: "ready", card_count: 1 });
+    expect(readFileSync(index_path).length).toBeGreaterThan(0);
+  });
+
+  test("refresh reports a structured error when the stale index cannot be removed", async () => {
+    const state_a = make_state(DOC_A);
+    write_base_state({
+      state: [state_row("rec_state_a", state_a)],
+      cards: [],
+    });
+    seed_cache([
+      { token: DOC_A, marker: marker_of(state_a), cards: [make_card("card-a1", DOC_A)] },
+    ]);
+    // 索引路径是「非空目录」：探测报 corrupt，重建前的删除会失败。
+    const index_path = index_file_path();
+    mkdirSync(index_path, { recursive: true });
+    writeFileSync(path.join(index_path, "occupied.txt"), "occupied", "utf8");
+
+    const result = await run_refresh({ dry_run: false });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "INDEX_UNAVAILABLE", details: { path: index_path } },
+    });
+    expect(existsSync(path.join(index_path, "occupied.txt")), "删除失败时保留原路径").toBe(true);
+  });
+
+  test("refresh deletes a half-built index and reports a structured error", async () => {
+    const state_a = make_state(DOC_A, {
+      source_revision: 2,
+      last_synced_at: SYNCED_AT_LATER,
+    });
+    write_base_state({
+      state: [state_row("rec_state_a", state_a)],
+      cards: [
+        card_row("rec_card_shared", make_card("card-shared", DOC_A, { source_revision: 2 })),
+      ],
+    });
+    seed_cache([
+      {
+        token: DOC_A,
+        marker: { source_revision: 1, last_synced_at: SYNCED_AT },
+        cards: [make_card("card-a-stale", DOC_A)],
+      },
+      {
+        token: DOC_GONE,
+        marker: { source_revision: 1, last_synced_at: SYNCED_AT },
+        cards: [make_card("card-shared", DOC_GONE)],
+      },
+    ]);
+    // DOC_GONE 占用了 card-shared 这个主键：写入 DOC_A 的新卡时主键冲突。
+    seed_index([
+      {
+        token: DOC_GONE,
+        marker: { source_revision: 1, last_synced_at: SYNCED_AT },
+        cards: [make_card("card-shared", DOC_GONE)],
+      },
+    ]);
+
+    const result = await run_refresh({ dry_run: false });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "INDEX_UNAVAILABLE",
+        details: { path: index_file_path(), cleanup_failed: false },
+      },
+    });
+    expect(existsSync(index_file_path()), "不完整索引已删除").toBe(false);
+  });
+
+  test.skipIf(!IS_WINDOWS)(
+    "refresh reports a structured error when the index file is locked",
+    async () => {
+      const state_a = make_state(DOC_A, {
+        source_revision: 2,
+        last_synced_at: SYNCED_AT_LATER,
+      });
+      write_base_state({
+        state: [state_row("rec_state_a", state_a)],
+        cards: [
+          card_row("rec_card_shared", make_card("card-shared", DOC_A, { source_revision: 2 })),
+        ],
+      });
+      seed_cache([
+        {
+          token: DOC_A,
+          marker: { source_revision: 1, last_synced_at: SYNCED_AT },
+          cards: [make_card("card-a-stale", DOC_A)],
+        },
+        {
+          token: DOC_GONE,
+          marker: { source_revision: 1, last_synced_at: SYNCED_AT },
+          cards: [make_card("card-shared", DOC_GONE)],
+        },
+      ]);
+      // 持有写句柄：Windows 上删除被占用的 SQLite 文件会 EBUSY/EPERM，
+      // 用来覆盖「索引写失败 + 清理也失败」的分支。
+      const lock = open_index();
+      try {
+        replace_doc_rows(lock, DOC_GONE, [make_card("card-shared", DOC_GONE)], {
+          source_revision: 1,
+          last_synced_at: SYNCED_AT,
+        });
+
+        const result = await run_refresh({ dry_run: false });
+
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            code: "INDEX_UNAVAILABLE",
+            details: { path: index_file_path(), cleanup_failed: true },
+          },
+        });
+        expect(existsSync(index_file_path()), "清理失败时保留原索引文件").toBe(true);
+      } finally {
+        lock.close();
+      }
+    },
+  );
+
   test("refresh continues with cache when b unreachable", async () => {
     env = { ...env, FAKE_SCENARIO: "base-unreachable" };
     const docs: SeededDoc[] = [

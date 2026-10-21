@@ -314,7 +314,14 @@ export async function refresh_local_index(
 
   if (rebuild_index) {
     // 索引是 B 的派生临时数据：重建时从干净文件开始（旧文件可能损坏或残留旧行）。
-    rmSync(index_path, { force: true });
+    const remove_error = remove_index_file(index_path);
+    if (remove_error !== undefined) {
+      return failure(
+        "INDEX_UNAVAILABLE",
+        `旧的本地索引文件无法删除，已放弃本次重建：${remove_error}。`,
+        { path: index_path, cleanup_failed: true },
+      );
+    }
   }
   try {
     const db = open_index(index_path);
@@ -341,11 +348,19 @@ export async function refresh_local_index(
     }
   } catch (error) {
     // 不留半截索引：检索若读到最后一次失败的中间状态会给出错误结果，删掉更安全。
-    rmSync(index_path, { force: true });
+    const cleanup_error = remove_index_file(index_path);
+    if (cleanup_error !== undefined) {
+      return failure(
+        "INDEX_UNAVAILABLE",
+        `本地索引写入失败：${describe_error(error)}；且不完整的索引文件无法删除：` +
+          `${cleanup_error}。`,
+        { path: index_path, cleanup_failed: true },
+      );
+    }
     return failure(
       "INDEX_UNAVAILABLE",
       `本地索引写入失败，已删除不完整的索引文件：${describe_error(error)}。`,
-      { path: index_path },
+      { path: index_path, cleanup_failed: false },
     );
   }
 
@@ -379,6 +394,20 @@ export async function refresh_local_index(
 /** `--filter-json` 的过滤对象；形状与 `lark_base.list_records` 的既有用法一致。 */
 function source_doc_filter(token: string): Record<string, unknown> {
   return { logic: "and", conditions: [["source_doc_token", "==", token]] };
+}
+
+/**
+ * 删除索引文件（重建前清理旧文件、写失败后清理半成品）。删除失败时返回错误
+ * 描述而不是抛出：Windows 上被其它进程占用或权限异常的索引文件会让 `rmSync`
+ * 抛 EBUSY/EPERM，调用方必须把它转成结构化结果，不能让它逃出工具契约。
+ */
+function remove_index_file(file_path: string): string | undefined {
+  try {
+    rmSync(file_path, { force: true });
+    return undefined;
+  } catch (error) {
+    return describe_error(error);
+  }
 }
 
 function state_marker(record: SyncStateRecord): DocMarker {

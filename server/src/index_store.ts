@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { KnowledgeCard } from "./base_mapping.js";
@@ -15,8 +15,10 @@ import { normalize_text } from "./normalize.js";
  *   （统一走 `normalize_text`）；`tags`/`entities`/`target_models` 存 JSON 文本数组。
  * - 索引只是知识库 B 的派生物：`replace_doc_rows` 按文档整体替换，单事务内
  *   完成「删旧行 -> 插新行 -> upsert doc_state」，失败整体回滚。
- * - `index_status()` 按路径探测：文件缺失返回 missing，打不开或结构损坏返回
- *   corrupt，绝不抛异常、不会凭空创建文件（健康检查与降级路径依赖该行为）。
+ * - `index_status()` 按路径**只读**探测：文件缺失返回 missing；存在但不是普通文件、
+ *   0 字节、打不开或缺少 `cards` 表时返回 corrupt；其余返回 ready。绝不抛异常、
+ *   不凭空创建文件、不执行任何 DDL（health 与 `refresh_local_index` 的 dry run
+ *   依赖「探测不写入」这一保证；schema 保证只由写路径的 `open_index()` 负责）。
  */
 
 export const INDEX_DIR_NAME = "index";
@@ -155,19 +157,37 @@ export function delete_doc_rows(db: DatabaseSync, source_doc_token: string): voi
 }
 
 /**
- * 按路径探测索引状态，不抛异常、不凭空创建文件：
- * 路径不存在 -> `missing`（不落盘）；打开或读表失败 -> `corrupt`；其余 ->
- * `ready` 并返回 `cards` 行数。零字节文件按空库处理（会补建 schema）。
- * 调用方（health、`refresh_local_index`）据此决定重建或降级。
+ * 按路径只读探测索引状态，不抛异常、不凭空创建文件、不写任何字节：
+ *
+ * - 路径不存在 -> `missing`（不落盘）；
+ * - 存在但不是普通文件、大小为 0、无法以只读方式打开、或缺少 `cards` 表 ->
+ *   `corrupt`（0 字节文件不再当空库处理：这里绝不执行 DDL）；
+ * - 其余 -> `ready` 并返回 `cards` 行数。
+ *
+ * 调用方（health、`refresh_local_index` 的 dry run 与重建判断）据此决定重建或
+ * 降级；真正建表只发生在写路径的 `open_index()` 里。
  */
 export function index_status(file_path: string = index_file_path()): IndexStatus {
   if (!existsSync(file_path)) {
     return { state: "missing", card_count: 0 };
   }
 
+  let size = 0;
+  let is_file = false;
+  try {
+    const stats = statSync(file_path);
+    size = stats.size;
+    is_file = stats.isFile();
+  } catch {
+    return { state: "corrupt", card_count: 0 };
+  }
+  if (!is_file || size === 0) {
+    return { state: "corrupt", card_count: 0 };
+  }
+
   let db: DatabaseSync | undefined;
   try {
-    db = open_index(file_path);
+    db = new DatabaseSync(file_path, { readOnly: true });
     const row = db.prepare("SELECT COUNT(*) AS card_count FROM cards").get();
     const card_count = row?.card_count;
     return { state: "ready", card_count: typeof card_count === "number" ? card_count : 0 };
