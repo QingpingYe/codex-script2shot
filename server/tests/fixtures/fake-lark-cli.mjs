@@ -7,10 +7,13 @@
 //   FAKE_SCENARIO        ok | no-auth | auth-expired | legacy-no-auth | legacy-auth |
 //                        old-version | missing-capability | bad-json | space-unreachable |
 //                        base-unreachable | table-missing | legacy-table-list |
-//                        table-create-no-id（默认 ok）
+//                        table-create-no-id | create-failed | delete-failed（默认 ok）；
+//                        后两者只让对应的 batch-create / record-delete 失败，用来注入
+//                        单文档替换的写入阶段 / 删除阶段故障
 //   FAKE_AUTH_EXIT_CODE  覆盖 auth status 的退出码，用于覆盖 ok:false 且退出码为 0 的分支
 //   FAKE_ACTIVE_PROFILE  覆盖 profile list 返回的活动 profile（默认 default）
 //   FAKE_LOG_FILE        把每次调用的 argv 以 JSON Lines 追加记录
+//   FAKE_LOG_JSON        设为 1 时，日志额外记录解析后的 --json payload（含 @file）
 //   FAKE_WIKI_NODES_FILE wiki nodes list 录制索引（父级/分页令牌 → 原始响应页文件）；
 //                        未设置时 wiki nodes list 返回空页
 //   FAKE_WIKI_NODE_GET_FILE wiki +node-get 录制索引（node token → 原始响应 payload）；
@@ -29,7 +32,15 @@ const scenario = process.env.FAKE_SCENARIO ?? "ok";
 const args = process.argv.slice(2);
 const log_file = process.env.FAKE_LOG_FILE;
 if (log_file) {
-  appendFileSync(log_file, `${JSON.stringify({ scenario, args })}\n`, "utf8");
+  const entry = { scenario, args };
+  if (process.env.FAKE_LOG_JSON === "1") {
+    // 与真实 CLI 一致解析 @file，把 body 一并记进日志，便于断言大 payload 的内容。
+    const json = resolve_json_argument(args);
+    if (json !== undefined) {
+      entry.json = json;
+    }
+  }
+  appendFileSync(log_file, `${JSON.stringify(entry)}\n`, "utf8");
 }
 
 const HELP_COMMANDS = {
@@ -468,6 +479,13 @@ if (group === "base") {
       process.stderr.write("fake-lark-cli: unknown table for +record-batch-create\n");
       exit_with(1);
     }
+    if (scenario === "create-failed") {
+      process.stdout.write(
+        `${JSON.stringify({ ok: false, error: { code: "FAKE_CREATE_FAILED", message: "injected create failure" } })}\n`,
+      );
+      process.stderr.write("fake-lark-cli: injected +record-batch-create failure\n");
+      exit_with(1);
+    }
     const table_records = records_of(state, table.id);
     const record_id_list = [];
     for (const entry of entries) {
@@ -518,6 +536,13 @@ if (group === "base") {
     const table = find_base_table(state, arg_value(args, "--table-id"));
     if (!table) {
       process.stderr.write("fake-lark-cli: unknown table for +record-delete\n");
+      exit_with(1);
+    }
+    if (scenario === "delete-failed") {
+      process.stdout.write(
+        `${JSON.stringify({ ok: false, error: { code: "FAKE_DELETE_FAILED", message: "injected delete failure" } })}\n`,
+      );
+      process.stderr.write("fake-lark-cli: injected +record-delete failure\n");
       exit_with(1);
     }
     if (confirm) {
@@ -613,16 +638,21 @@ function arg_values(args, flag) {
   return values;
 }
 
+// `--json @<path>` / `--fields @<path>` 由真实 CLI 读取文件内容（2026-10-21 实测）；这里保持同一行为。
 function parse_json_argument(args, flag) {
   const raw = arg_value(args, flag);
   if (typeof raw !== "string") {
     return undefined;
   }
   try {
-    return JSON.parse(raw);
+    return JSON.parse(raw.startsWith("@") ? readFileSync(raw.slice(1), "utf8") : raw);
   } catch {
     return undefined;
   }
+}
+
+function resolve_json_argument(args) {
+  return parse_json_argument(args, "--json");
 }
 
 function load_recorded_map(file) {

@@ -1,6 +1,7 @@
 import {
   chmodSync,
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -104,6 +105,14 @@ function read_calls(): Array<{ scenario: string; args: string[] }> {
     .trim()
     .split(/\r?\n/)
     .map((line) => JSON.parse(line) as { scenario: string; args: string[] });
+}
+
+function json_argument(args: string[]): string {
+  const index = args.indexOf("--json");
+  if (index < 0) {
+    throw new Error(`调用缺少 --json：${args.join(" ")}`);
+  }
+  return args[index + 1] as string;
 }
 
 function expect_ok<T extends { ok: boolean }>(result: T): Extract<T, { ok: true }> {
@@ -548,5 +557,144 @@ describe("lark_base", () => {
       expect(result.error.code).toBe("INTERNAL");
       expect(result.error.message).toContain("table");
     }
+  });
+
+  // Task 2 结转 Minor：inline `--json` 会顶到 Windows cmd.exe 行长上限（约 32k），
+  // 大 payload 必须走临时文件 + `--json "@<path>"`，并且用完立即删除。
+  test("batch create passes large payloads through a temporary json file and removes it", async () => {
+    write_state({
+      tables: [
+        {
+          id: "tbl_cards",
+          name: "KnowledgeCards",
+          fields: with_field_ids([
+            { name: "card_id", type: "text" },
+            { name: "content", type: "text" },
+          ]),
+        },
+      ],
+      records: {},
+    });
+    env.FAKE_LOG_JSON = "1";
+    const records = Array.from({ length: 120 }, (_value, index) => ({
+      card_id: `c${index + 1}`,
+      content: "x".repeat(300),
+    }));
+
+    const result = expect_ok(await batch_create_records(context(), "tbl_cards", records));
+
+    expect(result.record_ids).toHaveLength(records.length);
+    const calls = read_calls();
+    expect(calls).toHaveLength(1);
+    const json_value = json_argument(calls[0].args);
+    expect(json_value.startsWith("@")).toBe(true);
+    expect(existsSync(json_value.slice(1)), "临时文件必须用完即删").toBe(false);
+    const logged = (calls[0] as { json?: unknown }).json as {
+      create_records: Array<Record<string, unknown>>;
+    };
+    expect(logged.create_records).toHaveLength(records.length);
+    expect(logged.create_records[0].card_id).toBe("c1");
+    expect(read_state().records.tbl_cards).toHaveLength(records.length);
+    expect(read_state().records.tbl_cards[0].fields.content).toHaveLength(300);
+  });
+
+  test("batch update passes large payloads through a temporary json file and removes it", async () => {
+    write_state({
+      tables: [
+        {
+          id: "tbl_cards",
+          name: "KnowledgeCards",
+          fields: with_field_ids([{ name: "content", type: "text" }]),
+        },
+      ],
+      records: {
+        tbl_cards: Array.from({ length: 200 }, (_value, index) => ({
+          record_id: `r${index + 1}`,
+          fields: { content: "old" },
+        })),
+      },
+    });
+    env.FAKE_LOG_JSON = "1";
+    const updates = Array.from({ length: 200 }, (_value, index) => ({
+      record_id: `r${index + 1}`,
+      fields: { content: "y".repeat(200) },
+    }));
+
+    const result = expect_ok(await batch_update_records(context(), "tbl_cards", updates));
+
+    expect(result).toEqual({ ok: true });
+    const calls = read_calls();
+    expect(calls).toHaveLength(1);
+    const json_value = json_argument(calls[0].args);
+    expect(json_value.startsWith("@")).toBe(true);
+    expect(existsSync(json_value.slice(1)), "临时文件必须用完即删").toBe(false);
+    const logged = (calls[0] as { json?: unknown }).json as {
+      update_records: Record<string, Record<string, unknown>>;
+    };
+    expect(Object.keys(logged.update_records)).toHaveLength(200);
+    // 真实 API 只接受直接字段映射（嵌套 fields 会被拒绝 800010701）。
+    expect(logged.update_records.r1).toEqual({ content: "y".repeat(200) });
+    expect(read_state().records.tbl_cards[0].fields.content).toHaveLength(200);
+  });
+
+  test("temporary json file is removed when the write fails", async () => {
+    write_state({ tables: [], records: {} });
+    env.FAKE_LOG_JSON = "1";
+    env.FAKE_SCENARIO = "base-unreachable";
+    const records = Array.from({ length: 120 }, (_value, index) => ({
+      card_id: `c${index + 1}`,
+      content: "x".repeat(300),
+    }));
+
+    const result = await batch_create_records(context(), "tbl_cards", records);
+
+    expect(result.ok).toBe(false);
+    const calls = read_calls();
+    expect(calls).toHaveLength(1);
+    const json_value = json_argument(calls[0].args);
+    expect(json_value.startsWith("@")).toBe(true);
+    expect(existsSync(json_value.slice(1)), "失败路径也必须删除临时文件").toBe(false);
+  });
+
+  // Task 2 结转 Minor：create/update 已覆盖 200/201，这里补 delete 的分块边界。
+  test("delete chunks at 200 records and passes yes on execution", async () => {
+    const ids = Array.from({ length: BASE_BATCH_SIZE + 1 }, (_value, index) => `rec_${index + 1}`);
+    write_state({
+      tables: [
+        {
+          id: "tbl_cards",
+          name: "KnowledgeCards",
+          fields: with_field_ids([{ name: "card_id", type: "text" }]),
+        },
+      ],
+      records: {
+        tbl_cards: ids.map((record_id, index) => ({
+          record_id,
+          fields: { card_id: `c${index + 1}` },
+        })),
+      },
+    });
+
+    const result = expect_ok(
+      await delete_records(context(), "tbl_cards", ids, { dry_run: false }),
+    );
+
+    expect(result.dry_run).toBe(false);
+    expect(result.record_ids).toEqual(ids);
+    const delete_calls = read_calls().filter((call) => call.args[1] === "+record-delete");
+    expect(delete_calls).toHaveLength(2);
+    const first_payload = JSON.parse(json_argument(delete_calls[0].args)) as {
+      record_id_list: string[];
+    };
+    const second_payload = JSON.parse(json_argument(delete_calls[1].args)) as {
+      record_id_list: string[];
+    };
+    expect(first_payload.record_id_list).toEqual(ids.slice(0, BASE_BATCH_SIZE));
+    expect(second_payload.record_id_list).toEqual([`rec_${BASE_BATCH_SIZE + 1}`]);
+    for (const call of delete_calls) {
+      expect(call.args).toContain("--yes");
+      expect(call.args).not.toContain("--dry-run");
+    }
+    expect(read_state().records.tbl_cards).toEqual([]);
   });
 });

@@ -1,3 +1,7 @@
+import { randomBytes } from "node:crypto";
+import { rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { BaseCellValue, BaseFieldMap, BaseRecord } from "./base_mapping.js";
 import { STDERR_LIMIT, run_cli, type LarkCliErrorCode } from "./lark_cli.js";
 
@@ -17,11 +21,20 @@ import { STDERR_LIMIT, run_cli, type LarkCliErrorCode } from "./lark_cli.js";
  *   对象数组，不改用 ndjson；分页跟随 `data.next_offset` 直到 `has_more=false`。
  * - 返回值一律是结果对象，不抛异常；业务失败按读写语义归一化为 `KB_READ_FAILED` /
  *   `KB_WRITE_FAILED`，错误详情只带 base token 前缀，不带完整 token。
+ * - 三个批量写命令（create / update / delete）的 `--json` 在序列化后超过
+ *   `JSON_ARG_INLINE_LIMIT` 时改走临时文件 + `--json "@<path>"`（2026-10-21 实测
+ *   CLI 接受 `@file`），规避 Windows cmd.exe 的命令行长度上限；临时文件在同一次
+ *   CLI 调用结束后（成功或失败）立即删除。小 payload 保持 inline，便于断言 argv。
  */
 
 export const BASE_BATCH_SIZE = 200;
 export const BASE_MAX_PAGE_SIZE = 200;
 export const BASE_DEFAULT_PAGE_SIZE = 200;
+/**
+ * `--json` 的 inline 阈值（序列化后的字符数）。小于等于该值保持 inline；超过则写入
+ * 临时文件并以 `@<path>` 传递，用完即删。
+ */
+export const JSON_ARG_INLINE_LIMIT = 24_000;
 
 const BASE_TOKEN_PREFIX_LENGTH = 6;
 
@@ -298,21 +311,16 @@ export async function batch_create_records(
 ): Promise<BatchCreateRecordsResult> {
   const record_ids: string[] = [];
   for (const batch of chunk(records, BASE_BATCH_SIZE)) {
-    const args = [
-      "base",
-      "+record-batch-create",
-      "--base-token",
-      base.base_token,
-      "--table-id",
-      table_id,
-      "--json",
-      JSON.stringify({ create_records: batch }),
-    ];
-    const run = await run_base_command(base, args, "KB_WRITE_FAILED", {
-      command: "+record-batch-create",
-      table_id,
-      partial_record_ids: record_ids,
-    });
+    const run = await run_json_command(
+      base,
+      ["base", "+record-batch-create", "--base-token", base.base_token, "--table-id", table_id],
+      { create_records: batch },
+      {
+        command: "+record-batch-create",
+        table_id,
+        partial_record_ids: record_ids,
+      },
+    );
     if (!run.ok) {
       return run;
     }
@@ -341,21 +349,16 @@ export async function batch_update_records(
     for (const update of batch) {
       update_records[update.record_id] = update.fields;
     }
-    const args = [
-      "base",
-      "+record-batch-update",
-      "--base-token",
-      base.base_token,
-      "--table-id",
-      table_id,
-      "--json",
-      JSON.stringify({ update_records }),
-    ];
-    const run = await run_base_command(base, args, "KB_WRITE_FAILED", {
-      command: "+record-batch-update",
-      table_id,
-      partial_record_ids: updated_record_ids,
-    });
+    const run = await run_json_command(
+      base,
+      ["base", "+record-batch-update", "--base-token", base.base_token, "--table-id", table_id],
+      { update_records },
+      {
+        command: "+record-batch-update",
+        table_id,
+        partial_record_ids: updated_record_ids,
+      },
+    );
     if (!run.ok) {
       return run;
     }
@@ -377,22 +380,17 @@ export async function delete_records(
   const dry_run = options.dry_run ?? true;
   const deleted: string[] = [];
   for (const batch of chunk(record_ids, BASE_BATCH_SIZE)) {
-    const args = [
-      "base",
-      "+record-delete",
-      "--base-token",
-      base.base_token,
-      "--table-id",
-      table_id,
-      "--json",
-      JSON.stringify({ record_id_list: batch }),
-      dry_run ? "--dry-run" : "--yes",
-    ];
-    const run = await run_base_command(base, args, "KB_WRITE_FAILED", {
-      command: "+record-delete",
-      table_id,
-      partial_record_ids: deleted,
-    });
+    const run = await run_json_command(
+      base,
+      ["base", "+record-delete", "--base-token", base.base_token, "--table-id", table_id],
+      { record_id_list: batch },
+      {
+        command: "+record-delete",
+        table_id,
+        partial_record_ids: deleted,
+      },
+      [dry_run ? "--dry-run" : "--yes"],
+    );
     if (!run.ok) {
       return run;
     }
@@ -404,6 +402,62 @@ export async function delete_records(
     }
   }
   return { ok: true, dry_run, record_ids: deleted };
+}
+
+/**
+ * 批量写命令的统一 `--json` 通道：小 payload 直接 inline；超过
+ * `JSON_ARG_INLINE_LIMIT` 时写临时文件并以 `@<path>` 传入，调用结束（成功或失败）
+ * 立即删除临时文件。
+ */
+async function run_json_command(
+  base: LarkBaseContext,
+  args: string[],
+  payload: unknown,
+  context: CommandContext,
+  trailing_args: readonly string[] = [],
+): Promise<{ ok: true; payload: unknown } | LarkBaseFailure> {
+  const json = JSON.stringify(payload);
+  if (json.length <= JSON_ARG_INLINE_LIMIT) {
+    return run_base_command(
+      base,
+      [...args, "--json", json, ...trailing_args],
+      "KB_WRITE_FAILED",
+      context,
+    );
+  }
+
+  let temp_path: string;
+  try {
+    temp_path = write_temp_json(json);
+  } catch (error) {
+    return internal_error(`无法写入临时 JSON 文件，已放弃本次调用：${describe_error(error)}`, {
+      command: context.command,
+      payload_length: json.length,
+    });
+  }
+  try {
+    return await run_base_command(
+      base,
+      [...args, "--json", `@${temp_path}`, ...trailing_args],
+      "KB_WRITE_FAILED",
+      context,
+    );
+  } finally {
+    try {
+      rmSync(temp_path, { force: true });
+    } catch {
+      // 临时文件清理失败不影响本次调用的结果；文件位于系统临时目录，可被系统回收。
+    }
+  }
+}
+
+function write_temp_json(json: string): string {
+  const file_path = path.join(
+    os.tmpdir(),
+    `script2shot-lark-${process.pid}-${randomBytes(6).toString("hex")}.json`,
+  );
+  writeFileSync(file_path, json, "utf8");
+  return file_path;
 }
 
 async function run_base_command(
@@ -600,4 +654,8 @@ function is_record(value: unknown): value is Record<string, unknown> {
 
 function is_non_empty_string(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
+}
+
+function describe_error(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

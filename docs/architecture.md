@@ -652,7 +652,7 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 | `fetch_knowledge_a_doc` | 只读取一个指定文档的正文和 revision |
 | `read_sync_state` | 读取知识库 B 的按文档 SyncState |
 | `init_knowledge_b` | 创建或校验 `KnowledgeCards` 和 `SyncState`，返回固定 table_id |
-| `replace_doc_cards` | 接收 Skill 生成的新卡，按旧 record_id 集合完成单文档卡片替换 |
+| `replace_doc_cards` | 两种模式（二选一）：①替换模式接收 Skill 生成的新卡，执行顺序固定为「先记录该 `source_doc_token` 现有卡片的 `record_id` 集合 → 写入新卡（每 200 条一批）→ 只删除第 ① 步记录的旧 `record_id`」，写入失败不执行删除；②`metadata_patch` 模式只批量更新现有卡片的来源元数据（`source_path`/`source_title`/`scope`/`project_id`），不写新卡、不删卡 |
 | `update_doc_sync_state` | 只更新一个来源文档的 SyncState 记录 |
 | `delete_doc_cards` | 删除已移除文档对应的知识卡和状态 |
 | `refresh_local_index` | 只刷新发生变化的文档对应的本地索引 |
