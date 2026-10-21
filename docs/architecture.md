@@ -543,7 +543,7 @@ MCP Server 技术栈（2026-10-20 确认）：
 ```toml
 [lark]
 cli_path = "D:\\lark-cli\\lark-cli.exe"
-profile = "default"
+profile = "cli_aa20f40faa785d11"
 space_a = "wiki-space-a"
 base_b = "base-token-b"
 knowledge_cards_table_id = "tbl..."
@@ -575,7 +575,8 @@ profile 并与配置比对，不调用 `profile use` / `profile remove`。不一
 **默认知识库（2026-10-21）。** 插件自带默认知识库配置，默认值唯一来源是
 `server/src/setup_defaults.ts` 的 `SETUP_DEFAULTS`：
 
-- `lark.profile` = `"default"`；
+- `lark.profile` = `"cli_aa20f40faa785d11"`（取本机 lark-cli 活动 profile，
+  2026-10-21 核对；更换机器或账号时需相应调整，插件不自动切换）；
 - `lark.space_a` = `"7695983197091302359"`（知识库 A 空间）；
 - `lark.base_b` = `"WRrVblDbqaEFOSs39P0cFzilnfd"`（知识库 B 的 Base obj_token；
   完整值只出现在源码与配置文件里，运行期输出仍按掩码规则处理）；

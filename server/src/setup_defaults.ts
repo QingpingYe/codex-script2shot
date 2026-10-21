@@ -20,7 +20,7 @@ export interface SetupDefaults {
 
 export const SETUP_DEFAULTS: SetupDefaults = {
   lark: {
-    profile: "default",
+    profile: "cli_aa20f40faa785d11",
     space_a: "7695983197091302359",
     base_b: "WRrVblDbqaEFOSs39P0cFzilnfd",
     project_roots: [

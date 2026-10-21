@@ -187,7 +187,7 @@ describe("write_config", () => {
   });
 
   test("setup defaults pin the shipped knowledge bases", () => {
-    expect(SETUP_DEFAULTS.lark.profile).toBe("default");
+    expect(SETUP_DEFAULTS.lark.profile).toBe("cli_aa20f40faa785d11");
     expect(SETUP_DEFAULTS.lark.space_a).toBe("7695983197091302359");
     expect(SETUP_DEFAULTS.lark.base_b).toBe("WRrVblDbqaEFOSs39P0cFzilnfd");
     expect(SETUP_DEFAULTS.lark.project_roots).toEqual([
