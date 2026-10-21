@@ -34,6 +34,33 @@
 
 ---
 
+### Task 0: Phase 1 遗留清理（2026-10-21 并入）
+
+**Files:**
+- Modify: `server/src/lark_cli.ts`、`server/tests/lark_cli.test.ts`
+- Modify: `server/src/config.ts`、`server/tests/config.test.ts`
+- Modify: `server/src/tools/health.ts`、`server/tests/health.test.ts`
+
+**Interfaces:**
+- Consumes: Phase 1 交付（lark_cli / config / health）与最终复核的延期分诊「Phase 2 前必须」清单。
+- Produces:
+  - `run_cli` 增加输出累积上限（每流 1 MiB）：超限即终止子进程并返回 `INTERNAL`（details 标明超限流与已读字节）；测试覆盖。
+  - 平台可注入：`platform` 作为可选参数（默认 `process.platform`），Windows 分支可在任意平台测试。
+  - 补测试：spawn 失败（不存在的可执行路径 → `INTERNAL`）、POSIX 无执行位被拒绝（`skipIf win32`）。
+  - `.cmd` 参数安全测试：经 fake `.cmd` 传递含 `%PATH%`、`&`、空格与中文的引号参数，断言 `FAKE_LOG_FILE` 记录的 argv 与原始一致（防 `cmd.exe` 二次解析）。
+  - `config.ts`：`retrieval.default_top_k` 必须为正整数（0/负数/小数 → `CONFIG_INVALID` + `details.field`）；测试覆盖。
+  - `health`：把 `load_config()` 返回的 warnings（如 `CONFIG_FIELD_MISSING`、`CONFIG_FIELD_DEFAULTED`）以 `{code,message}` 合并进 `health.warnings`（去重）；测试覆盖。
+
+- [ ] **Step 1: 写失败测试**（输出上限、platform 注入、spawn 失败/POSIX 权限、`.cmd` 参数保真、default_top_k、health warnings 合并）
+- [ ] **Step 2: 运行并确认失败**：`npm --prefix server test -- lark_cli`、`config`、`health`
+- [ ] **Step 3: 实现并跑通**
+- [ ] **Step 4: 回归**：`npm --prefix server run typecheck`；`npm --prefix server run build`；`npm --prefix server test`
+
+```bash
+git add server/src/lark_cli.ts server/src/config.ts server/src/tools/health.ts server/tests/
+git commit -m "fix: phase 1 cleanup for phase 2 readiness"
+```
+
 ### Task 1: 知识卡与 SyncState schema、Base 字段映射
 
 **Files:**
@@ -388,6 +415,7 @@ git commit -m "feat: add knowledge sync skill"
 3. 删除一个文档后第三次同步 → 卡片与状态被清理。
 4. 第四次同步 → 全部 `unchanged`，`docs +fetch` 零调用（用 dry-run 清单核对）。
 5. 指定文档模式对不存在 token 同步 → 结构化失败，SyncState 未更新。
+6. 补测 Phase 1 未复测的 Base 能力：`table-create`、200 条批量写入上限、datetime CellValue（写入 → 读回 → 清理），结果追加到能力记录。
 
 - [ ] **Step 3: 把演练结果追加到 `docs/lark-cli-capability-notes.md`**
 
