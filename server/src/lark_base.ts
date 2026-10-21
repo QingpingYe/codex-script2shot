@@ -464,7 +464,8 @@ function write_temp_json(json: string): string {
     os.tmpdir(),
     `script2shot-lark-${process.pid}-${randomBytes(6).toString("hex")}.json`,
   );
-  writeFileSync(file_path, json, "utf8");
+  // 临时文件承载用户知识库内容，只给当前用户读写权限。
+  writeFileSync(file_path, json, { encoding: "utf8", mode: 0o600 });
   return file_path;
 }
 

@@ -377,6 +377,17 @@ describe("write_config", () => {
     expect(existsSync(home)).toBe(false);
   });
 
+  test.each([0, -3])("rejects non-positive default_top_k %i", (value) => {
+    const result = expect_error(
+      write_config({ config: { ...FULL_CONFIG, retrieval: { default_top_k: value } } }),
+    );
+
+    expect(result.error.code).toBe("CONFIG_INVALID");
+    expect(result.error.details?.field).toBe("retrieval.default_top_k");
+    expect(result.error.message).toContain("正整数");
+    expect(existsSync(home), "invalid input must not create anything").toBe(false);
+  });
+
   test("masks the previous base token in a diff against an existing config", () => {
     mkdirSync(home, { recursive: true });
     writeFileSync(

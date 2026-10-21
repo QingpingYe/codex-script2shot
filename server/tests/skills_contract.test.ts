@@ -64,13 +64,15 @@ function launcherCommand(scriptPath: string): { command: string; args: string[] 
   return { command: "sh", args: [scriptPath] };
 }
 
-async function connect_server(): Promise<{ client: Client; errors: string[] }> {
+async function connect_server(
+  env_overrides: Record<string, string> = {},
+): Promise<{ client: Client; errors: string[] }> {
   const { command, args } = launcherCommand(path.join(repoRoot, "scripts", launcherFileName));
   const transport = new StdioClientTransport({
     command,
     args,
     cwd: repoRoot,
-    env: inheritedEnv,
+    env: { ...inheritedEnv, ...env_overrides },
     stderr: "pipe",
   });
   const errors: string[] = [];
@@ -170,6 +172,29 @@ describe("knowledge-sync mcp tools contract", () => {
       expect(invalid).toMatchObject({
         ok: false,
         error: { code: "CONFIG_INVALID", details: { field: "nodes" } },
+      });
+      expect(errors.join(""), "server stderr should stay empty").toBe("");
+    } finally {
+      await client.close();
+    }
+  }, 30000);
+
+  test("rejects unknown parameters before any lark-cli child process can run", async () => {
+    // 指向不存在的 CLI：若分发没有在参数校验阶段 fail-closed，scan_knowledge_a 会
+    // 报 LARK_CLI_NOT_FOUND，而不是下面的 CONFIG_INVALID。
+    const bogus_cli = path.join(repoRoot, "server", "tests", "fixtures", "lark-cli-does-not-exist");
+    const { client, errors } = await connect_server({ LARK_CLI_PATH: bogus_cli });
+    try {
+      const result = parse_tool_json(
+        await client.callTool({
+          name: "scan_knowledge_a",
+          arguments: { unexpected: true },
+        }),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "unexpected" } },
       });
       expect(errors.join(""), "server stderr should stay empty").toBe("");
     } finally {

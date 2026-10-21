@@ -498,7 +498,7 @@ function stage_failure(
   return {
     ok: false,
     error: {
-      code: failure_result.error.code === "KB_WRITE_FAILED" ? "KB_WRITE_FAILED" : failure_result.error.code,
+      code: failure_result.error.code,
       message,
       details: {
         ...(failure_result.error.details ?? {}),

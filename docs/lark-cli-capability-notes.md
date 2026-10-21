@@ -130,10 +130,10 @@ B 空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空�
 | --- | --- | --- | --- |
 | 1 | `wiki +node-list` 返回含 `obj_edit_time` 的完整字段，`--page-all --page-limit` 翻页 | 有偏差 | 快捷命令实测不含 `obj_edit_time`；原始 API `wiki nodes list` 返回完整字段（见 §2.2）。Phase 2 改用原始 API 手动翻页（`--page-token`） |
 | 2 | `docs +fetch` 返回 `data.document.{document_id, revision_id, content, reference_map, tips}` | 实测通过 | `document_id`、`revision_id=13`、`content`（Markdown，5393 字符）实测拿到；结构按文档形状，空 `tips`、`reference_map` 未单独出现；markdown 模式不支持 with-ids（实测 warning，见 §2.3） |
-| 3 | `base +table-create` 用 `--fields` JSON；`+record-batch-create` 用 `--json '{"create_records":[...]}'`（≤200 条）；datetime CellValue 形如 `2026-03-24 10:00` | 实测通过 | 本轮复测 `+record-batch-create` 形状与 `data.record_id_list` 返回；`+table-create` 返回形状与 `--fields` 的 `text` / `number` / `datetime` token 已由 live 建表验证（§9）；200 条上限仍未复测，按 `--help` 复核；datetime CellValue 读回归一化见 §9 |
+| 3 | `base +table-create` 用 `--fields` JSON；`+record-batch-create` 用 `--json '{"create_records":[...]}'`（≤200 条）；datetime CellValue 形如 `2026-03-24 10:00` | 实测通过 | 本轮复测 `+record-batch-create` 形状与 `data.record_id_list` 返回；`+table-create` 返回形状与 `--fields` 的 `text` / `number` / `datetime` token 已由 live 建表验证（§9）；200 条上限已复测，见 Phase 2 live 演练节（§9）；datetime CellValue 读回归一化见 §9 |
 | 4 | `auth status --json` 可读；`auth login` 走设备码登录 | 实测通过 | 重新登录后状态输出用户身份已就绪 |
 | 5 | 可移植插件布局：`plugin.json` + `mcp.json` + `skills/` | 实测通过 | Phase 1 清单与握手测试覆盖，本轮回归复跑 |
-| 6 | Codex 桌面端自带 Node 与 `node:sqlite` 可用 | 未复测 | 属环境类事实，不属于 lark-cli 能力探测范围；本轮回归在开发机 Node 上运行 |
+| 6 | Codex 桌面端自带 Node 与 `node:sqlite` 可用 | 实测通过 | 属环境类事实，不属于 lark-cli 能力探测范围；本机 Node v26.8.2 回归实测 `node:sqlite`（`DatabaseSync`）可用，插件要求 Node >= 24 也因此满足 |
 
 ## 6. 脱敏 fixture 清单
 
@@ -187,8 +187,8 @@ B 空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空�
   `+record-batch-update` 的帮助文本 CellValue happy path 也列出该形状。
 - `base +table-create` 返回形状：已由本轮 live 建表验证（见 §9）：`--fields` 的
   `text` / `number` / `datetime` token 经建表落地、由 `+field-list` 读回字段类型核对
-  一致（此前帮助文本只给出 `text` / `select` 示例）。仍未复测：`+record-batch-create`
-  的 200 条上限；由控制方稍后补测。
+  一致（此前帮助文本只给出 `text` / `select` 示例）。`+record-batch-create` 的
+  200 条上限已复测，见 Phase 2 live 演练节（§9）。
 
 ## 9. Phase 2 live 演练（2026-10-21）
 

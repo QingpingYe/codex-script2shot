@@ -1,7 +1,9 @@
 # script2shot 本地 MCP Server
 
-本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册
-`health` 与 `write_config`；其余工具在后续任务中注册。
+本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册 10 个工具：
+`health`、`write_config`、`init_knowledge_b`、`scan_knowledge_a`、`read_sync_state`、
+`build_sync_plan`、`fetch_knowledge_a_doc`、`replace_doc_cards`、`update_doc_sync_state`、
+`delete_doc_cards`；检索与阶段工具待 Phase 3+ 注册。
 
 ## 环境要求
 
@@ -104,7 +106,8 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
 - Base datetime 单元格只保留分钟精度，写入时秒被截断；`obj_edit_time` 是不透明
   字符串，原样进出，不做任何时间换算。
 
-## Phase 1 已知限制
+## 已知限制
 
-- 已注册 `health`（只读健康检查）与 `write_config`（配置预览/写入）；其余工具由后续任务注册。
+- 已注册上列 10 个工具（健康检查、配置写入、知识库 B 初始化与知识库同步）；
+  检索与阶段工具由 Phase 3+ 注册。
 - 启动依赖已构建的 `server/dist/server.mjs`，源码目录不直接运行。

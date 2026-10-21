@@ -53,14 +53,15 @@ describe("schema validation", () => {
     expect(result.errors).toEqual([]);
   });
 
-  test("sync state rejects non-integer card count", () => {
-    // 先确认缺失必填字段的 fixture 被拒绝且路径指向具体字段，再验证非整数 card_count。
+  test("sync state rejects a fixture missing a required field", () => {
     const missing = validate_sync_state(
       read_fixture("sync_state.invalid.missing_required.json"),
     );
     expect(missing.ok).toBe(false);
     expect(error_paths(missing)).toEqual(["last_run_id"]);
+  });
 
+  test("sync state rejects non-integer card count", () => {
     const valid = read_fixture("sync_state.valid.json") as Record<string, unknown>;
     const fractional = validate_sync_state({ ...valid, card_count: 1.5 });
     expect(fractional.ok).toBe(false);

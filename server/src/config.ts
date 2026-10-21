@@ -392,7 +392,7 @@ function describe_value(value: unknown): string {
   return typeof value;
 }
 
-function field_type_message(field: string, expected: string, actual: unknown): string {
+export function field_type_message(field: string, expected: string, actual: unknown): string {
   return `配置字段 "${field}" 期望${expected}，实际为 ${describe_value(actual)}。`;
 }
 

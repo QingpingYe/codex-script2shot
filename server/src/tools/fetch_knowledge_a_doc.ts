@@ -238,6 +238,7 @@ async function resolve_node_token(
   if (has_text(space_a)) {
     args.push("--space-id", space_a);
   }
+  args.push("--as", "user");
 
   const run = await run_cli(cli_path, args, { env, expect_json: true });
   if (!run.ok) {

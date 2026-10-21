@@ -177,7 +177,7 @@ export async function scan_knowledge_a(
       }
 
       for (const [index, raw] of page.items.entries()) {
-        const parsed = parse_wiki_node(raw, task.parent_node_token, index);
+        const parsed = parse_wiki_node(raw, task.parent_node_token, index, task.path);
         if ("error" in parsed) {
           return parsed;
         }
@@ -315,6 +315,7 @@ function parse_wiki_node(
   value: unknown,
   fallback_parent_node_token: string,
   row_index: number,
+  parent_path: readonly string[],
 ): WikiNode | ScanKnowledgeAFailure {
   if (!is_record(value)) {
     return failure("SCAN_FAILED", `wiki nodes list 返回的第 ${row_index + 1} 个节点不是对象。`, {
@@ -330,15 +331,55 @@ function parse_wiki_node(
       { row: row_index },
     );
   }
+
+  // 缺字段时 fail closed：静默补空串会让文档永远停在 to_update（obj_edit_time）
+  // 或被后续按空 obj_token 处理（obj_token），都不安全。
+  const obj_token = optional_text(value.obj_token);
+  if (obj_token === undefined) {
+    return failure(
+      "SCAN_FAILED",
+      `wiki nodes list 返回的第 ${row_index + 1} 个节点缺少 obj_token，无法确定文档 token。`,
+      {
+        row: row_index,
+        ...node_failure_details(node_token, title, parent_path),
+      },
+    );
+  }
+  const obj_edit_time = optional_text(value.obj_edit_time);
+  if (obj_edit_time === undefined) {
+    return failure(
+      "SCAN_FAILED",
+      `wiki nodes list 返回的第 ${row_index + 1} 个节点缺少 obj_edit_time，` +
+        "无法判定同步状态。",
+      {
+        row: row_index,
+        ...node_failure_details(node_token, title, parent_path),
+      },
+    );
+  }
+
   return {
     node_token,
-    obj_token: optional_text(value.obj_token) ?? "",
+    obj_token,
     obj_type: optional_text(value.obj_type) ?? "",
     node_type: optional_text(value.node_type) ?? "",
     parent_node_token: optional_text(value.parent_node_token) ?? fallback_parent_node_token,
     title,
-    obj_edit_time: optional_text(value.obj_edit_time) ?? "",
+    obj_edit_time,
     has_child: value.has_child === true,
+  };
+}
+
+/** failure details 里回带节点定位信息，便于对着 wiki nodes list 响应排错。 */
+function node_failure_details(
+  node_token: string,
+  title: string,
+  parent_path: readonly string[],
+): Record<string, unknown> {
+  return {
+    node_token,
+    title,
+    path: [...parent_path, title].join("/"),
   };
 }
 

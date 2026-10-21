@@ -413,8 +413,9 @@ function push_skipped(
 
 /**
  * 合并 config 层 warnings：只保留 {code, message}，不回传 refs。
- * 按 code 去重、先到先得：load_config 会对每个缺失字段各发一条同 code 的
- * CONFIG_FIELD_MISSING，health.warnings 作为聚合摘要只保留首条。
+ * 合并时按 code 去重、先到先得：load_config 会对每个缺失字段各发一条同 code 的
+ * CONFIG_FIELD_MISSING，这里作为聚合摘要只保留首条；push_check 追加的 warning
+ * 不参与该去重。
  */
 function merge_config_warnings(
   warnings: HealthWarning[],

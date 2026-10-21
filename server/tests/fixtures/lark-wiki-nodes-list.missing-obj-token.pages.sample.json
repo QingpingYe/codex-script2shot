@@ -1,0 +1,12 @@
+{
+  "space_id": "EXAMPLESPACE0001",
+  "page_size": 50,
+  "note": "wiki nodes list 录制索引（负例）：首节点缺 obj_token，用于验证 fail-closed。",
+  "pages": [
+    {
+      "parent_node_token": "",
+      "page_token": "",
+      "file": "lark-wiki-nodes-list.missing-obj-token.sample.json"
+    }
+  ]
+}

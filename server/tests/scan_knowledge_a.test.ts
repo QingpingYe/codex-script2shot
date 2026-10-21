@@ -379,6 +379,30 @@ describe("scan_knowledge_a", () => {
     expect(wiki_calls()).toHaveLength(1);
   });
 
+  test.each([
+    {
+      field: "obj_token",
+      manifest: "lark-wiki-nodes-list.missing-obj-token.pages.sample.json",
+    },
+    {
+      field: "obj_edit_time",
+      manifest: "lark-wiki-nodes-list.missing-obj-edit-time.pages.sample.json",
+    },
+  ])("scan fails closed when a node is missing $field", async ({ field, manifest }) => {
+    env.FAKE_WIKI_NODES_FILE = path.join(FIXTURES_DIR, manifest);
+
+    const result = await run_scan();
+
+    if (!("ok" in result)) {
+      throw new Error("期望扫描失败");
+    }
+    expect(result.error.code).toBe("SCAN_FAILED");
+    expect(result.error.message).toContain(field);
+    expect(result.error.details?.row).toBe(0);
+    expect(result.error.details?.node_token).toBe("wikcnSAMPLEGEN00");
+    expect(result.error.details?.title).toBe("通用知识");
+  });
+
   test("read sync state rejects rows that are not sync state records", async () => {
     write_raw_state_rows([{ source_doc_token: "doc-x", card_id: "card-x" }]);
 

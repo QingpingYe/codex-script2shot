@@ -268,6 +268,8 @@ describe("fetch_knowledge_a_doc", () => {
       LENS_NODE_TOKEN,
       "--space-id",
       SPACE_A,
+      "--as",
+      "user",
     ]);
     expect(flag_value(calls[1], "--doc")).toBe(LENS_DOC_TOKEN);
   });

@@ -77,7 +77,8 @@ description: 安装后的一次性引导：确认 lark-cli 与登录状态，收
   `SETUP_DEFAULTS`，任何日志、回显与摘要都按掩码规则处理）；
 - `lark.project_roots` 默认把《五夫临门》影游项目知识根节点
   `Ou9Vw0emviJajPklYjQc4fqjnie` 映射为 `project_id` = `wufu-linmen`；
-- `lark.profile` 默认 `default`，`retrieval.default_top_k` 默认 `12`。
+- `lark.profile` 缺省取插件默认 profile（见 `SETUP_DEFAULTS`，本机为
+  `cli_aa20f40faa785d11`，可替换），`retrieval.default_top_k` 默认 `12`。
 
 setup 时可直接采用这些默认值，也可以替换：改
 `~/.codex-script2shot/config.toml` 里对应字段，或在 setup 流程中收集新值后传给
@@ -91,7 +92,7 @@ setup 时可直接采用这些默认值，也可以替换：改
 | 字段 | 含义 | 取值来源 |
 | --- | --- | --- |
 | `lark.cli_path` | lark-cli 可执行文件路径 | `health` 的 `lark_cli.detail.path`、`LARK_CLI_PATH`，或用户提供的路径 |
-| `lark.profile` | lark-cli 使用的 profile | 用户确认，缺省 `default`（插件默认值，可替换） |
+| `lark.profile` | lark-cli 使用的 profile | 用户确认；缺省取插件默认 profile（见 `SETUP_DEFAULTS`，本机为 `cli_aa20f40faa785d11`，可替换） |
 | `lark.space_a` | 知识库 A 的 Wiki 数字 `space_id` | 用户提供或从 Wiki URL 解析；未提供时采用插件默认知识库 A |
 | `lark.base_b` | 知识库 B 的 Base token | 用户提供的 Base URL 或 token；未提供时采用插件默认知识库 B（回显只显示 `WRrVbl…`） |
 | `lark.project_roots` | 知识库 A 根节点到项目 ID 的映射表 | 缺省为《五夫临门》影游项目映射，可在 config.toml 里替换 |

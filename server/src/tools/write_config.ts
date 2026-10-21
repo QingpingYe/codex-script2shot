@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   ensure_local_dirs,
+  field_type_message,
   load_config,
   parse_project_roots,
   resolve_home,
@@ -198,10 +199,11 @@ function normalize_config(
   let default_top_k = SETUP_DEFAULTS.retrieval.default_top_k;
   const raw_top_k = is_record(raw_retrieval) ? raw_retrieval.default_top_k : undefined;
   if (raw_top_k !== undefined) {
-    if (typeof raw_top_k !== "number" || !Number.isInteger(raw_top_k)) {
-      return config_invalid('配置字段 "retrieval.default_top_k" 期望整数。', {
-        field: "retrieval.default_top_k",
-      });
+    if (typeof raw_top_k !== "number" || !Number.isInteger(raw_top_k) || raw_top_k <= 0) {
+      return config_invalid(
+        field_type_message("retrieval.default_top_k", "正整数", raw_top_k),
+        { field: "retrieval.default_top_k" },
+      );
     }
     default_top_k = raw_top_k;
   } else {
