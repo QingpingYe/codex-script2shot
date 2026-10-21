@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import os from "node:os";
 import path from "node:path";
 import { parse, stringify, TomlError } from "smol-toml";
+import { SETUP_DEFAULTS } from "./setup_defaults.js";
 
 /**
  * 本地配置模块（架构 §7.2、§7.3）。
@@ -14,7 +15,6 @@ import { parse, stringify, TomlError } from "smol-toml";
 
 export const DEFAULT_HOME_DIR_NAME = ".codex-script2shot";
 export const CONFIG_FILE_NAME = "config.toml";
-export const DEFAULT_TOP_K = 12;
 
 const LOCAL_DIR_NAMES = ["cache", "index", "logs"] as const;
 const LARK_KEYS = [
@@ -233,10 +233,10 @@ function build_config(
   const top_k_value = retrieval_table.default_top_k;
   let default_top_k: number;
   if (top_k_value === undefined) {
-    default_top_k = DEFAULT_TOP_K;
+    default_top_k = SETUP_DEFAULTS.retrieval.default_top_k;
     warnings.push({
       code: "CONFIG_FIELD_DEFAULTED",
-      message: `配置缺少 retrieval.default_top_k，使用默认值 ${DEFAULT_TOP_K}。`,
+      message: `配置缺少 retrieval.default_top_k，使用默认值 ${SETUP_DEFAULTS.retrieval.default_top_k}。`,
       refs: ["retrieval.default_top_k"],
     });
   } else if (typeof top_k_value !== "number" || !Number.isInteger(top_k_value)) {

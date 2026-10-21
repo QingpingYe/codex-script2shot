@@ -581,9 +581,11 @@ origin docx 根节点归入 `scope=project`：每项包含 `node_token`（根节
 时提供新值；setup Skill 与 `write_config` 都引用 `SETUP_DEFAULTS`，不重复硬编码。
 
 `write_config` 的缺省填充语义：`lark.profile`、`lark.space_a`、`lark.base_b`、
-`lark.project_roots` 为 `undefined` 时套用上述默认值；显式提供（包括显式空数组）
-的值优先。填充后仍校验 `lark.space_a` 与 `lark.base_b` 非空，返回值通过
-`applied_defaults[]` 列出本次实际套用的默认键路径。
+`lark.project_roots`、`retrieval.default_top_k` 为 `undefined` 时套用上述默认值；
+显式提供（包括显式空数组）的值优先。填充后仍校验 `lark.space_a` 与
+`lark.base_b` 非空，返回值通过 `applied_defaults[]` 列出本次实际套用的默认
+键路径。`config`、`lark`、`retrieval` 容器出现时必须是普通对象（fail-closed），
+否则返回 `CONFIG_INVALID` 并在 `details.field` 指明字段。
 
 `lark.project_roots` 非法时按 `CONFIG_INVALID` 处理：字段缺省视为 `[]` 且不产生
 warning；条目非表，或 `node_token` / `project_id` 非字符串或为空时，在 `details.field`

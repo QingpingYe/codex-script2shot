@@ -10,6 +10,7 @@ import {
   type LoadConfigResult,
   type Script2ShotConfig,
 } from "../src/config.js";
+import { SETUP_DEFAULTS } from "../src/setup_defaults.js";
 
 const FULL_CONFIG: Script2ShotConfig = {
   lark: {
@@ -152,7 +153,7 @@ describe("config", () => {
     const loaded = expect_loaded(load_config());
     expect(loaded.config.lark.cli_path).toBe("D:\\tools\\lark-cli.exe");
     expect(loaded.config.lark.profile).toBeUndefined();
-    expect(loaded.config.retrieval.default_top_k).toBe(12);
+    expect(loaded.config.retrieval.default_top_k).toBe(SETUP_DEFAULTS.retrieval.default_top_k);
 
     const refs = loaded.warnings.flatMap((warning) => warning.refs ?? []);
     for (const key of [
@@ -174,12 +175,20 @@ describe("config", () => {
     writeFileSync(configPath(tempRoot), "", "utf8");
     const empty = expect_loaded(load_config());
     expect(empty.config.lark).toEqual({ project_roots: [] });
-    expect(empty.config.retrieval.default_top_k).toBe(12);
+    expect(empty.config.retrieval.default_top_k).toBe(SETUP_DEFAULTS.retrieval.default_top_k);
     expect(empty.warnings.length).toBeGreaterThan(0);
     expect(
       empty.warnings.flatMap((warning) => warning.refs ?? []),
       "缺少 project_roots 属于缺省语义，不应产生 warning",
     ).not.toContain("lark.project_roots");
+  });
+
+  test("config load and setup defaults share one retrieval default source", () => {
+    expect(SETUP_DEFAULTS.retrieval.default_top_k).toBe(12);
+    writeFileSync(configPath(tempRoot), "", "utf8");
+    expect(expect_loaded(load_config()).config.retrieval.default_top_k).toBe(
+      SETUP_DEFAULTS.retrieval.default_top_k,
+    );
   });
 
   test("config roundtrips project roots array", () => {

@@ -1,11 +1,9 @@
-import { DEFAULT_TOP_K } from "./config.js";
-
 /**
  * 插件默认配置（架构 §7.3「默认知识库」）。
  *
  * 这里是默认值的唯一来源：`write_config` 与 setup Skill 的说明都引用本模块，
- * 不各自硬编码。默认知识库 A / B 可被用户替换；`project_roots` 给出根节点到
- * 项目 ID 的默认映射。
+ * `config.ts` 的缺省回填也从这里取值，不各自硬编码；本模块保持零依赖。
+ * 默认知识库 A / B 可被用户替换；`project_roots` 给出根节点到项目 ID 的默认映射。
  */
 
 export interface SetupDefaults {
@@ -30,6 +28,6 @@ export const SETUP_DEFAULTS: SetupDefaults = {
     ],
   },
   retrieval: {
-    default_top_k: DEFAULT_TOP_K,
+    default_top_k: 12,
   },
 };

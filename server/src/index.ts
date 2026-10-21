@@ -30,7 +30,7 @@ const TOOLS = [
         config: {
           type: "object",
           description:
-            "完整配置：{ lark: { cli_path, profile, space_a, base_b, knowledge_cards_table_id, sync_state_table_id }, retrieval: { default_top_k } }。",
+            "完整配置：{ lark: { cli_path, profile, space_a, base_b, knowledge_cards_table_id, sync_state_table_id, project_roots: [{ node_token, project_id }] }, retrieval: { default_top_k } }；缺省字段使用插件默认知识库配置（server/src/setup_defaults.ts）。",
         },
         create_local_dirs: {
           type: "boolean",

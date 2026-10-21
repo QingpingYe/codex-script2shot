@@ -12,7 +12,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { load_config, type Script2ShotConfig } from "../src/config.js";
 import { SETUP_DEFAULTS } from "../src/setup_defaults.js";
-import { write_config, type WriteConfigResult } from "../src/tools/write_config.js";
+import {
+  write_config,
+  type WriteConfigInput,
+  type WriteConfigResult,
+} from "../src/tools/write_config.js";
 
 const SPACE_A = "space-a-1";
 const BASE_B = "basetoken-b-123456789";
@@ -155,6 +159,7 @@ describe("write_config", () => {
       "lark.space_a",
       "lark.base_b",
       "lark.project_roots",
+      "retrieval.default_top_k",
     ]);
     expect(preview.diff).toContain(SETUP_DEFAULTS.lark.space_a);
     expect(preview.diff).toContain(`base_b = "${SETUP_DEFAULTS.lark.base_b.slice(0, 6)}…"`);
@@ -179,6 +184,55 @@ describe("write_config", () => {
       project_roots: SETUP_DEFAULTS.lark.project_roots,
     });
     expect(loaded.config.retrieval.default_top_k).toBe(SETUP_DEFAULTS.retrieval.default_top_k);
+  });
+
+  test("setup defaults pin the shipped knowledge bases", () => {
+    expect(SETUP_DEFAULTS.lark.profile).toBe("default");
+    expect(SETUP_DEFAULTS.lark.space_a).toBe("7695983197091302359");
+    expect(SETUP_DEFAULTS.lark.base_b).toBe("WRrVblDbqaEFOSs39P0cFzilnfd");
+    expect(SETUP_DEFAULTS.lark.project_roots).toEqual([
+      { node_token: "Ou9Vw0emviJajPklYjQc4fqjnie", project_id: "wufu-linmen" },
+    ]);
+    expect(SETUP_DEFAULTS.retrieval.default_top_k).toBe(12);
+  });
+
+  test("write_config reports the retrieval default only when it applies", () => {
+    const omitted = expect_success(write_config({ config: { lark: {} } }));
+    expect(omitted.applied_defaults).toContain("retrieval.default_top_k");
+    expect(omitted.diff).toContain(`default_top_k = ${SETUP_DEFAULTS.retrieval.default_top_k}`);
+
+    const empty_table = expect_success(write_config({ config: { retrieval: {} } }));
+    expect(
+      empty_table.applied_defaults,
+      "retrieval 表存在但 default_top_k 缺省时，该值仍是默认填充",
+    ).toContain("retrieval.default_top_k");
+
+    const explicit = expect_success(
+      write_config({ config: { retrieval: { default_top_k: 20 } } }),
+    );
+    expect(explicit.applied_defaults).not.toContain("retrieval.default_top_k");
+    expect(explicit.diff).toContain("default_top_k = 20");
+  });
+
+  test("rejects non-object config containers as CONFIG_INVALID", () => {
+    const cases: Array<{ input: unknown; field: string }> = [
+      { input: { config: null }, field: "config" },
+      { input: { config: [] }, field: "config" },
+      { input: { config: "config" }, field: "config" },
+      { input: { config: { lark: null } }, field: "lark" },
+      { input: { config: { lark: [] } }, field: "lark" },
+      { input: { config: { retrieval: null } }, field: "retrieval" },
+      { input: { config: { retrieval: [] } }, field: "retrieval" },
+    ];
+
+    for (const { input, field } of cases) {
+      const result = expect_error(write_config(input as WriteConfigInput));
+
+      expect(result.error.code, `${field} 应被拒绝`).toBe("CONFIG_INVALID");
+      expect(result.error.details?.field).toBe(field);
+      expect(result.error.message).toContain(field);
+      expect(existsSync(home), "invalid input must not create anything").toBe(false);
+    }
   });
 
   test("write_config explicit values override defaults", () => {

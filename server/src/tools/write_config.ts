@@ -16,9 +16,10 @@ import { SETUP_DEFAULTS } from "../setup_defaults.js";
  *
  * - `dry_run` 缺省为 true：只返回将写入的 config.toml diff 和将创建的目录，不落盘。
  * - `dry_run: false`：按需执行 `ensure_local_dirs()`，再原子写入 config.toml。
- * - `config` 里缺省的字段（profile / space_a / base_b / project_roots）用
- *   `SETUP_DEFAULTS` 填充，显式提供的值（包括显式空数组）优先；
- *   返回值用 `applied_defaults` 列出实际套用的默认键路径。
+ * - `config` 里缺省的字段（profile / space_a / base_b / project_roots /
+ *   retrieval.default_top_k）用 `SETUP_DEFAULTS` 填充，显式提供的值（包括显式
+ *   空数组）优先；返回值用 `applied_defaults` 列出实际套用的默认键路径。
+ * - `config`、`lark`、`retrieval` 若出现必须是普通对象，否则 CONFIG_INVALID。
  * - 返回值与错误信息里的 base_b 一律掩码（前 6 位 + `…`）；完整 token 只出现在配置文件里。
  */
 
@@ -115,8 +116,23 @@ function existing_base_b(): string | undefined {
 function normalize_config(
   raw: unknown,
 ): { config: Script2ShotConfig; applied_defaults: string[] } | WriteConfigFailure {
+  // 容器类型必须 fail-closed：null / 数组等非对象输入不得被当作空配置套默认值。
+  if (raw !== undefined && !is_record(raw)) {
+    return config_invalid('配置字段 "config" 期望普通对象。', { field: "config" });
+  }
   const record = is_record(raw) ? raw : {};
-  const lark = is_record(record.lark) ? record.lark : {};
+
+  const raw_lark = record.lark;
+  if (raw_lark !== undefined && !is_record(raw_lark)) {
+    return config_invalid('配置字段 "lark" 期望普通对象。', { field: "lark" });
+  }
+  const lark = is_record(raw_lark) ? raw_lark : {};
+
+  const raw_retrieval = record.retrieval;
+  if (raw_retrieval !== undefined && !is_record(raw_retrieval)) {
+    return config_invalid('配置字段 "retrieval" 期望普通对象。', { field: "retrieval" });
+  }
+
   const applied_defaults: string[] = [];
 
   const lark_config: LarkConfig = { project_roots: [] };
@@ -168,7 +184,7 @@ function normalize_config(
   }
 
   let default_top_k = SETUP_DEFAULTS.retrieval.default_top_k;
-  const raw_top_k = is_record(record.retrieval) ? record.retrieval.default_top_k : undefined;
+  const raw_top_k = is_record(raw_retrieval) ? raw_retrieval.default_top_k : undefined;
   if (raw_top_k !== undefined) {
     if (typeof raw_top_k !== "number" || !Number.isInteger(raw_top_k)) {
       return config_invalid('配置字段 "retrieval.default_top_k" 期望整数。', {
@@ -176,6 +192,8 @@ function normalize_config(
       });
     }
     default_top_k = raw_top_k;
+  } else {
+    applied_defaults.push("retrieval.default_top_k");
   }
 
   return {
