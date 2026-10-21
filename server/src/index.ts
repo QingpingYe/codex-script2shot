@@ -19,6 +19,11 @@ import {
   type RefreshLocalIndexInput,
 } from "./tools/refresh_local_index.js";
 import {
+  load_knowledge_pack,
+  LOAD_KNOWLEDGE_PACK_FIELDS,
+  type LoadKnowledgePackInput,
+} from "./tools/load_knowledge_pack.js";
+import {
   KNOWLEDGE_CATEGORY_VALUES,
   KNOWLEDGE_SCOPE_VALUES,
   SEARCH_KNOWLEDGE_FIELDS,
@@ -268,6 +273,34 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "load_knowledge_pack",
+    description:
+      "只读组装一个项目的知识包：全部 scope=general 卡片、scope=project 且 project_id 匹配的卡片、" +
+      "以及 target_models 兼容目标模型的 seedance_rule 卡片；顺序固定为 general → project → seedance" +
+      "（各自 category 升序 → card_id 升序），返回 cards[] / stats / warnings[]；索引不可用时返回 " +
+      "INDEX_UNAVAILABLE（无缓存回退）。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: {
+          type: "string",
+          description: "项目 ID：只加载该项目 scope=project 的知识卡。",
+        },
+        target_model: {
+          type: "string",
+          enum: [...TARGET_MODEL_VALUES],
+          description: "目标模型：seedance_rule 卡按 §3.1 兼容性过滤。",
+        },
+        explain: {
+          type: "boolean",
+          description: "Phase 5 的诊断输出；本期接受参数并返回 EXPLAIN_NOT_AVAILABLE warning。",
+        },
+      },
+      required: ["project_id", "target_model"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -326,6 +359,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (name === "search_knowledge") {
     const parsed = parse_search_knowledge_arguments(request.params.arguments);
     return parsed.ok ? tool_json(search_knowledge(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "load_knowledge_pack") {
+    const parsed = parse_load_knowledge_pack_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(load_knowledge_pack(parsed.value)) : tool_json(parsed);
   }
   throw new McpError(ErrorCode.MethodNotFound, `未知工具：${name}`);
 });
@@ -605,6 +642,23 @@ function parse_search_knowledge_arguments(raw: unknown): Parsed<SearchKnowledgeI
     return unknown_key;
   }
   return { ok: true, value: parsed.value as SearchKnowledgeInput };
+}
+
+/**
+ * 分发层只做「对象 + 未知字段」这层 fail-closed 校验；字段类型与取值范围由
+ * `load_knowledge_pack` 内部统一校验（同一套 CONFIG_INVALID 形状 + details.field），
+ * 避免两处校验漂移。
+ */
+function parse_load_knowledge_pack_arguments(raw: unknown): Parsed<LoadKnowledgePackInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, LOAD_KNOWLEDGE_PACK_FIELDS);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  return { ok: true, value: parsed.value as LoadKnowledgePackInput };
 }
 
 function is_record(value: unknown): value is Record<string, unknown> {
