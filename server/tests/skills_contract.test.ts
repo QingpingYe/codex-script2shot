@@ -92,7 +92,11 @@ function parse_tool_json(result: unknown): Record<string, unknown> {
 }
 
 describe("knowledge-sync mcp tools contract", () => {
-  /** 本流程直接消费的工具；tools/list 必须全部暴露，否则 Skill 无法调用。 */
+  /**
+   * tools/list 回归清单：名单里的 `health` 与七个同步工具
+   * （scan/read/plan/fetch/replace/update/delete）是 knowledge-sync 直接消费的；
+   * `write_config` 与 `init_knowledge_b` 属于 setup 流程，一并纳入额外回归覆盖。
+   */
   const requiredToolNames = [
     "health",
     "write_config",

@@ -381,7 +381,10 @@ lark-cli wiki nodes list --space-id <space_a> [--parent-node-token <token>] \
 - 跳过规则（写 warning，不中断扫描）：根节点不在 `project_roots` 中且标题不是
   「通用知识」⇒ `UNMAPPED_ROOT_NODE_SKIPPED`（整个子树不再扫描）；
   `node_type=shortcut` ⇒ `SHORTCUT_NODE_SKIPPED`（快捷方式不作为独立同步单元）；
-  `obj_type != docx` ⇒ `NON_DOC_NODE_SKIPPED`。
+  `obj_type != docx` ⇒ `NON_DOC_NODE_SKIPPED`（该节点及其子树都不再扫描；控制方
+  裁决 2026-10-21：真实 A 库的非 docx 节点均为叶子，即使将来其下挂 docx 子节点，
+  漏扫也只会走 `to_delete`，而删除必须经过整批 dry-run 预览并由用户确认，不会
+  静默删除数据）。
 - 变化分类按固定优先级：SyncState 有、扫描结果没有 ⇒ 删除；扫描结果有、SyncState
   没有 ⇒ 新增；`obj_edit_time` 不同 ⇒ 修改（即使同时移动或改名）；`obj_edit_time`
   相同但 `path` 或 `title` 不同 ⇒ 移动或改名（只更新元数据）；其余 ⇒ 未变化。
@@ -651,6 +654,7 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 | `scan_knowledge_a` | 只扫描知识库 A 的节点元数据，不读取文档正文 |
 | `fetch_knowledge_a_doc` | 只读取一个指定文档的正文和 revision |
 | `read_sync_state` | 读取知识库 B 的按文档 SyncState |
+| `build_sync_plan` | 纯函数工具：输入 `scan_knowledge_a` 的 `nodes[]` 与 `read_sync_state` 的 `records[]`，输出 `to_add` / `to_update` / `to_move` / `to_delete` / `unchanged` / `warnings` |
 | `init_knowledge_b` | 创建或校验 `KnowledgeCards` 和 `SyncState`，返回固定 table_id |
 | `replace_doc_cards` | 两种模式（二选一）：①替换模式接收 Skill 生成的新卡，执行顺序固定为「先记录该 `source_doc_token` 现有卡片的 `record_id` 集合 → 写入新卡（每 200 条一批）→ 只删除第 ① 步记录的旧 `record_id`」，写入失败不执行删除；②`metadata_patch` 模式只批量更新现有卡片的来源元数据（`source_path`/`source_title`/`scope`/`project_id`），不写新卡、不删卡 |
 | `update_doc_sync_state` | 只更新一个来源文档的 SyncState 记录 |
@@ -700,6 +704,7 @@ Skill 是 Codex 读取并执行的流程说明，不是可执行 CLI。用户通
 
 - 扫描知识库 A 的 Wiki 节点元数据。
 - 对比知识库 B 的按文档 `SyncState`。
+- 扫描后由 `build_sync_plan` 生成整批清单，用户确认后一次执行整批。
 - 只读取新增或修改文档的正文。
 - 只为这些变化文档生成结构化知识卡。
 - 只替换这些文档对应的知识卡。

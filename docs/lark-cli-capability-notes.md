@@ -159,3 +159,32 @@ B 空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空�
 3. 非 docx 节点跳过并写 warning，不读取二进制。
 4. 记录读写按 §4 处理矩阵形状与 `record_id_list`。
 5. 正文读取以 `data.document.revision_id` 作为 `source_revision`；`content` 为 Markdown。
+
+## 8. Phase 2 补充实测（2026-10-21）
+
+本节记录 Phase 2 适配期间控制方已实跑核对的事实与结论；不含 token 全文、日志
+原文或账号信息。真实同步演练（KnowledgeCards / SyncState 端到端）的结果由控制方
+在演练后另节追加。
+
+- `base +record-batch-create`：直接字段映射与嵌套 `{"fields": {...}}` **都**被接受；
+  `base +record-batch-update` **只**接受直接字段映射，嵌套形状被 API 拒绝
+  `800010701 invalid_request: Cell value does not match any supported shape`。本条
+  修正 / 补充 §3.1 的旧探针记录；CLI `--help` 也把直接字段映射列为 happy path。
+- `base +record-list --format json`：json 格式的 `--limit` 上限 200（帮助文本：
+  json defaults to 100 (range 1-200)）；ndjson 才是 2000（range 1-2000）。
+- `base +record-delete --dry-run` 被 CLI 接受（帮助文本：`--dry-run` print request
+  without executing）；执行路径用 `--yes`（Risk: high-risk-write）。
+- `wiki +node-get` 的真实响应是平铺 `data` 对象，没有 `data.node` 包裹。
+- `wiki nodes list` 的 `--page-size` 上限 50（帮助文本：max: 50）；本项目用手动
+  `--page-token` 翻页 + BFS，不用 `--page-all`。
+- `--json @file` 被 CLI 接受（用于规避 Windows 命令行长度上限）：实测原始 JSON
+  4,369 字符（转义后整条命令行 6,281 字符）可 inline 成功；原始 6,535 字符
+  （转义后 9,277）报 `The command line is too long.`；原始 ≥ 23.8k 字符报
+  `SPAWN_ERROR ENAMETOOLONG`。实现按「转义后命令行 ≤ 6,500 字符」决定 inline / `@file`。
+- `docs +fetch` 的 `--doc-format markdown` 与 `--detail with-ids` 组合仍会返回
+  warning：细节见 §2.3，此处只做引用。
+- datetime CellValue 形状 `"2026-03-24 10:00"`：§3.1 已记；`+record-batch-create` /
+  `+record-batch-update` 的帮助文本 CellValue happy path 也列出该形状。
+- 未复测项（如实记录）：真实 `base +table-create` 的返回形状，以及 `--fields` 的
+  `text` / `number` / `datetime` token 尚未在 live 演练中核对（帮助文本只给出
+  `text` / `select` 示例）；由控制方稍后补测。
