@@ -16,6 +16,7 @@ import {
   run_cli,
   type RunCliResult,
 } from "../lark_cli.js";
+import { index_file_path, index_status } from "../index_store.js";
 
 /**
  * 健康检查工具（架构 §8、§13）。
@@ -352,17 +353,40 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
     });
   }
 
-  push_check(
-    checks,
-    warnings,
-    {
+  const index_path = index_file_path();
+  const index = index_status(index_path);
+  if (index.state === "ready") {
+    push_check(checks, warnings, {
       id: "index",
-      status: "warn",
-      message: "本地索引尚未构建（Phase 1 仅报告占位状态）。",
-      detail: { state: "not_built" },
-    },
-    "INDEX_NOT_BUILT",
-  );
+      status: "pass",
+      message: `本地索引已就绪（${index.card_count} 张卡片）。`,
+      detail: { state: "ready", card_count: index.card_count, path: index_path },
+    });
+  } else if (index.state === "missing") {
+    push_check(
+      checks,
+      warnings,
+      {
+        id: "index",
+        status: "warn",
+        message: "本地索引尚未构建：请运行 refresh_local_index（$script2shot 入口会自动刷新）。",
+        detail: { state: "missing", card_count: 0, path: index_path },
+      },
+      "INDEX_NOT_BUILT",
+    );
+  } else {
+    push_check(
+      checks,
+      warnings,
+      {
+        id: "index",
+        status: "warn",
+        message: "本地索引文件损坏：请运行 refresh_local_index 重建（检索会先回退到缓存）。",
+        detail: { state: "corrupt", card_count: 0, path: index_path },
+      },
+      "INDEX_CORRUPT",
+    );
+  }
 
   // config 层 warnings（字段缺失 / 使用了默认值）同样对调用方可见，附在 check 自身的 warning 之后。
   if (!("error" in config_result) && config_result.exists) {

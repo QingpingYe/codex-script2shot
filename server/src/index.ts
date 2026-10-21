@@ -15,6 +15,10 @@ import { delete_doc_cards } from "./tools/delete_doc_cards.js";
 import { fetch_knowledge_a_doc } from "./tools/fetch_knowledge_a_doc.js";
 import { read_sync_state } from "./tools/read_sync_state.js";
 import {
+  refresh_local_index,
+  type RefreshLocalIndexInput,
+} from "./tools/refresh_local_index.js";
+import {
   replace_doc_cards,
   type ReplaceDocCardsInput,
 } from "./tools/replace_doc_cards.js";
@@ -185,6 +189,23 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "refresh_local_index",
+    description:
+      "以知识库 B 的 SyncState 为准增量刷新本地卡片缓存与关键词索引：只拉取变化文档的知识卡、" +
+      "删除 B 中已移除文档的本地数据；dry_run 缺省 true（不写缓存、不建索引）；" +
+      "B 不可达但有缓存时降级返回并写 warning。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dry_run: {
+          type: "boolean",
+          description: "缺省 true：只读取 B 并计算变化清单，不写缓存、不建索引。",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -235,6 +256,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (name === "delete_doc_cards") {
     const parsed = parse_delete_doc_cards_arguments(request.params.arguments);
     return parsed.ok ? tool_json(await delete_doc_cards(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "refresh_local_index") {
+    const parsed = parse_refresh_local_index_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(await refresh_local_index(parsed.value)) : tool_json(parsed);
   }
   throw new McpError(ErrorCode.MethodNotFound, `未知工具：${name}`);
 });
@@ -479,6 +504,24 @@ function parse_delete_doc_cards_arguments(
     ok: true,
     value: { source_doc_token, ...(dry_run === undefined ? {} : { dry_run }) },
   };
+}
+
+function parse_refresh_local_index_arguments(
+  raw: unknown,
+): Parsed<RefreshLocalIndexInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, ["dry_run"]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  const dry_run = parsed.value.dry_run;
+  if (dry_run !== undefined && typeof dry_run !== "boolean") {
+    return invalid_arguments('入参字段 "dry_run" 期望布尔值。', { field: "dry_run" });
+  }
+  return { ok: true, value: dry_run === undefined ? {} : { dry_run } };
 }
 
 function is_record(value: unknown): value is Record<string, unknown> {

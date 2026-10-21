@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import type { KnowledgeCard } from "../src/base_mapping.js";
+import { index_file_path, open_index, replace_doc_rows } from "../src/index_store.js";
 import {
   health,
   type HealthCheck,
@@ -175,6 +177,28 @@ function read_calls(log_file: string): Array<{ scenario: string; args: string[] 
     .map((line) => JSON.parse(line) as { scenario: string; args: string[] });
 }
 
+function make_index_card(card_id: string): KnowledgeCard {
+  return {
+    card_id,
+    scope: "general",
+    project_id: null,
+    category: "prompt_technique",
+    title: `卡片 ${card_id}`,
+    content: `内容 ${card_id}`,
+    tags: [],
+    entities: [],
+    target_models: [],
+    priority: 5,
+    source_doc_token: "doc-index-1",
+    source_node_token: "node-index-1",
+    source_path: "/通用知识/doc-index-1",
+    source_title: "文档 doc-index-1",
+    source_revision: 1,
+    source_block_id: null,
+    updated_at: "2026-10-21T10:00:00+08:00",
+  };
+}
+
 describe("health", () => {
   test("health passes on fully configured fake environment", async () => {
     create_local_dirs();
@@ -195,7 +219,10 @@ describe("health", () => {
     expect(check(result, "space_a_reachable").status).toBe("pass");
     expect(check(result, "base_b_reachable").status).toBe("pass");
     expect(check(result, "local_dirs").status).toBe("pass");
-    expect(check(result, "index")).toMatchObject({ status: "warn", detail: { state: "not_built" } });
+    expect(check(result, "index")).toMatchObject({
+      status: "warn",
+      detail: { state: "missing", card_count: 0 },
+    });
     expect(result.warnings).toEqual([
       { code: "INDEX_NOT_BUILT", message: check(result, "index").message },
     ]);
@@ -352,7 +379,7 @@ describe("health", () => {
     expect(local_dirs.message).toContain("$setup");
     expect(check(result, "index")).toMatchObject({
       status: "warn",
-      detail: { state: "not_built" },
+      detail: { state: "missing", card_count: 0 },
     });
     expect(existsSync(homeDir), "health must not create the home directory").toBe(false);
   });
@@ -470,7 +497,7 @@ describe("health", () => {
     ).toBe(true);
   });
 
-  test("health reports index as not_built in phase 1", async () => {
+  test("health reports a real index status from the local index file", async () => {
     create_local_dirs();
     write_config();
 
@@ -479,7 +506,36 @@ describe("health", () => {
     expect(result.ok).toBe(true);
     const index = check(result, "index");
     expect(index.status).toBe("warn");
-    expect(index.detail?.state).toBe("not_built");
+    expect(index.detail?.state).toBe("missing");
     expect(result.warnings).toContainEqual({ code: "INDEX_NOT_BUILT", message: index.message });
+  });
+
+  test("health reports ready and corrupt index states", async () => {
+    create_local_dirs();
+    write_config();
+
+    const db = open_index();
+    try {
+      replace_doc_rows(db, "doc-index-1", [make_index_card("card-1")], {
+        source_revision: 1,
+        last_synced_at: "2026-10-21T10:00:00+08:00",
+      });
+    } finally {
+      db.close();
+    }
+
+    const ready = await run_health("ok");
+    expect(ready.ok).toBe(true);
+    expect(check(ready, "index")).toMatchObject({
+      status: "pass",
+      detail: { state: "ready", card_count: 1 },
+    });
+
+    writeFileSync(index_file_path(), "definitely not sqlite", "utf8");
+    const corrupt = await run_health("ok");
+    expect(corrupt.ok).toBe(true);
+    const index = check(corrupt, "index");
+    expect(index).toMatchObject({ status: "warn", detail: { state: "corrupt", card_count: 0 } });
+    expect(corrupt.warnings).toContainEqual({ code: "INDEX_CORRUPT", message: index.message });
   });
 });
