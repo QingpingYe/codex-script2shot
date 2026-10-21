@@ -1,5 +1,6 @@
 import { rmSync } from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { from_base_record, type KnowledgeCard } from "../base_mapping.js";
 import {
   cache_file_path,
@@ -7,6 +8,7 @@ import {
   remove_doc,
   save_cache,
   set_doc,
+  type DocCacheEntry,
   type DocMarker,
   type LocalCardCache,
 } from "../cache.js";
@@ -15,6 +17,7 @@ import {
   delete_doc_rows,
   index_file_path,
   index_status,
+  list_doc_markers,
   open_index,
   replace_doc_rows,
   type IndexStatus,
@@ -46,6 +49,9 @@ import {
  * 不写缓存、不打开/创建索引、不建目录。B 不可达（`KB_B_UNREACHABLE` /
  * `read_sync_state` 归一化后的 `KB_READ_FAILED`）时：有可用缓存则
  * `degraded: true` + warning 继续；没有可用缓存则返回 `KB_B_UNREACHABLE` 错误。
+ * 其中 `KB_READ_FAILED` 的降级 warning 固定写「SyncState 读取失败（B 不可达 /
+ * 权限 / 表配置）」的措辞，不笼统声称知识库 B 不可达；warning 码保持
+ * `KB_B_UNREACHABLE`（对外冻结）。
  * 其余 `read_sync_state` 失败码原样传播，不伪装成降级。
  *
  * 返回值一律是结果对象，不抛异常；错误码为 SCREAMING_SNAKE，与 Phase 2 工具一致。
@@ -154,6 +160,12 @@ export async function refresh_local_index(
   );
   const index_path = index_file_path();
   const index_before = index_status(index_path);
+  // 索引 ready 时把 doc_state 的 token 也纳入删除集：缓存与索引可能不同步
+  // （save_cache 失败、崩溃或缓存文件被删除/恢复），只信缓存会漏删 B 已移除
+  // 的文档，让它继续可被检索。读取失败时按索引不可读处理，走整体重建。
+  const index_tokens =
+    index_before.state === "ready" ? read_index_doc_tokens(index_path) : undefined;
+  const index_read_failed = index_before.state === "ready" && index_tokens === undefined;
 
   const sync = await read_sync_state({ env: input.env, home_dir: input.home_dir });
   if (!("records" in sync)) {
@@ -168,7 +180,7 @@ export async function refresh_local_index(
       }
       warnings.push({
         code: "KB_B_UNREACHABLE",
-        message: `知识库 B 不可达，已按本地缓存继续：${sync.error.message}`,
+        message: degraded_sync_message(sync.error.code, sync.error.message),
       });
       return {
         dry_run,
@@ -216,7 +228,7 @@ export async function refresh_local_index(
   const removed: string[] = [];
   for (const token of [...state_by_token.keys()].sort()) {
     const record = state_by_token.get(token) as SyncStateRecord;
-    const local = cache.docs[token];
+    const local = cache_entry(cache.docs, token);
     if (local === undefined) {
       changed.push({ token, record, reason: "added" });
       continue;
@@ -230,7 +242,11 @@ export async function refresh_local_index(
     }
     changed.push({ token, record, reason: "updated" });
   }
-  for (const token of Object.keys(cache.docs).sort()) {
+  const local_tokens = new Set<string>([
+    ...Object.keys(cache.docs),
+    ...(index_tokens ?? []),
+  ]);
+  for (const token of [...local_tokens].sort()) {
     if (!state_by_token.has(token)) {
       removed.push(token);
     }
@@ -299,7 +315,8 @@ export async function refresh_local_index(
     };
   }
 
-  const rebuild_index = cache_rebuild_needed || index_before.state !== "ready";
+  const rebuild_index =
+    cache_rebuild_needed || index_read_failed || index_before.state !== "ready";
   if (!rebuild_index && fetched.length === 0 && removed.length === 0) {
     return {
       dry_run: false,
@@ -331,7 +348,7 @@ export async function refresh_local_index(
       }
       if (rebuild_index && !cache_rebuild_needed) {
         for (const token of unchanged) {
-          const local = cache.docs[token];
+          const local = cache_entry(cache.docs, token);
           if (local !== undefined) {
             replace_doc_rows(db, token, local.cards, {
               source_revision: local.source_revision,
@@ -408,6 +425,55 @@ function remove_index_file(file_path: string): string | undefined {
   } catch (error) {
     return describe_error(error);
   }
+}
+
+/**
+ * 读取索引 `doc_state` 的 token 列表。**只读打开**，绝不建库/建表、绝不修改
+ * 索引；任何失败（打开、查询、关闭前抛错）返回 undefined，调用方据此走整体
+ * 重建，避免在索引不可读时漏删文档。
+ */
+function read_index_doc_tokens(index_path: string): string[] | undefined {
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(index_path, { readOnly: true });
+    return list_doc_markers(db).map((marker) => marker.source_doc_token);
+  } catch {
+    return undefined;
+  } finally {
+    if (db !== undefined) {
+      try {
+        db.close();
+      } catch {
+        // 读取失败路径下关闭失败不值得再抛：索引本身已判为不可读。
+      }
+    }
+  }
+}
+
+/**
+ * 降级 warning 的措辞按 `read_sync_state` 的失败码区分：`KB_READ_FAILED` 是
+ * SyncState 读不到（知识库 B 不可达 / 权限不足 / SyncState 表配置错误都可能），
+ * 不能笼统声称「知识库 B 不可达」；warning 码保持 `KB_B_UNREACHABLE`（冻结）。
+ */
+function degraded_sync_message(code: string, detail: string): string {
+  if (code === "KB_READ_FAILED") {
+    return (
+      "SyncState 读取失败，已按本地缓存继续（可能原因：知识库 B 不可达、" +
+      `权限不足或 SyncState 表配置错误）：${detail}`
+    );
+  }
+  return `知识库 B 不可达，已按本地缓存继续：${detail}`;
+}
+
+/**
+ * 缓存 `docs` 是 null 原型对象（见 cache.ts），这里仍显式做 own-property 守卫：
+ * `__proto__` / `constructor` 这类 token 不会命中原型链上的成员。
+ */
+function cache_entry(
+  docs: Record<string, DocCacheEntry>,
+  token: string,
+): DocCacheEntry | undefined {
+  return Object.prototype.hasOwnProperty.call(docs, token) ? docs[token] : undefined;
 }
 
 function state_marker(record: SyncStateRecord): DocMarker {

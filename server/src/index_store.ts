@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, statSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { KnowledgeCard } from "./base_mapping.js";
@@ -94,6 +94,9 @@ export function index_file_path(): string {
  */
 export function open_index(file_path: string = index_file_path()): DatabaseSync {
   mkdirSync(path.dirname(file_path), { recursive: true });
+  // 索引里保存卡片正文，与缓存文件同权限：首次创建固定 0o600；SQLite 自己的
+  // 默认权限受 umask 影响，不能依赖。已有文件的权限不动。
+  ensure_private_file(file_path);
   const db = new DatabaseSync(file_path);
   try {
     db.exec(CREATE_SCHEMA_SQL);
@@ -102,6 +105,17 @@ export function open_index(file_path: string = index_file_path()): DatabaseSync 
     throw error;
   }
   return db;
+}
+
+/**
+ * 首次创建索引文件时固定 0o600（POSIX 语义；Windows 忽略 mode）。存在即跳过，
+ * 不修改已有文件权限，也不截断任何内容。
+ */
+function ensure_private_file(file_path: string): void {
+  if (existsSync(file_path)) {
+    return;
+  }
+  closeSync(openSync(file_path, "a", 0o600));
 }
 
 /**

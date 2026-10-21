@@ -10,6 +10,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/server.mjs",
+    "pretest": "npm run build",
     "test": "vitest run"
   },
   "dependencies": {

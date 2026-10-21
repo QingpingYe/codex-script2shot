@@ -196,6 +196,10 @@ describe("search_knowledge", () => {
 
     const prj_2 = expect_success(search_knowledge({ query: "夜景", project_id: "prj-2" }));
     expect(candidate_ids(prj_2)).toEqual(["card-prj-2"]);
+
+    // 带空白的 project_id 按 trim 后的值匹配。
+    const padded = expect_success(search_knowledge({ query: "夜景", project_id: " prj-1 " }));
+    expect(candidate_ids(padded)).toEqual(["card-prj-1"]);
   });
 
   test("search filters by category with positive and negative cases", () => {

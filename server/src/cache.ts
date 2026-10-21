@@ -76,7 +76,7 @@ export function load_cache(): CacheLoadResult {
     }
     return {
       version: CACHE_VERSION,
-      docs: {},
+      docs: empty_docs(),
       warnings: [
         {
           code: "CACHE_UNREADABLE",
@@ -102,7 +102,7 @@ export function load_cache(): CacheLoadResult {
   if (version !== CACHE_VERSION) {
     return {
       version: CACHE_VERSION,
-      docs: {},
+      docs: empty_docs(),
       warnings: [
         {
           code: "CACHE_VERSION_UNSUPPORTED",
@@ -121,7 +121,7 @@ export function load_cache(): CacheLoadResult {
     return corrupt_result(file_path, '缓存文件缺少 "docs" 对象。');
   }
 
-  const docs: Record<string, DocCacheEntry> = {};
+  const docs = empty_docs();
   for (const [token, entry] of Object.entries(docs_value)) {
     const parsed_entry = parse_doc_entry(entry);
     if (parsed_entry === undefined) {
@@ -147,7 +147,11 @@ export function save_cache(cache: LocalCardCache): void {
     writeFileSync(temp_path, content, { encoding: "utf8", mode: 0o600 });
     renameSync(temp_path, file_path);
   } catch (error) {
-    rmSync(temp_path, { force: true });
+    try {
+      rmSync(temp_path, { force: true });
+    } catch {
+      // 清理临时文件失败时不覆盖原始写入/改名错误：原错误更可诊断。
+    }
     throw error;
   }
 }
@@ -157,7 +161,11 @@ export function save_cache(cache: LocalCardCache): void {
  * `undefined`（不抛异常，也不需要调用方先 `load_cache()`）。
  */
 export function get_doc_marker(token: string): DocMarker | undefined {
-  const entry = load_cache().docs[token];
+  const docs = load_cache().docs;
+  if (!Object.prototype.hasOwnProperty.call(docs, token)) {
+    return undefined;
+  }
+  const entry = docs[token];
   if (entry === undefined) {
     return undefined;
   }
@@ -184,13 +192,13 @@ export function remove_doc(cache: LocalCardCache, token: string): void {
 }
 
 function empty_result(): CacheLoadResult {
-  return { version: CACHE_VERSION, docs: {}, warnings: [] };
+  return { version: CACHE_VERSION, docs: empty_docs(), warnings: [] };
 }
 
 function corrupt_result(file_path: string, detail: string): CacheLoadResult {
   return {
     version: CACHE_VERSION,
-    docs: {},
+    docs: empty_docs(),
     warnings: [
       {
         code: "CACHE_CORRUPT",
@@ -200,6 +208,15 @@ function corrupt_result(file_path: string, detail: string): CacheLoadResult {
     ],
     rebuild_needed: true,
   };
+}
+
+/**
+ * `docs` 固定用 null 原型对象：`source_doc_token` 是外部数据，普通对象字面量
+ * 的 `__proto__` / `constructor` 等键会落到原型链上；null 原型让所有键都只
+ * 是数据属性。空缓存与损坏缓存同样用它，调用方不能假设 `docs` 有 Object 原型。
+ */
+function empty_docs(): Record<string, DocCacheEntry> {
+  return Object.create(null) as Record<string, DocCacheEntry>;
 }
 
 /** 浅校验单个文档条目：标记类型与 cards 数组齐全；卡片字段本身由 schema 层负责。 */

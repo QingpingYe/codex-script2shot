@@ -170,7 +170,7 @@ function install_fake_cli(dir: string, name = "lark-cli"): string {
   return wrapper_path;
 }
 
-function write_config_file(options: { cards_table?: string } = {}): void {
+function write_config_file(options: { cards_table?: string; sync_state_table?: string } = {}): void {
   writeFileSync(
     path.join(home, "config.toml"),
     [
@@ -179,7 +179,7 @@ function write_config_file(options: { cards_table?: string } = {}): void {
       'space_a = "space-a-1"',
       `base_b = "${BASE_B}"`,
       `knowledge_cards_table_id = "${options.cards_table ?? CARDS_TABLE}"`,
-      `sync_state_table_id = "${STATE_TABLE}"`,
+      `sync_state_table_id = "${options.sync_state_table ?? STATE_TABLE}"`,
       "",
       "[retrieval]",
       "default_top_k = 12",
@@ -499,6 +499,43 @@ describe("refresh_local_index", () => {
     ]);
   });
 
+  test("refresh removes index doc_state rows that the cache no longer knows", async () => {
+    const state_a = make_state(DOC_A);
+    write_base_state({
+      state: [state_row("rec_state_a", state_a)],
+      cards: [card_row("rec_card_a1", make_card("card-a1", DOC_A))],
+    });
+    // 索引里有 doc_state 行但缓存没有它（save_cache 失败、崩溃或缓存文件被删除/恢复），
+    // 且 B 的 SyncState 已经没有该 token：必须按索引的 doc_state 把它清掉。
+    seed_cache([
+      { token: DOC_A, marker: marker_of(state_a), cards: [make_card("card-a1", DOC_A)] },
+    ]);
+    seed_index([
+      { token: DOC_A, marker: marker_of(state_a), cards: [make_card("card-a1", DOC_A)] },
+      {
+        token: DOC_GONE,
+        marker: { source_revision: 1, last_synced_at: SYNCED_AT },
+        cards: [make_card("card-gone1", DOC_GONE)],
+      },
+    ]);
+
+    const result = expect_success(await run_refresh({ dry_run: false }));
+
+    expect(result).toMatchObject({
+      dry_run: false,
+      degraded: false,
+      refreshed_docs: [],
+      removed_docs: [DOC_GONE],
+      unchanged_docs: [DOC_A],
+      index_status: { state: "ready", card_count: 1 },
+    });
+    expect(Object.keys(load_cache().docs)).toEqual([DOC_A]);
+
+    const indexed = read_index_rows();
+    expect(indexed.cards.map((row) => row.card_id)).toEqual(["card-a1"]);
+    expect(indexed.markers.map((row) => row.source_doc_token)).toEqual([DOC_A]);
+  });
+
   test("refresh dry run writes nothing", async () => {
     const state_a = make_state(DOC_A, {
       source_revision: 2,
@@ -760,6 +797,36 @@ describe("refresh_local_index", () => {
     expect(statSync(cache_file_path()).mtimeMs, "降级路径不写任何文件").toBe(frozen);
   });
 
+  test("refresh degraded warning names the unreadable SyncState for KB_READ_FAILED", async () => {
+    // SyncState 表配置指向不存在的表：read_sync_state 归一化为 KB_READ_FAILED，
+    // 降级 warning 必须说「SyncState 读不到」，不能笼统声称知识库 B 不可达。
+    write_config_file({ sync_state_table: "tbl_missing_state" });
+    seed_cache([
+      {
+        token: DOC_A,
+        marker: { source_revision: 1, last_synced_at: SYNCED_AT },
+        cards: [make_card("card-a1", DOC_A)],
+      },
+    ]);
+
+    const result = expect_success(await run_refresh({ dry_run: false }));
+
+    expect(result).toMatchObject({
+      dry_run: false,
+      degraded: true,
+      refreshed_docs: [],
+      removed_docs: [],
+      unchanged_docs: [DOC_A],
+    });
+    expect(result.warnings.map((warning) => warning.code)).toEqual(["KB_B_UNREACHABLE"]);
+    const message = result.warnings[0]?.message ?? "";
+    expect(message, "降级 warning 应指认 SyncState 读取失败").toContain("SyncState 读取失败");
+    expect(
+      message,
+      "KB_READ_FAILED 不能笼统声称知识库 B 不可达",
+    ).not.toContain("知识库 B 不可达，已按本地缓存继续");
+  });
+
   test("refresh stops without cache when b unreachable", async () => {
     env = { ...env, FAKE_SCENARIO: "base-unreachable" };
 
@@ -807,7 +874,8 @@ describe("refresh_local_index", () => {
       dry_run: false,
       degraded: false,
       refreshed_docs: [{ source_doc_token: DOC_A, card_count: 2, reason: "added" }],
-      removed_docs: [],
+      // 旧索引里的 doc_state（DOC_GONE）也参与删除集，重建后不再出现。
+      removed_docs: [DOC_GONE],
       unchanged_docs: [],
       index_status: { state: "ready", card_count: 2 },
     });

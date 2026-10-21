@@ -17,7 +17,9 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { KnowledgeCard } from "../src/base_mapping.js";
 import {
   CACHE_VERSION,
+  cache_file_path,
   save_cache,
+  set_doc,
   type DocMarker,
   type LocalCardCache,
 } from "../src/cache.js";
@@ -104,8 +106,9 @@ function seed_index(cards: KnowledgeCard[], marker: DocMarker = DEFAULT_MARKER):
 
 /**
  * 知识包 fixture：覆盖 general / 当前项目 / 其他项目 / seedance 兼容性四类取样。
- * 两张 `scope=project` 的 `seedance_rule` 卡挂在 `prj-2` 下，用来观察
- * seedance 规则的模型兼容过滤（它们不属于请求项目，也不在 general 块）。
+ * general、当前项目（prj-1）与其他项目（prj-2）下都有 `seedance_rule` 卡，
+ * 用来观察模型级过滤：`seedance_rule` 只按 `target_models` 放行，scope/project
+ * 不参与归属判断，也不会让卡片绕过模型门进入 general / project 块。
  */
 function seed_pack_fixture(): void {
   seed_index([
@@ -127,6 +130,13 @@ function seed_pack_fixture(): void {
       category: "seedance_rule",
       title: "通用 Seedance 软知识",
       target_models: [],
+    }),
+    make_card("card-gen-seedance-25", {
+      scope: "general",
+      project_id: null,
+      category: "seedance_rule",
+      title: "通用 Seedance 2.5 软知识",
+      target_models: ["seedance-2.5"],
     }),
     make_card("card-prj1-scene", {
       scope: "project",
@@ -172,6 +182,47 @@ function seed_cache(cards: KnowledgeCard[], marker: DocMarker = DEFAULT_MARKER):
   save_cache(cache);
 }
 
+/** 缓存降级 fixture：general / 当前项目 / 其他项目下各放模型专属 seedance_rule 卡。 */
+function seed_degraded_cache_fixture(): void {
+  const cache: LocalCardCache = { version: CACHE_VERSION, docs: {} };
+  set_doc(cache, DOC_A, DEFAULT_MARKER, [
+    make_card("cache-gen-prompt", {
+      scope: "general",
+      project_id: null,
+      category: "prompt_technique",
+    }),
+    make_card("cache-gen-seedance-25", {
+      scope: "general",
+      project_id: null,
+      category: "seedance_rule",
+      target_models: ["seedance-2.5"],
+    }),
+    make_card("cache-prj1-scene", {
+      scope: "project",
+      project_id: "prj-1",
+      category: "scene_description",
+    }),
+    make_card("cache-prj1-seedance-25", {
+      scope: "project",
+      project_id: "prj-1",
+      category: "seedance_rule",
+      target_models: ["seedance-2.5"],
+    }),
+    make_card("cache-prj2-seedance-20", {
+      scope: "project",
+      project_id: "prj-2",
+      category: "seedance_rule",
+      target_models: ["seedance-2.0"],
+    }),
+    make_card("cache-prj2-char", {
+      scope: "project",
+      project_id: "prj-2",
+      category: "character_bible",
+    }),
+  ]);
+  save_cache(cache);
+}
+
 function expect_success(result: LoadKnowledgePackResult): LoadKnowledgePackSuccess {
   if ("ok" in result && result.ok === false) {
     throw new Error(`load_knowledge_pack 失败：${JSON.stringify(result.error)}`);
@@ -200,17 +251,20 @@ describe("load_knowledge_pack", () => {
     expect(ids).toContain("card-gen-prompt");
     expect(ids).toContain("card-gen-visual");
     expect(ids).toContain("card-prj1-scene");
+    expect(ids).toContain("card-prj1-seedance");
+    expect(ids).toContain("card-gen-seedance-25");
     expect(ids).toContain("card-seedance-25");
 
     // 反例：其他项目的普通卡与本模型不兼容的 seedance 卡都不进包。
     expect(ids).not.toContain("card-prj2-char");
     expect(ids).not.toContain("card-seedance-20");
 
-    // 同一张卡命中多条规则也只输出一次（general 块与 seedance 规则重叠）。
+    // seedance_rule 卡只由 seedance 块承接，不在 general / project 块重复出现。
     expect(ids.filter((id) => id === "card-gen-seedance")).toHaveLength(1);
     expect(ids.filter((id) => id === "card-prj1-seedance")).toHaveLength(1);
 
-    expect(result.stats).toEqual({ general: 3, project: 2, seedance: 1 });
+    // stats.seedance 统计 seedance 块本身，而不是恒为 0。
+    expect(result.stats).toEqual({ general: 2, project: 1, seedance: 4 });
     expect(result.warnings).toEqual([]);
   });
 
@@ -231,6 +285,13 @@ describe("load_knowledge_pack", () => {
 
     // general 块与请求项目无关，两次调用都包含同一批通用卡。
     expect(card_ids(for_prj2)).toContain("card-gen-prompt");
+
+    // 带空白的 project_id 按 trim 后的值匹配。
+    const padded = expect_success(
+      load_knowledge_pack({ project_id: " prj-1 ", target_model: "seedance-2.0" }),
+    );
+    expect(card_ids(padded)).toContain("card-prj1-scene");
+    expect(card_ids(padded)).not.toContain("card-prj2-char");
   });
 
   test("pack filters seedance target model", () => {
@@ -243,6 +304,15 @@ describe("load_knowledge_pack", () => {
     expect(card_ids(for_20), "反例：seedance-2.5 的卡不得进入 2.0 的包").not.toContain(
       "card-seedance-25",
     );
+    expect(
+      card_ids(for_20),
+      "反例：当前项目下的 seedance-2.5 卡也不得绕过模型门进入 2.0 的包",
+    ).not.toContain("card-prj1-seedance");
+    expect(
+      card_ids(for_20),
+      "反例：general 下的 seedance-2.5 卡也不得绕过模型门进入 2.0 的包",
+    ).not.toContain("card-gen-seedance-25");
+    expect(for_20.stats).toEqual({ general: 2, project: 1, seedance: 2 });
 
     const for_25 = expect_success(
       load_knowledge_pack({ project_id: "prj-1", target_model: "seedance-2.5" }),
@@ -251,6 +321,10 @@ describe("load_knowledge_pack", () => {
     expect(card_ids(for_25), "反例：seedance-2.0 的卡不得进入 2.5 的包").not.toContain(
       "card-seedance-20",
     );
+    // 正例：与目标模型兼容的模型专属 seedance 卡（当前项目与 general）都进包。
+    expect(card_ids(for_25)).toContain("card-prj1-seedance");
+    expect(card_ids(for_25)).toContain("card-gen-seedance-25");
+    expect(for_25.stats).toEqual({ general: 2, project: 1, seedance: 4 });
 
     // 空数组 = 通用卡，两个目标模型都放行。
     expect(card_ids(for_20)).toContain("card-gen-seedance");
@@ -358,7 +432,7 @@ describe("load_knowledge_pack", () => {
     expect(second).toEqual(first);
   });
 
-  test("pack counts each card once and classifies by first matching rule", () => {
+  test("pack assigns every seedance rule card to the seedance block", () => {
     seed_index([
       make_card("card-general-seedance", {
         scope: "general",
@@ -379,7 +453,7 @@ describe("load_knowledge_pack", () => {
     );
 
     expect(card_ids(result)).toEqual(["card-general-seedance", "card-project-seedance"]);
-    expect(result.stats).toEqual({ general: 1, project: 1, seedance: 0 });
+    expect(result.stats).toEqual({ general: 0, project: 0, seedance: 2 });
   });
 
   test("pack returns the frozen card shape with source metadata", () => {
@@ -460,15 +534,19 @@ describe("load_knowledge_pack", () => {
     expect(after.cards.length).toBeGreaterThan(0);
   });
 
-  test("pack returns INDEX_UNAVAILABLE when the index is missing or corrupt", () => {
-    // 没有缓存回退：即使本地缓存里有卡，索引缺失也直接报错。
-    seed_cache([make_card("card-cache-only", { priority: 9 })]);
-
+  test("pack returns INDEX_UNAVAILABLE when neither index nor cache is usable", () => {
     expect(existsSync(index_file_path()), "前置：索引文件不存在").toBe(false);
     const missing = load_knowledge_pack({ project_id: "prj-1", target_model: "seedance-2.0" });
     expect(missing).toMatchObject({
       ok: false,
-      error: { code: "INDEX_UNAVAILABLE", details: { index_path: index_file_path(), index_state: "missing" } },
+      error: {
+        code: "INDEX_UNAVAILABLE",
+        details: {
+          index_path: index_file_path(),
+          index_state: "missing",
+          cache_path: cache_file_path(),
+        },
+      },
     });
     expect(existsSync(index_file_path()), "加载路径不得创建索引文件").toBe(false);
     expect(existsSync(path.dirname(index_file_path())), "加载路径不得创建 index/ 目录").toBe(
@@ -481,9 +559,71 @@ describe("load_knowledge_pack", () => {
     const corrupt = load_knowledge_pack({ project_id: "prj-1", target_model: "seedance-2.0" });
     expect(corrupt).toMatchObject({
       ok: false,
-      error: { code: "INDEX_UNAVAILABLE", details: { index_state: "corrupt" } },
+      error: {
+        code: "INDEX_UNAVAILABLE",
+        details: { index_state: "corrupt", cache_path: cache_file_path() },
+      },
     });
     expect(statSync(index_file_path()).size).toBe(0);
+
+    // 缓存损坏（rebuild_needed）同样视为没有可用缓存：索引不存在时仍然报错。
+    rmSync(index_file_path(), { force: true });
+    mkdirSync(path.dirname(cache_file_path()), { recursive: true });
+    writeFileSync(cache_file_path(), "{ not json", "utf8");
+    const bad_cache = load_knowledge_pack({ project_id: "prj-1", target_model: "seedance-2.0" });
+    expect(bad_cache).toMatchObject({ ok: false, error: { code: "INDEX_UNAVAILABLE" } });
+  });
+
+  test("pack degrades to the local cache when the index is missing or corrupt", () => {
+    seed_degraded_cache_fixture();
+
+    expect(existsSync(index_file_path()), "前置：索引文件不存在").toBe(false);
+    const missing = expect_success(
+      load_knowledge_pack({ project_id: "prj-1", target_model: "seedance-2.0" }),
+    );
+
+    expect(missing.degraded, "索引缺失时按缓存降级而不是报错").toBe(true);
+    expect(warning_codes(missing)).toEqual(["INDEX_UNAVAILABLE"]);
+    expect(card_ids(missing)).toEqual([
+      "cache-gen-prompt",
+      "cache-prj1-scene",
+      "cache-prj2-seedance-20",
+    ]);
+    expect(missing.stats).toEqual({ general: 1, project: 1, seedance: 1 });
+    expect(card_ids(missing)).not.toContain("cache-gen-seedance-25");
+    expect(card_ids(missing)).not.toContain("cache-prj1-seedance-25");
+    expect(existsSync(index_file_path()), "降级路径不得创建索引文件").toBe(false);
+    expect(existsSync(path.dirname(index_file_path())), "降级路径不得创建 index/ 目录").toBe(
+      false,
+    );
+
+    // 2.5 请求走同一套规则：模型兼容的 seedance 卡（含 general 与当前项目）全进包。
+    const for_25 = expect_success(
+      load_knowledge_pack({ project_id: "prj-1", target_model: "seedance-2.5" }),
+    );
+    expect(for_25.degraded).toBe(true);
+    expect(card_ids(for_25)).toEqual([
+      "cache-gen-prompt",
+      "cache-prj1-scene",
+      "cache-gen-seedance-25",
+      "cache-prj1-seedance-25",
+    ]);
+    expect(for_25.stats).toEqual({ general: 1, project: 1, seedance: 2 });
+
+    // 0 字节损坏索引同样降级，且不修复、不重写。
+    mkdirSync(path.dirname(index_file_path()), { recursive: true });
+    writeFileSync(index_file_path(), "", "utf8");
+    const corrupt = expect_success(
+      load_knowledge_pack({ project_id: "prj-1", target_model: "seedance-2.0" }),
+    );
+    expect(corrupt.degraded).toBe(true);
+    expect(warning_codes(corrupt)).toEqual(["INDEX_UNAVAILABLE"]);
+    expect(card_ids(corrupt)).toEqual([
+      "cache-gen-prompt",
+      "cache-prj1-scene",
+      "cache-prj2-seedance-20",
+    ]);
+    expect(statSync(index_file_path()).size, "降级路径不得修复损坏索引").toBe(0);
   });
 
   test("pack reads a ready index without writing to it", () => {

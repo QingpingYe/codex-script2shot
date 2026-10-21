@@ -264,7 +264,7 @@ function parse_input(
     if (typeof input.project_id !== "string" || input.project_id.trim() === "") {
       return invalid("project_id", '入参字段 "project_id" 期望非空字符串。');
     }
-    project_id = input.project_id;
+    project_id = input.project_id.trim();
   }
 
   let categories: string[] | undefined;

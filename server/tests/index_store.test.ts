@@ -108,6 +108,9 @@ describe("index_store", () => {
     const db = open_index();
     try {
       expect(existsSync(file_path)).toBe(true);
+      if (process.platform !== "win32") {
+        expect(statSync(file_path).mode & 0o777, "索引含知识卡正文，权限须为 0600").toBe(0o600);
+      }
       expect(
         query_values(db, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"),
       ).toEqual(["cards", "doc_state"]);

@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import type { TargetModel } from "../base_mapping.js";
+import { cache_file_path, load_cache } from "../cache.js";
 import { index_file_path, index_status, type IndexState } from "../index_store.js";
 import { TARGET_MODEL_VALUES } from "./search_knowledge.js";
 
@@ -10,15 +11,21 @@ import { TARGET_MODEL_VALUES } from "./search_knowledge.js";
  * general（category 升序 -> card_id 升序）-> project（同上）-> seedance（同上）。
  *
  * 三个来源块（同一张卡只输出一次，按 general -> project -> seedance 的顺序
- * 归类计数）：
- * - general：全部 `scope = "general"` 卡片；
- * - project：`scope = "project"` 且 `project_id` 匹配的卡片；
+ * 归类计数）。**归属铁律**：`category = "seedance_rule"` 的卡片只由 seedance
+ * 块承接，绝不因 `scope` / `project_id` 再进 general 或 project 块——否则模型
+ * 不适配的 Seedance 卡会绕过模型门；不要按旧行为把 seedance 卡重新归类回去：
  * - seedance：`category = "seedance_rule"` 且 `target_models` 兼容目标模型的
- *   卡片（含当前模型，或为空/缺失 = 通用卡，stage-conventions §3.1）。
+ *   卡片（含当前模型，或为空/缺失 = 通用卡，stage-conventions §3.1）；§10.3
+ *   的 Seedance 软知识按模型级过滤，`project_id` 不是访问边界。
+ * - general：`scope = "general"` 且 `category != "seedance_rule"` 的卡片；
+ * - project：`scope = "project"`、`project_id` 匹配（trim 后）且
+ *   `category != "seedance_rule"` 的卡片。
  *
- * 只读本地索引：`index_status()` 探测 + `readOnly` 打开 sqlite。索引缺失、
- * 损坏或读取失败一律返回 `INDEX_UNAVAILABLE`——本工具只消费 Task 2 索引，
- * **没有缓存回退**，也绝不创建或修复索引文件。
+ * 只读本地索引：`index_status()` 探测 + `readOnly` 打开 sqlite，绝不创建或修复
+ * 索引文件。索引缺失、损坏或读取失败时按 §13 降级：用本地缓存（`load_cache()`）
+ * 的卡片走同一套来源块与 target_model 规则组装知识包，返回 `degraded: true` +
+ * warning `INDEX_UNAVAILABLE`；缓存也不可用（损坏、版本不支持或没有卡片）时才
+ * 返回 `INDEX_UNAVAILABLE` 错误。
  *
  * `explain` 是 Phase 5 的诊断输出（§10.4）：本期接受参数、不改变行为，
  * 传 `true` 时返回 warning `EXPLAIN_NOT_AVAILABLE`。
@@ -61,6 +68,8 @@ export interface PackWarning {
 export interface LoadKnowledgePackSuccess {
   cards: PackCard[];
   stats: PackStats;
+  /** 只有「索引不可用、按本地缓存组装」时为 true。 */
+  degraded: boolean;
   warnings: PackWarning[];
 }
 
@@ -142,18 +151,21 @@ export function load_knowledge_pack(
 
   const index_path = index_file_path();
   const status = index_status(index_path);
-  if (status.state !== "ready") {
-    return index_unavailable(index_path, status.state);
+  let rows: PackRow[] | undefined;
+  if (status.state === "ready") {
+    rows = read_pack_rows(index_path, options.project_id);
+  }
+  if (rows !== undefined) {
+    return build_pack(rows, options, false);
   }
 
-  const rows = read_pack_rows(index_path, options.project_id);
-  if (rows === undefined) {
-    // 索引状态为 ready 但读取失败（并发重建、文件被占用等）：同样按
-    // 「索引不可用」处理，不把内部异常抛给调用方，也不重建索引。
-    return index_unavailable(index_path, status.state, true);
+  // §13：索引缺失、损坏，或状态为 ready 但读取失败（并发重建、文件被占用等）
+  // 时一律降级到本地缓存；缓存也不可用时才返回 INDEX_UNAVAILABLE 错误。
+  const cached_rows = read_cache_rows();
+  if (cached_rows === undefined) {
+    return index_unavailable(index_path, status.state, status.state === "ready");
   }
-
-  return build_pack(rows, options);
+  return build_pack(cached_rows, options, true);
 }
 
 function parse_input(
@@ -187,7 +199,7 @@ function parse_input(
   return {
     ok: true,
     value: {
-      project_id,
+      project_id: project_id.trim(),
       target_model: target_model as TargetModel,
       explain: explain === true,
     },
@@ -196,22 +208,33 @@ function parse_input(
 
 /**
  * 三个来源块按规则顺序归类（general -> project -> seedance），`card_id` 去重：
- * 先命中的块拥有这张卡。每块内部按 category 升序、card_id 升序排列。
+ * 先命中的块拥有这张卡。`seedance_rule` 卡只由 seedance 块承接（模型门在
+ * seedance 块内统一应用），general / project 块显式排除该 category。每块内部
+ * 按 category 升序、card_id 升序排列。
  */
-function build_pack(rows: readonly PackRow[], options: PackOptions): LoadKnowledgePackSuccess {
+function build_pack(
+  rows: readonly PackRow[],
+  options: PackOptions,
+  degraded: boolean,
+): LoadKnowledgePackSuccess {
   const general: PackRow[] = [];
   const project: PackRow[] = [];
   const seedance: PackRow[] = [];
   const emitted = new Set<string>();
 
   for (const row of rows) {
-    if (row.scope === "general" && !emitted.has(row.card_id)) {
+    if (
+      row.category !== "seedance_rule" &&
+      row.scope === "general" &&
+      !emitted.has(row.card_id)
+    ) {
       emitted.add(row.card_id);
       general.push(row);
     }
   }
   for (const row of rows) {
     if (
+      row.category !== "seedance_rule" &&
       row.scope === "project" &&
       row.project_id === options.project_id &&
       !emitted.has(row.card_id)
@@ -242,12 +265,50 @@ function build_pack(rows: readonly PackRow[], options: PackOptions): LoadKnowled
       project: project.length,
       seedance: seedance.length,
     },
+    degraded,
     warnings: collect_warnings({
+      index_unavailable: degraded,
       general_empty: general.length === 0,
       project_empty: project.length === 0,
       explain: options.explain,
     }),
   };
+}
+
+/**
+ * 缓存降级卡片（§13）：索引不可用时用本地缓存的卡片组装知识包，映射成与索引行
+ * 相同的 `PackRow`，之后的来源块划分与 target_model 门逐字复用。来源标记
+ * （`source_doc_token` / `source_revision` / `last_synced_at`）取缓存条目，与
+ * 索引行口径一致。缓存不可用（`rebuild_needed`）或一张卡都没有时返回 undefined。
+ */
+function read_cache_rows(): PackRow[] | undefined {
+  const cache = load_cache();
+  if (cache.rebuild_needed === true) {
+    return undefined;
+  }
+  const rows: PackRow[] = [];
+  for (const [token, entry] of Object.entries(cache.docs)) {
+    for (const card of entry.cards) {
+      const raw = card as Partial<Record<keyof PackRow, unknown>>;
+      rows.push({
+        card_id: text_or(raw.card_id, ""),
+        scope: text_or_null(raw.scope),
+        project_id: text_or_null(raw.project_id),
+        category: text_or(raw.category, ""),
+        title: text_or(raw.title, ""),
+        content: text_or(raw.content, ""),
+        tags: string_list(raw.tags),
+        entities: string_list(raw.entities),
+        target_models: string_list(raw.target_models),
+        priority: finite_or(raw.priority, 0),
+        source_doc_token: token,
+        source_path: text_or(raw.source_path, ""),
+        source_revision: finite_or(entry.source_revision, 0),
+        last_synced_at: typeof entry.last_synced_at === "string" ? entry.last_synced_at : "",
+      });
+    }
+  }
+  return rows.length > 0 ? rows : undefined;
 }
 
 /** §3.1：`target_models` 含当前模型，或为空/缺失（通用卡）都放行。 */
@@ -280,7 +341,7 @@ function to_card(row: PackRow): PackCard {
 /**
  * 读取索引行。**只读打开**（不复用 `open_index()` 的建库/建表路径）：探测与
  * 打开之间索引文件被删或被换成非法文件时，这里会直接失败 ⇒ 调用方按
- * 「索引不可用」返回错误，而不是重建一个空索引。
+ * 「索引不可用」降级到缓存，而不是重建一个空索引。
  *
  * 任何失败（打开、查询、关闭前抛错）都返回 undefined；句柄一律在 `finally`
  * 里关闭。
@@ -323,13 +384,25 @@ function from_index_row(row: Record<string, unknown>): PackRow {
   };
 }
 
-/** warning 顺序固定：GENERAL_KNOWLEDGE_EMPTY -> PROJECT_KNOWLEDGE_EMPTY -> EXPLAIN_NOT_AVAILABLE。 */
+/**
+ * warning 顺序固定：INDEX_UNAVAILABLE -> GENERAL_KNOWLEDGE_EMPTY ->
+ * PROJECT_KNOWLEDGE_EMPTY -> EXPLAIN_NOT_AVAILABLE。
+ */
 function collect_warnings(flags: {
+  index_unavailable?: boolean;
   general_empty?: boolean;
   project_empty?: boolean;
   explain?: boolean;
 }): PackWarning[] {
   const warnings: PackWarning[] = [];
+  if (flags.index_unavailable === true) {
+    warnings.push({
+      code: "INDEX_UNAVAILABLE",
+      message:
+        "本地关键词索引不可用（缺失或损坏），已按本地缓存组装知识包；" +
+        "缓存卡片仍按来源块与 target_model 规则过滤。",
+    });
+  }
   if (flags.general_empty === true) {
     warnings.push({
       code: "GENERAL_KNOWLEDGE_EMPTY",
@@ -356,13 +429,17 @@ function index_unavailable(
   index_state: IndexState,
   read_failed = false,
 ): LoadKnowledgePackFailure {
-  const details: Record<string, unknown> = { index_path, index_state };
+  const details: Record<string, unknown> = {
+    index_path,
+    index_state,
+    cache_path: cache_file_path(),
+  };
   if (read_failed) {
     details.index_read_failed = true;
   }
   return failure(
     "INDEX_UNAVAILABLE",
-    "本地知识索引不可用（缺失或损坏），load_knowledge_pack 没有缓存回退；" +
+    "本地关键词索引不可用（缺失或损坏），且没有可用的本地缓存；" +
       "请先运行 refresh_local_index 重建本地索引。",
     details,
   );
