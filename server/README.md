@@ -91,6 +91,17 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
   `"args": ["/d", "/s", "/c", "call", "./scripts/launch_codex_app_tools_mcp.cmd", "./server.mjs"]`。
   两者都是 Codex 兼容布局，并在同目录提供对应的 `.cmd` 启动脚本。
 
+## Base 日期字段换算（Task 1 决定）
+
+- `updated_at`、`last_synced_at` 在逻辑模型中为 ISO 8601；写入飞书 Base 的
+  datetime CellValue 时固定换算为 `YYYY-MM-DD HH:mm`（不带秒），读回时还原为
+  带 `+08:00` 偏移的 ISO 8601。
+- 换算首版固定按 `+08:00` 墙钟时间处理，不读取系统时区；换算函数集中放在
+  `server/src/base_mapping.ts`（`iso8601_to_base_cell`、`base_cell_to_iso8601`），
+  其他模块不得自行实现时间换算。
+- Base datetime 单元格只保留分钟精度，写入时秒被截断；`obj_edit_time` 是不透明
+  字符串，原样进出，不做任何时间换算。
+
 ## Phase 1 已知限制
 
 - 已注册 `health`（只读健康检查）与 `write_config`（配置预览/写入）；其余工具由后续任务注册。
