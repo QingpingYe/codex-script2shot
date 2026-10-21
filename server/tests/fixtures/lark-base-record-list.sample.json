@@ -35,6 +35,10 @@
       "日期"
     ],
     "has_more": false,
+    "query_context": {
+      "field_scope": "all_fields",
+      "record_scope": "all_records"
+    },
     "record_id_list": [
       "recEXAMPLE0002",
       "recEXAMPLE0003"

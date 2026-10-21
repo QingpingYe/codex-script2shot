@@ -6,7 +6,7 @@ lark-cli：1.0.98，路径 `D:\lark-cli\lark-cli.exe`
 机器：Windows 桌面端本机会话（Codex Desktop，PowerShell）
 
 本文档记录能力形状与结论，不包含账号凭证类信息。
-Base / 空间 / 数据表标识按需保留，作为插件默认配置依据；文档节点与对象的 token 不在此记录。
+Base / 空间 / 数据表标识按需保留，作为插件默认配置依据；A 库文档节点与对象的 token 不在此记录。
 
 ## 1. 登录与身份
 
@@ -56,9 +56,6 @@ A 库空间：Wiki `7695983197091302359`。
   `data.document.content` 为 Markdown 正文，5393 字符；`tips` 为空。
 - 本次输出中 `reference_map` 与 `tips` 的空值未单独出现；fixture 按文档形状保留
   `reference_map: {}`、`tips: ""`。
-- 附带 warning：`--doc-format markdown` 与 `--detail with-ids` 同时使用时，工具提示
-  `with-ids` 只支持 xml 格式，本次忽略该选项按 markdown 返回；warning 不影响
-  `content` 提取。
 
 ### 2.4 非 docx 节点
 
@@ -114,7 +111,7 @@ B 空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空�
 
 | 命令 | 形状 |
 | --- | --- |
-| `base +record-list --format json` | 矩阵形状：`data.fields`（字段名数组）+ `data.data`（行数组，每行按 `fields` 顺序的 CellValue）+ `data.record_id_list`（与行对齐的记录 ID）；另有 `field_id_list`、`field_type_list`、`has_more`、`rev`、`timezone`。不是对象数组 |
+| `base +record-list --format json` | 矩阵形状：`data.fields`（字段名数组）+ `data.data`（行数组，每行按 `fields` 顺序的 CellValue）+ `data.record_id_list`（与行对齐的记录 ID）；另有 `field_id_list`、`field_type_list`、`has_more`、`query_context`（`field_scope` / `record_scope`）、`rev`、`timezone`。不是对象数组 |
 | `base +record-batch-create` | `data.record_id_list` + `data.rev` |
 | `base +field-list` | 字段键为 `id` / `name` / `type`（另有按字段类型出现的 `style`、`options` 等） |
 | `base +table-list` | 表键为 `id` / `name` / `records_count`（及 `rev`），顶层 `total` |
@@ -128,7 +125,7 @@ B 空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空�
 | # | 既有事实 | 结论 | 偏差 / 备注 |
 | --- | --- | --- | --- |
 | 1 | `wiki +node-list` 返回含 `obj_edit_time` 的完整字段，`--page-all --page-limit` 翻页 | 有偏差 | 快捷命令实测不含 `obj_edit_time`；原始 API `wiki nodes list` 返回完整字段（见 §2.2）。Phase 2 改用原始 API 手动翻页（`--page-token`） |
-| 2 | `docs +fetch` 返回 `data.document.{document_id, revision_id, content, reference_map, tips}` | 实测通过 | `document_id`、`revision_id=13`、`content`（Markdown，5393 字符）实测拿到；空 `tips` 未出现、`reference_map` 未出现；markdown 下 `--detail with-ids` 返回 warning |
+| 2 | `docs +fetch` 返回 `data.document.{document_id, revision_id, content, reference_map, tips}` | 实测通过 | `document_id`、`revision_id=13`、`content`（Markdown，5393 字符）实测拿到；结构按文档形状，空 `tips`、`reference_map` 未单独出现 |
 | 3 | `base +table-create` 用 `--fields` JSON；`+record-batch-create` 用 `--json '{"create_records":[...]}'`（≤200 条）；datetime CellValue 形如 `2026-03-24 10:00` | 实测通过 | 本轮复测 `+record-batch-create` 形状与 `data.record_id_list` 返回；`+table-create --fields`、200 条上限与 datetime CellValue 属未复测项，Phase 2 Task 2 按 `--help` 复核 |
 | 4 | `auth status --json` 可读；`auth login` 走设备码登录 | 实测通过 | 重新登录后状态输出用户身份已就绪 |
 | 5 | 可移植插件布局：`plugin.json` + `mcp.json` + `skills/` | 实测通过 | Phase 1 清单与握手测试覆盖，本轮回归复跑 |
@@ -152,8 +149,9 @@ B 空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空�
    `wiki nodes list --space-id <space_a> --parent-node-token ? --page-size 50 --page-token ? --as user --format json`，
    手动翻页 + BFS 递归；不使用快捷 `wiki +node-list`。
 2. `scope` / `project_id` 使用根节点映射：「通用知识」→ `scope=general`；其他
-   origin docx 根节点 → `scope=project`，`project_id` 由配置中的根节点映射给出；
-   未映射根节点跳过并写 warning。路径规则保留为建议目录（用于 `source_path` 展示）。
+   origin docx 根节点 → `scope=project`，`project_id` 由配置中的 `project_roots` 给出
+   （结构与语义见架构 §7.3）；未映射根节点跳过并写 warning。路径规则保留为建议目录
+   （用于 `source_path` 展示）。
 3. 非 docx 节点跳过并写 warning，不读取二进制。
 4. 记录读写按 §4 处理矩阵形状与 `record_id_list`。
 5. 正文读取以 `data.document.revision_id` 作为 `source_revision`；`content` 为 Markdown。

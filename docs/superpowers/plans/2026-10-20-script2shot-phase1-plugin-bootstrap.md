@@ -323,7 +323,7 @@ git commit -m "feat: add setup skill"
 
 - [ ] **Step 2: 录制并脱敏 fixture（live）**
 
-保存真实 `wiki +node-list`、`docs +fetch`、`base +table-list` 的响应到 `server/tests/fixtures/`，把所有 token 替换为 `EXAMPLExxx` 样式占位值，保持字段结构不变。校验脱敏：`rg -n "cn_|tbl|wikcn|doccn" server/tests/fixtures/` 只应出现占位样式。
+录制真实原始 API `wiki nodes list` 的响应（含 `obj_edit_time` 字段）、`docs +fetch`、`base +table-list` 的响应并保存到 `server/tests/fixtures/`，把所有 token 替换为 `EXAMPLExxx` 样式占位值，保持字段结构不变。校验脱敏：`rg -n "cn_|tbl|wikcn|doccn" server/tests/fixtures/` 只应出现占位样式。
 
 - [ ] **Step 3: 写 `docs/lark-cli-capability-notes.md`**
 

@@ -188,8 +188,8 @@ A 是一个飞书知识库（Wiki 空间）：每个文档是一个 Wiki 节点�
   `--page-size` / `--page-token` 手动翻页）。快捷命令 `wiki +node-list` 的输出会被裁剪，
   实测不含 `obj_edit_time`，不能用于增量判断。
 - `scope` / `project_id` 按根节点映射给出：「通用知识」根节点 → `scope=general`；
-  其他 origin docx 根节点 → `scope=project`，`project_id` 由配置中的根节点映射给出。
-  未映射根节点与非 docx 节点跳过并写 warning。
+  其他 origin docx 根节点 → `scope=project`，`project_id` 由配置中的 `project_roots`
+  给出（结构与语义见 §7.3）。未映射根节点与非 docx 节点跳过并写 warning。
 - 上面的路径推导规则保留为建议目录：路径继续用于 `source_path` 展示与人工组织，
   不再作为 `scope` / `project_id` 的唯一推导依据。
 
@@ -549,9 +549,22 @@ base_b = "base-token-b"
 knowledge_cards_table_id = "tbl..."
 sync_state_table_id = "tbl..."
 
+[[lark.project_roots]]
+node_token = "wikcn-project-root-a"
+project_id = "demo"
+
+[[lark.project_roots]]
+node_token = "wikcn-project-root-b"
+project_id = "another-project"
+
 [retrieval]
 default_top_k = 12
 ```
+
+`project_roots` 是知识库 A 根节点到项目 ID 的映射表，用于把非「通用知识」的
+origin docx 根节点归入 `scope=project`：每项包含 `node_token`（根节点 token）与
+`project_id`（该根节点下文档所属项目）。该结构的字段与语义以本节为准；缺省值由
+插件默认配置提供，用户可整体替换。
 
 ### 7.4 本地缓存和索引
 

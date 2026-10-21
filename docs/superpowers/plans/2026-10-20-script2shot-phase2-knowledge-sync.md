@@ -163,7 +163,7 @@ git commit -m "feat: add knowledge base table init and validation tool"
 - Modify: `docs/architecture.md` §6.1（补 shortcut、根节点映射与扫描命令规则）
 
 **Interfaces:**
-- Consumes: Task 2 的 `list_records`；Phase 1 的 config 与 `run_cli`。
+- Consumes: Task 2 的 `list_records`；Phase 1 的 config 与 `run_cli`；前置：Phase 1 Task 8（默认知识库与配置扩展）提供含 `project_roots` 的配置结构。
 - Produces: `scan_knowledge_a() -> { nodes[], skipped[], warnings[] }`，`nodes[].{node_token, obj_token, obj_type, parent_node_token, title, obj_edit_time, path, scope, project_id}`；`read_sync_state() -> { records[] }`；`build_sync_plan(nodes, sync_records) -> { to_add[], to_update[], to_move[], to_delete[], unchanged[], warnings[] }`，条目含 `{source_doc_token, source_node_token, title, path, reason}`。
 
 扫描实现：`wiki nodes list --space-id <space_a> --parent-node-token ? --page-size 50 --page-token ? --as user --format json` 手动翻页 + BFS 递归（不依赖 `--page-all` 上限；快捷 `wiki +node-list` 输出被裁剪、实测不含 `obj_edit_time`，不能用于扫描，2026-10-21 实测）。`source_doc_token` 取 `obj_token`。
@@ -176,9 +176,9 @@ git commit -m "feat: add knowledge base table init and validation tool"
 4. `obj_edit_time` 相同但 `path` 或 `title` 不同 ⇒ `to_move`（只更新元数据）。
 5. 其余 ⇒ `unchanged`。
 
-scope/project 推导（分类前执行）：按根节点映射给出——`通用知识` 根节点 → `scope=general`；其他 origin docx 根节点 → `scope=project`，`project_id` 由配置中的根节点映射给出。路径推导保留为建议目录，只用于 `source_path` 展示。
+scope/project 推导（分类前执行）：按架构 §4.4 的实现约定与 §7.3 的 `project_roots` 配置执行；路径推导保留为建议目录，只用于 `source_path` 展示。
 
-跳过规则（写 warning，不中断）：`obj_type != "docx"`（`NON_DOC_NODE_SKIPPED`）；`node_type == "shortcut"`（`SHORTCUT_NODE_SKIPPED`，同步写进架构 §6.1）；根节点不在映射配置中（`UNMAPPED_ROOT_NODE_SKIPPED`）。
+跳过规则（写 warning，不中断）：`obj_type != "docx"`（`NON_DOC_NODE_SKIPPED`）；`node_type == "shortcut"`（`SHORTCUT_NODE_SKIPPED`，同步写进架构 §6.1）；根节点不在 `project_roots` 配置中（`UNMAPPED_ROOT_NODE_SKIPPED`）。
 
 - [ ] **Step 1: 写失败的分类测试**
 
