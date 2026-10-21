@@ -130,7 +130,7 @@ B 空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空�
 | --- | --- | --- | --- |
 | 1 | `wiki +node-list` 返回含 `obj_edit_time` 的完整字段，`--page-all --page-limit` 翻页 | 有偏差 | 快捷命令实测不含 `obj_edit_time`；原始 API `wiki nodes list` 返回完整字段（见 §2.2）。Phase 2 改用原始 API 手动翻页（`--page-token`） |
 | 2 | `docs +fetch` 返回 `data.document.{document_id, revision_id, content, reference_map, tips}` | 实测通过 | `document_id`、`revision_id=13`、`content`（Markdown，5393 字符）实测拿到；结构按文档形状，空 `tips`、`reference_map` 未单独出现；markdown 模式不支持 with-ids（实测 warning，见 §2.3） |
-| 3 | `base +table-create` 用 `--fields` JSON；`+record-batch-create` 用 `--json '{"create_records":[...]}'`（≤200 条）；datetime CellValue 形如 `2026-03-24 10:00` | 实测通过 | 本轮复测 `+record-batch-create` 形状与 `data.record_id_list` 返回；`+table-create --fields`、200 条上限与 datetime CellValue 属未复测项，Phase 2 Task 2 按 `--help` 复核 |
+| 3 | `base +table-create` 用 `--fields` JSON；`+record-batch-create` 用 `--json '{"create_records":[...]}'`（≤200 条）；datetime CellValue 形如 `2026-03-24 10:00` | 实测通过 | 本轮复测 `+record-batch-create` 形状与 `data.record_id_list` 返回；`+table-create` 返回形状与 `--fields` 的 `text` / `number` / `datetime` token 已由 live 建表验证（§9）；200 条上限仍未复测，按 `--help` 复核；datetime CellValue 读回归一化见 §9 |
 | 4 | `auth status --json` 可读；`auth login` 走设备码登录 | 实测通过 | 重新登录后状态输出用户身份已就绪 |
 | 5 | 可移植插件布局：`plugin.json` + `mcp.json` + `skills/` | 实测通过 | Phase 1 清单与握手测试覆盖，本轮回归复跑 |
 | 6 | Codex 桌面端自带 Node 与 `node:sqlite` 可用 | 未复测 | 属环境类事实，不属于 lark-cli 能力探测范围；本轮回归在开发机 Node 上运行 |
@@ -185,6 +185,42 @@ B 空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空�
   warning：细节见 §2.3，此处只做引用。
 - datetime CellValue 形状 `"2026-03-24 10:00"`：§3.1 已记；`+record-batch-create` /
   `+record-batch-update` 的帮助文本 CellValue happy path 也列出该形状。
-- 未复测项（如实记录）：真实 `base +table-create` 的返回形状，以及 `--fields` 的
-  `text` / `number` / `datetime` token 尚未在 live 演练中核对（帮助文本只给出
-  `text` / `select` 示例）；由控制方稍后补测。
+- `base +table-create` 返回形状：已由本轮 live 建表验证（见 §9）：`--fields` 的
+  `text` / `number` / `datetime` token 经建表落地、由 `+field-list` 读回字段类型核对
+  一致（此前帮助文本只给出 `text` / `select` 示例）。仍未复测：`+record-batch-create`
+  的 200 条上限；由控制方稍后补测。
+
+## 9. Phase 2 live 演练（2026-10-21）
+
+本节记录 Phase 2（知识库同步）在真实飞书空间的端到端演练结果，由控制方通过本地
+MCP Server 执行；沿用本文件口径，只保留公开知识库标识与数据表 ID，不含账号凭证。
+
+- 演练方式：经本地 MCP Server（`scripts/launch_script2shot_mcp.cmd`）调用工具：
+  `init_knowledge_b` 建表 → 在知识库 A「通用知识」下建 3 条测试文档 → 抓正文 →
+  生成 10 张知识卡 → `replace_doc_cards` + `update_doc_sync_state` → 修改 1 条 →
+  删除 1 条 → 清理 3 条测试文档。
+- 建表实测：`init_knowledge_b({ dry_run: false })` 返回 `action=created`，新建
+  `KnowledgeCards=tblUOrjzQJKrjCBS`、`SyncState=tbl3XcUQcedY8AW2`，并把两个
+  `table_id` 回填进 `~/.codex-script2shot/config.toml`；`base +field-list` 读回字段
+  类型与设计一致（`text` / `number` / `datetime`）。此前记为「未复测」的
+  `base +table-create` 返回形状据此标记为已由本轮建表验证。
+- 关键发现（真实缺陷与修复）：`base +record-list` 读回 datetime 字段时，云端把值
+  归一化成 ISO 8601（实测 `2026-10-21T16:59:00.000+08:00`），而 `from_base_record`
+  原先只接受写入侧形状 `YYYY-MM-DD HH:mm`，导致 `read_sync_state` 在真实数据上必然
+  失败（单测 fixture 用写入侧形状，未暴露该问题）。修复提交 `51adae5`：读回侧同时
+  接受两种形状，并按 `+08:00` 统一换算；修复后真实回读复测通过。
+- 幂等实测：同一文档连续两次 `replace_doc_cards` 后卡片总数不变、`card_id` 无重复
+  （10 → 10，`unique_card_ids=10`、`duplicates=0`），旧记录 ID 集合被精确删除。
+- 修改检测：修改一条文档后复扫，`obj_edit_time` 变化使计划只有该文档进入
+  `to_update`，其余为 `unchanged`；同步后该文档 `card_count` 3 → 4、
+  `source_revision` 2 → 3。
+- 删除清理：删除一条测试文档节点后复扫，计划归入 `to_delete`；
+  `delete_doc_cards({ dry_run: false })` 删除 4 张卡 + 1 条状态；重复执行返回
+  `deleted_cards=0` / `deleted_state=0`（幂等）。
+- 零变化路径：未变化文档只走 `wiki nodes list` + `base +record-list`，不产生
+  `docs +fetch`。
+- 演练清理：3 条测试文档节点已删除；`KnowledgeCards` 与 `SyncState` 两张表回到
+  0 条记录；知识库 A 只剩原有 12 个 docx 节点（另有 1 条预期的 PDF 跳过 warning，
+  见 §2.4）。
+- 尚未执行：未把知识库 A 的 12 条真实文档正式同步进知识库 B，因此两张表当前为空
+  是预期状态而非缺陷。

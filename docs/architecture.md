@@ -696,7 +696,7 @@ Skill 是 Codex 读取并执行的流程说明，不是可执行 CLI。用户通
 - 配置知识库 A 和知识库 B。
 - 创建或校验 `KnowledgeCards` 和 `SyncState`，保存固定 `table_id`。
 - 初始化本地目录。
-- 可选地执行第一次知识库 B 同步和本地索引构建。
+- 提示用户可在需要时运行 `$knowledge-sync` 完成首次同步与本地索引构建，不在 setup 内自动执行。
 
 ### 9.2 knowledge-sync
 

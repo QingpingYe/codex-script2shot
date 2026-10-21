@@ -110,7 +110,7 @@ describe("knowledge-sync mcp tools contract", () => {
     "delete_doc_cards",
   ];
 
-  test("tools/list exposes every MCP tool consumed by knowledge-sync", async () => {
+  test("tools/list exposes the tools consumed by knowledge-sync plus the setup tools", async () => {
     const { client, errors } = await connect_server();
     try {
       const result = await client.listTools();
