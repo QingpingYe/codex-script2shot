@@ -401,8 +401,9 @@ git commit -m "feat: ship default knowledge bases and local marketplace entry"
 ## 阶段出口检查
 
 - [ ] `$setup` 在真实环境跑通，`health` 无未解释的 fail。
-- [ ] `docs/lark-cli-capability-notes.md` 已记录版本、日期与偏差。
-- [ ] 测试全绿；`rg "<(ext|test-ext|test-cmd|build-cmd|run-cmd)>" docs/superpowers/plans/` 无输出。
-- [ ] 架构 §7.1 与实现一致（技术栈、目录、运行方式）。
-- [ ] 默认知识库（A/B）与 `project_roots` 随插件默认配置提供，测试覆盖「默认应用/显式覆盖」。
-- [ ] 在本机 Codex 通过 repo marketplace 安装插件并运行 `$setup` / `$health`，`tools/list` 可响应（关闭 Task 2 遗留 ⚠️）。
+- [x] `$setup` 在真实环境跑通，`health` 无未解释的 fail —— 2026-10-21 实装：setup 完成写入，health `ok=true`（仅 TABLE_ID_NOT_CONFIGURED / INDEX_NOT_BUILT 两条预期内 warning）。
+- [x] `docs/lark-cli-capability-notes.md` 已记录版本、日期与偏差。
+- [x] 测试全绿；`rg "<(ext|test-ext|test-cmd|build-cmd|run-cmd)>" docs/superpowers/plans/` 无输出 —— 控制方侧 typecheck + build + 72/72 通过（2026-10-21）。
+- [x] 架构 §7.1 与实现一致（技术栈、目录、运行方式）。
+- [x] 默认知识库（A/B）与 `project_roots` 随插件默认配置提供，测试覆盖「默认应用/显式覆盖」。
+- [x] 在本机 Codex 通过 repo marketplace 安装插件并运行 `$setup` / `$health`，`tools/list` 可响应（关闭 Task 2 遗留 ⚠️）—— 2026-10-21 用户实装验证通过。
