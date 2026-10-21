@@ -238,7 +238,7 @@ git commit -m "feat: add knowledge a scan, sync state read and change classifica
 - Consumes: Phase 1 的 `run_cli`；Phase 1 Task 7 录制的 `server/tests/fixtures/lark-docs-fetch.sample.json`。
 - Produces: `fetch_knowledge_a_doc({ doc }) -> { doc_token, revision_id, title, content, tips, warnings[] }`。
 
-输入解析顺序：`/wiki/<token>` URL ⇒ 先 `wiki +node-get` 解析出 `obj_token` 再读；`/docx/<token>` 或 `doccn*` token ⇒ 直接读；`wikcn*` token ⇒ 先 `node-get`；其他原始 token ⇒ 先按文档读，失败再按节点解析一次。读取命令：`docs +fetch --doc <token> --doc-format markdown --detail with-ids --revision-id -1 --format json`（flag 以 `--help` 复核）。`revision_id` 取 `data.document.revision_id`；`title` 取 `content` 首个标题行，取不到时回退节点标题并写 warning。失败返回 `error.code=DOC_FETCH_FAILED`，`details.doc` 带输入原文。
+输入解析顺序：`/wiki/<token>` URL ⇒ 先 `wiki +node-get` 解析出 `obj_token` 再读；`/docx/<token>` 或 `doccn*` token ⇒ 直接读；`wikcn*` token ⇒ 先 `node-get`；其他原始 token ⇒ 先按文档读，失败再按节点解析一次。读取命令：`docs +fetch --doc <token> --doc-format markdown --revision-id -1 --format json`（flag 以 `--help` 复核；markdown 模式不提供 block id，`source_block_id` 留空；将来需要 block id 时改用 xml 模式）。`revision_id` 取 `data.document.revision_id`；`title` 取 `content` 首个标题行，取不到时回退节点标题并写 warning。失败返回 `error.code=DOC_FETCH_FAILED`，`details.doc` 带输入原文。
 
 - [ ] **Step 1: 写失败测试**
 

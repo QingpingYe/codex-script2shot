@@ -56,6 +56,10 @@ A 库空间：Wiki `7695983197091302359`。
   `data.document.content` 为 Markdown 正文，5393 字符；`tips` 为空。
 - 本次输出中 `reference_map` 与 `tips` 的空值未单独出现；fixture 按文档形状保留
   `reference_map: {}`、`tips: ""`。
+- warning（落盘证据：`live/docs-fetch-sample.json` 的 `data.warnings[0]`）：
+  `--doc-format markdown` 与 `--detail with-ids` 组合时 detail 会被忽略并返回 warning，
+  原文为 `--detail with-ids is only supported with --doc-format xml; returning markdown output and ignoring the unsupported detail option`。
+  含义：markdown 模式不提供 block id；需要 block id 时应改用 `--doc-format xml --detail with-ids`。
 
 ### 2.4 非 docx 节点
 
@@ -125,7 +129,7 @@ B 空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空�
 | # | 既有事实 | 结论 | 偏差 / 备注 |
 | --- | --- | --- | --- |
 | 1 | `wiki +node-list` 返回含 `obj_edit_time` 的完整字段，`--page-all --page-limit` 翻页 | 有偏差 | 快捷命令实测不含 `obj_edit_time`；原始 API `wiki nodes list` 返回完整字段（见 §2.2）。Phase 2 改用原始 API 手动翻页（`--page-token`） |
-| 2 | `docs +fetch` 返回 `data.document.{document_id, revision_id, content, reference_map, tips}` | 实测通过 | `document_id`、`revision_id=13`、`content`（Markdown，5393 字符）实测拿到；结构按文档形状，空 `tips`、`reference_map` 未单独出现 |
+| 2 | `docs +fetch` 返回 `data.document.{document_id, revision_id, content, reference_map, tips}` | 实测通过 | `document_id`、`revision_id=13`、`content`（Markdown，5393 字符）实测拿到；结构按文档形状，空 `tips`、`reference_map` 未单独出现；markdown 模式不支持 with-ids（实测 warning，见 §2.3） |
 | 3 | `base +table-create` 用 `--fields` JSON；`+record-batch-create` 用 `--json '{"create_records":[...]}'`（≤200 条）；datetime CellValue 形如 `2026-03-24 10:00` | 实测通过 | 本轮复测 `+record-batch-create` 形状与 `data.record_id_list` 返回；`+table-create --fields`、200 条上限与 datetime CellValue 属未复测项，Phase 2 Task 2 按 `--help` 复核 |
 | 4 | `auth status --json` 可读；`auth login` 走设备码登录 | 实测通过 | 重新登录后状态输出用户身份已就绪 |
 | 5 | 可移植插件布局：`plugin.json` + `mcp.json` + `skills/` | 实测通过 | Phase 1 清单与握手测试覆盖，本轮回归复跑 |
