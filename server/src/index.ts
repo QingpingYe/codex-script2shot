@@ -7,6 +7,7 @@ import {
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 import { health } from "./tools/health.js";
+import { init_knowledge_b, type InitKnowledgeBInput } from "./tools/init_knowledge_b.js";
 import { write_config, type WriteConfigInput } from "./tools/write_config.js";
 
 const server = new Server(
@@ -45,6 +46,22 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "init_knowledge_b",
+    description:
+      "创建或校验知识库 B 的 KnowledgeCards 与 SyncState 两张数据表（按固定表名解析 table_id），" +
+      "报告字段漂移；dry_run 缺省 true，只有 dry_run=false 且校验通过后才把 table_id 写回本地配置。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dry_run: {
+          type: "boolean",
+          description: "缺省 true：只读取并校验，不建表、不写配置。",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -58,6 +75,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (name === "write_config") {
     const result = write_config(
       (request.params.arguments ?? {}) as unknown as WriteConfigInput,
+    );
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+  if (name === "init_knowledge_b") {
+    const result = await init_knowledge_b(
+      (request.params.arguments ?? {}) as unknown as InitKnowledgeBInput,
     );
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   }

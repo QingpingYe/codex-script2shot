@@ -1,14 +1,20 @@
 #!/usr/bin/env node
-// 假 lark-cli：封闭测试替身，只实现只读命令
-// （--help / --version / auth status / profile list / wiki +node-list / base +table-list）。
+// 假 lark-cli：封闭测试替身，实现插件当前用到的命令
+// （--help / --version / auth status / profile list / wiki +node-list /
+//  base +table-list / +table-create / +field-list / +record-list /
+//  +record-batch-create / +record-batch-update / +record-delete）。
 // 行为开关：
 //   FAKE_SCENARIO        ok | no-auth | auth-expired | legacy-no-auth | legacy-auth |
 //                        old-version | missing-capability | bad-json | space-unreachable |
-//                        base-unreachable | table-missing | legacy-table-list（默认 ok）
+//                        base-unreachable | table-missing | legacy-table-list |
+//                        table-create-no-id（默认 ok）
 //   FAKE_AUTH_EXIT_CODE  覆盖 auth status 的退出码，用于覆盖 ok:false 且退出码为 0 的分支
 //   FAKE_ACTIVE_PROFILE  覆盖 profile list 返回的活动 profile（默认 default）
 //   FAKE_LOG_FILE        把每次调用的 argv 以 JSON Lines 追加记录
-import { appendFileSync } from "node:fs";
+//   FAKE_BASE_STATE_FILE Base 状态文件：存在时替代内置默认表/字段/记录，写命令后回写；
+//                        文件不存在视为空 Base
+//   FAKE_TABLE_CREATE_ID_KEY  覆盖 +table-create 返回的 id 位置：table（默认）| id | table_id
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const scenario = process.env.FAKE_SCENARIO ?? "ok";
 const args = process.argv.slice(2);
@@ -20,10 +26,53 @@ if (log_file) {
 const HELP_COMMANDS = {
   wiki: ["+node-list", "+node-get", "+space-list"],
   docs: ["+fetch", "+create", "+update"],
-  base: ["+table-create", "+table-list", "+record-batch-create", "+record-list", "+record-delete"],
+  base: [
+    "+table-create",
+    "+table-list",
+    "+field-list",
+    "+record-batch-create",
+    "+record-batch-update",
+    "+record-list",
+    "+record-delete",
+  ],
   auth: ["status", "login", "logout", "list"],
   profile: ["list", "use", "add", "remove", "rename"],
 };
+
+const FULL_CARDS_FIELDS = [
+  { name: "card_id", type: "text" },
+  { name: "scope", type: "text" },
+  { name: "project_id", type: "text" },
+  { name: "category", type: "text" },
+  { name: "title", type: "text" },
+  { name: "content", type: "text" },
+  { name: "tags", type: "text" },
+  { name: "entities", type: "text" },
+  { name: "target_models", type: "text" },
+  { name: "priority", type: "number" },
+  { name: "source_doc_token", type: "text" },
+  { name: "source_node_token", type: "text" },
+  { name: "source_path", type: "text" },
+  { name: "source_title", type: "text" },
+  { name: "source_revision", type: "number" },
+  { name: "source_block_id", type: "text" },
+  { name: "updated_at", type: "datetime" },
+];
+
+const FULL_STATE_FIELDS = [
+  { name: "source_doc_token", type: "text" },
+  { name: "source_node_token", type: "text" },
+  { name: "source_path", type: "text" },
+  { name: "source_title", type: "text" },
+  { name: "scope", type: "text" },
+  { name: "project_id", type: "text" },
+  { name: "obj_edit_time", type: "text" },
+  { name: "source_revision", type: "number" },
+  { name: "card_count", type: "number" },
+  { name: "last_synced_at", type: "datetime" },
+  { name: "last_sync_user", type: "text" },
+  { name: "last_run_id", type: "text" },
+];
 
 function help_text(group) {
   let commands = HELP_COMMANDS[group];
@@ -180,28 +229,326 @@ if (group === "wiki" && sub === "+node-list") {
   exit_with(0);
 }
 
-if (group === "base" && sub === "+table-list") {
+if (group === "base") {
   if (scenario === "base-unreachable") {
     process.stderr.write("fake-lark-cli: base unreachable\n");
     exit_with(1);
   }
-  const legacy_shape = scenario === "legacy-table-list";
-  const tables = legacy_shape
-    ? [
-        { table_id: "tbl_cards", name: "KnowledgeCards" },
-        { table_id: "tbl_state", name: "SyncState" },
-      ]
-    : [
-        { id: "tbl_cards", name: "KnowledgeCards" },
-        { id: "tbl_state", name: "SyncState" },
-      ];
-  const response =
-    scenario === "table-missing"
-      ? tables.filter((table) => (table.id ?? table.table_id) !== "tbl_state")
-      : tables;
-  process.stdout.write(`${JSON.stringify({ ok: true, data: { tables: response } })}\n`);
-  exit_with(0);
+
+  if (sub === "+table-list") {
+    const state = load_base_state();
+    const legacy_shape = scenario === "legacy-table-list";
+    const tables = state.tables.map((table) =>
+      legacy_shape
+        ? { table_id: table.id, name: table.name }
+        : {
+            id: table.id,
+            name: table.name,
+            records_count: (state.records?.[table.id] ?? []).length,
+          },
+    );
+    process.stdout.write(`${JSON.stringify({ ok: true, data: { tables, total: tables.length } })}\n`);
+    exit_with(0);
+  }
+
+  if (sub === "+table-create") {
+    if (scenario === "table-create-no-id") {
+      process.stdout.write(`${JSON.stringify({ ok: true, data: {} })}\n`);
+      exit_with(0);
+    }
+    const name = arg_value(args, "--name");
+    const requested_fields = parse_json_argument(args, "--fields");
+    if (
+      typeof name !== "string" ||
+      !Array.isArray(requested_fields) ||
+      requested_fields.length === 0
+    ) {
+      process.stderr.write(
+        "fake-lark-cli: +table-create requires --name and a non-empty --fields JSON array\n",
+      );
+      exit_with(1);
+    }
+    const state = load_base_state();
+    const table_id = `tbl_fake_${state.tables.length + 1}`;
+    state.tables.push({
+      id: table_id,
+      name,
+      fields: requested_fields.map((field, index) => ({
+        id: `fld_${table_id}_${index + 1}`,
+        name: field.name,
+        type: field.type,
+      })),
+    });
+    save_base_state(state);
+    const id_key = process.env.FAKE_TABLE_CREATE_ID_KEY ?? "table";
+    const data = id_key === "table" ? { table: { id: table_id, name } } : { [id_key]: table_id };
+    process.stdout.write(`${JSON.stringify({ ok: true, data })}\n`);
+    exit_with(0);
+  }
+
+  if (sub === "+field-list") {
+    const state = load_base_state();
+    const table = find_base_table(state, arg_value(args, "--table-id"));
+    if (!table) {
+      process.stderr.write("fake-lark-cli: unknown table for +field-list\n");
+      exit_with(1);
+    }
+    process.stdout.write(`${JSON.stringify({ ok: true, data: { fields: table.fields } })}\n`);
+    exit_with(0);
+  }
+
+  if (sub === "+record-list") {
+    const state = load_base_state();
+    const table = find_base_table(state, arg_value(args, "--table-id"));
+    if (!table) {
+      process.stderr.write("fake-lark-cli: unknown table for +record-list\n");
+      exit_with(1);
+    }
+    const limit_value = Number.parseInt(arg_value(args, "--limit") ?? "100", 10);
+    const limit = Number.isNaN(limit_value) ? 100 : limit_value;
+    const offset_value = Number.parseInt(arg_value(args, "--offset") ?? "0", 10);
+    const offset = Number.isNaN(offset_value) ? 0 : offset_value;
+    const projection = arg_values(args, "--field-id");
+    const columns = table.fields.filter(
+      (field) =>
+        projection.length === 0 ||
+        projection.includes(field.id) ||
+        projection.includes(field.name),
+    );
+    const filter_json = arg_value(args, "--filter-json");
+    const all = records_of(state, table.id).filter((record) =>
+      filter_matches(record, filter_json),
+    );
+    const page = all.slice(offset, offset + limit);
+    const next_offset = offset + page.length;
+    const has_more = next_offset < all.length;
+    const data = {
+      data: page.map((record) => columns.map((column) => record.fields?.[column.name] ?? null)),
+      field_id_list: columns.map((column) => column.id),
+      field_type_list: columns.map((column) => column.type),
+      fields: columns.map((column) => column.name),
+      has_more,
+      query_context: {
+        field_scope: projection.length === 0 ? "all_fields" : "selected_fields",
+        record_scope: filter_json ? "filtered_records" : "all_records",
+      },
+      record_id_list: page.map((record) => record.record_id),
+      rev: 1,
+      timezone: "Asia/Shanghai",
+    };
+    if (has_more) {
+      data.next_offset = next_offset;
+    }
+    process.stdout.write(`${JSON.stringify({ ok: true, data })}\n`);
+    exit_with(0);
+  }
+
+  if (sub === "+record-batch-create") {
+    const payload = parse_json_argument(args, "--json");
+    const entries = payload?.create_records;
+    if (!Array.isArray(entries)) {
+      process.stderr.write("fake-lark-cli: +record-batch-create requires create_records array\n");
+      exit_with(1);
+    }
+    const state = load_base_state();
+    const table = find_base_table(state, arg_value(args, "--table-id"));
+    if (!table) {
+      process.stderr.write("fake-lark-cli: unknown table for +record-batch-create\n");
+      exit_with(1);
+    }
+    const table_records = records_of(state, table.id);
+    const record_id_list = [];
+    for (const entry of entries) {
+      const record_id = `rec_fake_${table_records.length + 1}`;
+      table_records.push({ record_id, fields: { ...entry } });
+      record_id_list.push(record_id);
+    }
+    save_base_state(state);
+    process.stdout.write(`${JSON.stringify({ ok: true, data: { record_id_list, rev: 1 } })}\n`);
+    exit_with(0);
+  }
+
+  if (sub === "+record-batch-update") {
+    const payload = parse_json_argument(args, "--json");
+    const updates = payload?.update_records;
+    if (typeof updates !== "object" || updates === null || Array.isArray(updates)) {
+      process.stderr.write("fake-lark-cli: +record-batch-update requires update_records object\n");
+      exit_with(1);
+    }
+    const state = load_base_state();
+    const table = find_base_table(state, arg_value(args, "--table-id"));
+    if (!table) {
+      process.stderr.write("fake-lark-cli: unknown table for +record-batch-update\n");
+      exit_with(1);
+    }
+    const table_records = records_of(state, table.id);
+    for (const [record_id, fields] of Object.entries(updates)) {
+      const record = table_records.find((item) => item.record_id === record_id);
+      // 真实 API 不校验 record id 是否存在：未知 id 静默忽略。
+      if (record && typeof fields === "object" && fields !== null) {
+        Object.assign(record.fields, fields);
+      }
+    }
+    save_base_state(state);
+    process.stdout.write(`${JSON.stringify({ ok: true, data: { ignored_fields: [] } })}\n`);
+    exit_with(0);
+  }
+
+  if (sub === "+record-delete") {
+    const payload = parse_json_argument(args, "--json");
+    const record_id_list = payload?.record_id_list;
+    if (!Array.isArray(record_id_list) || record_id_list.some((id) => typeof id !== "string")) {
+      process.stderr.write("fake-lark-cli: +record-delete requires record_id_list array\n");
+      exit_with(1);
+    }
+    const confirm = args.includes("--yes") && !args.includes("--dry-run");
+    const state = load_base_state();
+    const table = find_base_table(state, arg_value(args, "--table-id"));
+    if (!table) {
+      process.stderr.write("fake-lark-cli: unknown table for +record-delete\n");
+      exit_with(1);
+    }
+    if (confirm) {
+      state.records[table.id] = records_of(state, table.id).filter(
+        (record) => !record_id_list.includes(record.record_id),
+      );
+      save_base_state(state);
+    }
+    process.stdout.write(
+      `${JSON.stringify({ ok: true, data: { dry_run: !confirm, record_id_list, rev: 1 } })}\n`,
+    );
+    exit_with(0);
+  }
 }
 
 process.stderr.write(`fake-lark-cli: unsupported command: ${args.join(" ")}\n`);
 exit_with(1);
+
+function fake_table(id, name, fields) {
+  return {
+    id,
+    name,
+    fields: fields.map((field, index) => ({
+      id: `fld_${id}_${index + 1}`,
+      name: field.name,
+      type: field.type,
+    })),
+  };
+}
+
+function default_base_state() {
+  const cards = fake_table("tbl_cards", "KnowledgeCards", FULL_CARDS_FIELDS);
+  if (scenario === "table-missing") {
+    return { tables: [cards], records: {} };
+  }
+  const sync_state = fake_table("tbl_state", "SyncState", FULL_STATE_FIELDS);
+  return { tables: [cards, sync_state], records: {} };
+}
+
+function load_base_state() {
+  const state_file = process.env.FAKE_BASE_STATE_FILE;
+  if (!state_file) {
+    return default_base_state();
+  }
+  if (!existsSync(state_file)) {
+    return { tables: [], records: {} };
+  }
+  return JSON.parse(readFileSync(state_file, "utf8"));
+}
+
+function save_base_state(state) {
+  const state_file = process.env.FAKE_BASE_STATE_FILE;
+  if (state_file) {
+    writeFileSync(state_file, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  }
+}
+
+function find_base_table(state, table_id_or_name) {
+  return state.tables.find(
+    (table) => table.id === table_id_or_name || table.name === table_id_or_name,
+  );
+}
+
+function records_of(state, table_id) {
+  state.records ??= {};
+  state.records[table_id] ??= [];
+  return state.records[table_id];
+}
+
+function arg_value(args, flag) {
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value === flag) {
+      return args[index + 1];
+    }
+    if (typeof value === "string" && value.startsWith(`${flag}=`)) {
+      return value.slice(flag.length + 1);
+    }
+  }
+  return undefined;
+}
+
+function arg_values(args, flag) {
+  const values = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value === flag) {
+      values.push(args[index + 1]);
+    } else if (typeof value === "string" && value.startsWith(`${flag}=`)) {
+      values.push(value.slice(flag.length + 1));
+    }
+  }
+  return values;
+}
+
+function parse_json_argument(args, flag) {
+  const raw = arg_value(args, flag);
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+function cell_matches(cell, operator, expected) {
+  if (operator === "==") {
+    return cell === expected || JSON.stringify(cell ?? null) === JSON.stringify(expected ?? null);
+  }
+  if (operator === "intersects") {
+    if (Array.isArray(cell)) {
+      return Array.isArray(expected)
+        ? expected.some((value) => cell.includes(value))
+        : cell.includes(expected);
+    }
+    if (Array.isArray(expected)) {
+      return expected.includes(cell);
+    }
+    if (typeof cell === "string" && typeof expected === "string") {
+      return cell.includes(expected);
+    }
+  }
+  return false;
+}
+
+function filter_matches(record, filter_json) {
+  if (!filter_json) {
+    return true;
+  }
+  let filter;
+  try {
+    filter = JSON.parse(filter_json);
+  } catch {
+    return true;
+  }
+  const conditions = Array.isArray(filter?.conditions) ? filter.conditions : [];
+  return conditions.every((condition) => {
+    if (!Array.isArray(condition) || condition.length < 3) {
+      return false;
+    }
+    const [field, operator, expected] = condition;
+    return cell_matches(record.fields?.[field], operator, expected);
+  });
+}
