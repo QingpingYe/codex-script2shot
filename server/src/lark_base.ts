@@ -3,7 +3,12 @@ import { rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { BaseCellValue, BaseFieldMap, BaseRecord } from "./base_mapping.js";
-import { STDERR_LIMIT, run_cli, type LarkCliErrorCode } from "./lark_cli.js";
+import {
+  escaped_command_line_length,
+  STDERR_LIMIT,
+  run_cli,
+  type LarkCliErrorCode,
+} from "./lark_cli.js";
 
 /**
  * 飞书 Base 适配层（架构 §5、§7.3、§8）。
@@ -21,20 +26,25 @@ import { STDERR_LIMIT, run_cli, type LarkCliErrorCode } from "./lark_cli.js";
  *   对象数组，不改用 ndjson；分页跟随 `data.next_offset` 直到 `has_more=false`。
  * - 返回值一律是结果对象，不抛异常；业务失败按读写语义归一化为 `KB_READ_FAILED` /
  *   `KB_WRITE_FAILED`，错误详情只带 base token 前缀，不带完整 token。
- * - 三个批量写命令（create / update / delete）的 `--json` 在序列化后超过
- *   `JSON_ARG_INLINE_LIMIT` 时改走临时文件 + `--json "@<path>"`（2026-10-21 实测
- *   CLI 接受 `@file`），规避 Windows cmd.exe 的命令行长度上限；临时文件在同一次
- *   CLI 调用结束后（成功或失败）立即删除。小 payload 保持 inline，便于断言 argv。
+ * - 三个批量写命令（create / update / delete）的 `--json` 在「转义后整条命令行」超过
+ *   `JSON_ARG_ESCAPED_LINE_BUDGET` 时改走临时文件 + `--json "@<path>"`（2026-10-21
+ *   实测 CLI 接受 `@file`），规避 Windows cmd.exe 的命令行长度上限；临时文件在同一次
+ *   CLI 调用结束后（成功或失败）立即删除。预算内的 payload 保持 inline，便于断言 argv。
  */
 
 export const BASE_BATCH_SIZE = 200;
 export const BASE_MAX_PAGE_SIZE = 200;
 export const BASE_DEFAULT_PAGE_SIZE = 200;
 /**
- * `--json` 的 inline 阈值（序列化后的字符数）。小于等于该值保持 inline；超过则写入
- * 临时文件并以 `@<path>` 传递，用完即删。
+ * inline `--json` 的硬化预算：经 `escape_cmd_argument` 转义后的整条命令行字符上限
+ * （含 `cmd.exe /d /s /c ""` 包装开销，见 `lark_cli.escaped_command_line_length`）。
+ *
+ * 依据 2026-10-21 真实探针（生产路径：.cmd 包装 + Node spawn）：转义后 6,281 字符可以
+ * 成功到达子进程，9,277 字符报 `The command line is too long.`，即 cmd.exe 单行上限约
+ * 8,191 字符。6,500 留出安全余量；**不能按原始 JSON 长度判定**——JSON 的引号、逗号等
+ * 元字符会在 2 层转义后放大（实测 1.4 倍起，密集引号/逗号时更高）。
  */
-export const JSON_ARG_INLINE_LIMIT = 24_000;
+export const JSON_ARG_ESCAPED_LINE_BUDGET = 6_500;
 
 const BASE_TOKEN_PREFIX_LENGTH = 6;
 
@@ -405,9 +415,9 @@ export async function delete_records(
 }
 
 /**
- * 批量写命令的统一 `--json` 通道：小 payload 直接 inline；超过
- * `JSON_ARG_INLINE_LIMIT` 时写临时文件并以 `@<path>` 传入，调用结束（成功或失败）
- * 立即删除临时文件。
+ * 批量写命令的统一 `--json` 通道：转义后整条命令行在
+ * `JSON_ARG_ESCAPED_LINE_BUDGET` 以内时直接 inline；超过则写临时文件并以 `@<path>`
+ * 传入，调用结束（成功或失败）立即删除临时文件。
  */
 async function run_json_command(
   base: LarkBaseContext,
@@ -417,13 +427,11 @@ async function run_json_command(
   trailing_args: readonly string[] = [],
 ): Promise<{ ok: true; payload: unknown } | LarkBaseFailure> {
   const json = JSON.stringify(payload);
-  if (json.length <= JSON_ARG_INLINE_LIMIT) {
-    return run_base_command(
-      base,
-      [...args, "--json", json, ...trailing_args],
-      "KB_WRITE_FAILED",
-      context,
-    );
+  const inline_args = [...args, "--json", json, ...trailing_args];
+  if (
+    escaped_command_line_length(base.cli_path, inline_args) <= JSON_ARG_ESCAPED_LINE_BUDGET
+  ) {
+    return run_base_command(base, inline_args, "KB_WRITE_FAILED", context);
   }
 
   let temp_path: string;

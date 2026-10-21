@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { Script2ShotConfig } from "../src/config.js";
 import {
   DEFAULT_MAX_OUTPUT_BYTES,
+  escaped_command_line_length,
   get_active_profile,
   get_auth_status,
   get_version,
@@ -423,6 +424,28 @@ describe("lark_cli", () => {
       args: ["--version"],
       windows_verbatim_arguments: false,
     });
+  });
+
+  // Task 5 复核修复：@file 预算必须按「转义后整条命令行」判定，这个长度口径要和
+  // spawn_target 真正交给 cmd.exe 的命令行一致（命令路径 1 层、参数 2 层 + 包装开销）。
+  test("escaped command line length matches the cmd.exe spawn target", () => {
+    const cli = "C:\\tools\\lark-cli.cmd";
+    const args = [
+      "base",
+      "+record-batch-create",
+      "--base-token",
+      "base-token-b-123456789",
+      "--table-id",
+      "tbl_cards",
+      "--json",
+      JSON.stringify({ create_records: [{ card_id: "c1", content: 'a,b "c"' }] }),
+    ];
+
+    const target = spawn_target(cli, args, "win32");
+    const spawned_command_line = [target.command, ...target.args].join(" ");
+
+    expect(target.windows_verbatim_arguments).toBe(true);
+    expect(escaped_command_line_length(cli, args)).toBe(spawned_command_line.length);
   });
 
   test.skipIf(IS_WINDOWS)("POSIX rejects a cli path without the execute bit", async () => {

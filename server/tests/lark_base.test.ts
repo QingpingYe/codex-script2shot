@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   BASE_BATCH_SIZE,
+  JSON_ARG_ESCAPED_LINE_BUDGET,
   batch_create_records,
   batch_update_records,
   create_table,
@@ -23,6 +24,7 @@ import {
   list_tables,
   type LarkBaseContext,
 } from "../src/lark_base.js";
+import { escaped_command_line_length } from "../src/lark_cli.js";
 
 const FIXTURES_DIR = fileURLToPath(new URL("./fixtures", import.meta.url));
 const IS_WINDOWS = process.platform === "win32";
@@ -113,6 +115,66 @@ function json_argument(args: string[]): string {
     throw new Error(`调用缺少 --json：${args.join(" ")}`);
   }
   return args[index + 1] as string;
+}
+
+const CREATE_ARGS_PREFIX = [
+  "base",
+  "+record-batch-create",
+  "--base-token",
+  BASE_B,
+  "--table-id",
+  "tbl_cards",
+];
+
+/** 密集小记录（引号/逗号多，2 层转义后放大明显），用于标定转义长度的预算边界。 */
+function dense_records(count: number): Array<{ card_id: string; content: string }> {
+  return Array.from({ length: count }, (_value, index) => ({
+    card_id: `c${index + 1}`,
+    content: `shot-${index + 1}`,
+  }));
+}
+
+function measure_create_records(count: number): {
+  records: Array<{ card_id: string; content: string }>;
+  json: string;
+  escaped_length: number;
+} {
+  const records = dense_records(count);
+  const json = JSON.stringify({ create_records: records });
+  return {
+    records,
+    json,
+    escaped_length: escaped_command_line_length(cliPath, [...CREATE_ARGS_PREFIX, "--json", json]),
+  };
+}
+
+/** 二分找到「转义后长度不超过 target」的最大记录数（长度随记录数单调递增）。 */
+function create_records_fitting_budget(target: number): ReturnType<typeof measure_create_records> {
+  let low = 1;
+  let high = 400;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (measure_create_records(mid).escaped_length <= target) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return measure_create_records(low);
+}
+
+/** 递增记录数直到原始 JSON 长度达到 target。 */
+function create_records_with_raw_length(
+  target: number,
+): ReturnType<typeof measure_create_records> {
+  let count = 1;
+  for (;;) {
+    const measured = measure_create_records(count);
+    if (measured.json.length >= target || count >= 400) {
+      return measured;
+    }
+    count += 1;
+  }
 }
 
 function expect_ok<T extends { ok: boolean }>(result: T): Extract<T, { ok: true }> {
@@ -405,6 +467,7 @@ describe("lark_base", () => {
       ],
       records: {},
     });
+    env.FAKE_LOG_JSON = "1";
     const records = Array.from({ length: BASE_BATCH_SIZE + 1 }, (_value, index) => ({
       card_id: `c${index + 1}`,
     }));
@@ -414,12 +477,24 @@ describe("lark_base", () => {
     expect(result.record_ids).toHaveLength(BASE_BATCH_SIZE + 1);
     const calls = read_calls();
     expect(calls).toHaveLength(2);
-    const first_payload = JSON.parse(calls[0].args[7]) as {
+    // 200 条密集记录的 inline 候选转义后已超预算 ⇒ 第一批走 @file（子进程读到文件后，
+    // 假 CLI 把解析结果记进 payload 日志）；第二批只有 1 条 ⇒ 保持 inline。
+    const inline_candidate = JSON.stringify({
+      create_records: records.slice(0, BASE_BATCH_SIZE),
+    });
+    expect(
+      escaped_command_line_length(cliPath, [...CREATE_ARGS_PREFIX, "--json", inline_candidate]),
+    ).toBeGreaterThan(JSON_ARG_ESCAPED_LINE_BUDGET);
+    const first_json = json_argument(calls[0].args);
+    expect(first_json.startsWith("@")).toBe(true);
+    expect(existsSync(first_json.slice(1)), "临时文件必须用完即删").toBe(false);
+    const first_payload = (calls[0] as { json?: unknown }).json as {
       create_records: Array<Record<string, unknown>>;
     };
-    const second_payload = JSON.parse(calls[1].args[7]) as {
+    const second_payload = JSON.parse(json_argument(calls[1].args)) as {
       create_records: Array<Record<string, unknown>>;
     };
+    expect(json_argument(calls[1].args).startsWith("@")).toBe(false);
     expect(first_payload.create_records).toHaveLength(BASE_BATCH_SIZE);
     expect(second_payload.create_records).toHaveLength(1);
     expect(first_payload.create_records[0]).toEqual({ card_id: "c1" });
@@ -436,14 +511,15 @@ describe("lark_base", () => {
         },
       ],
       records: {
-        // 假 CLI 在 Windows 上经 cmd.exe 包装，200 条更新的 argv 必须保持短小；
-        // 这里验证的是分批数量与 record_id -> 字段映射，不是真实记录的字段宽度。
+        // 这里验证的是分批数量与 record_id -> 字段映射；payload 的实际传输通道
+        // （inline / @file）由下面的转义长度与 argv 断言锁定。
         tbl_cards: Array.from({ length: BASE_BATCH_SIZE + 1 }, (_value, index) => ({
           record_id: `r${index + 1}`,
           fields: { card_id: `old-${index + 1}` },
         })),
       },
     });
+    env.FAKE_LOG_JSON = "1";
     const updates = Array.from({ length: BASE_BATCH_SIZE + 1 }, (_value, index) => ({
       record_id: `r${index + 1}`,
       fields: { n: index + 1 },
@@ -454,12 +530,31 @@ describe("lark_base", () => {
     expect(result).toEqual({ ok: true });
     const calls = read_calls();
     expect(calls).toHaveLength(2);
-    const first_payload = JSON.parse(calls[0].args[7]) as {
+    const inline_candidate = JSON.stringify({
+      update_records: Object.fromEntries(
+        updates.slice(0, BASE_BATCH_SIZE).map((update) => [update.record_id, update.fields]),
+      ),
+    });
+    expect(
+      escaped_command_line_length(cliPath, [
+        "base",
+        "+record-batch-update",
+        "--base-token",
+        BASE_B,
+        "--table-id",
+        "tbl_cards",
+        "--json",
+        inline_candidate,
+      ]),
+    ).toBeGreaterThan(JSON_ARG_ESCAPED_LINE_BUDGET);
+    expect(json_argument(calls[0].args).startsWith("@")).toBe(true);
+    const first_payload = (calls[0] as { json?: unknown }).json as {
       update_records: Record<string, Record<string, unknown>>;
     };
-    const second_payload = JSON.parse(calls[1].args[7]) as {
+    const second_payload = (calls[1] as { json?: unknown }).json as {
       update_records: Record<string, Record<string, unknown>>;
     };
+    expect(json_argument(calls[1].args).startsWith("@")).toBe(false);
     expect(Object.keys(first_payload.update_records)).toHaveLength(BASE_BATCH_SIZE);
     expect(first_payload.update_records.r1).toEqual({ n: 1 });
     expect(Object.keys(second_payload.update_records)).toEqual([`r${BASE_BATCH_SIZE + 1}`]);
@@ -559,8 +654,9 @@ describe("lark_base", () => {
     }
   });
 
-  // Task 2 结转 Minor：inline `--json` 会顶到 Windows cmd.exe 行长上限（约 32k），
-  // 大 payload 必须走临时文件 + `--json "@<path>"`，并且用完立即删除。
+  // Task 2 结转 Minor：inline `--json` 会顶到 Windows cmd.exe 行长上限（约 8,191
+  // 字符，经 2 层转义后放大），超预算的 payload 必须走临时文件 + `--json "@<path>"`，
+  // 并且用完立即删除。预算口径见 JSON_ARG_ESCAPED_LINE_BUDGET。
   test("batch create passes large payloads through a temporary json file and removes it", async () => {
     write_state({
       tables: [
@@ -654,6 +750,87 @@ describe("lark_base", () => {
     const json_value = json_argument(calls[0].args);
     expect(json_value.startsWith("@")).toBe(true);
     expect(existsSync(json_value.slice(1)), "失败路径也必须删除临时文件").toBe(false);
+  });
+
+  // 复核修复（Task 5 Important）：inline 预算必须按「转义后整条命令行」判定，
+  // 不能按原始 JSON 长度——引号/逗号经 2 层转义后放大约 1.4～2 倍。
+  test("keeps json args inline while the escaped command line fits the budget", async () => {
+    write_state({
+      tables: [
+        {
+          id: "tbl_cards",
+          name: "KnowledgeCards",
+          fields: with_field_ids([
+            { name: "card_id", type: "text" },
+            { name: "content", type: "text" },
+          ]),
+        },
+      ],
+      records: {},
+    });
+    env.FAKE_LOG_JSON = "1";
+    const calibrated = create_records_fitting_budget(JSON_ARG_ESCAPED_LINE_BUDGET);
+
+    // 刚好贴住预算：再补一条记录就会超限。
+    expect(calibrated.escaped_length).toBeLessThanOrEqual(JSON_ARG_ESCAPED_LINE_BUDGET);
+    expect(calibrated.escaped_length).toBeGreaterThan(JSON_ARG_ESCAPED_LINE_BUDGET - 200);
+    expect(calibrated.records.length).toBeGreaterThan(30);
+    expect(calibrated.json.length).toBeGreaterThan(3_000);
+
+    const result = expect_ok(
+      await batch_create_records(context(), "tbl_cards", calibrated.records),
+    );
+
+    expect(result.record_ids).toHaveLength(calibrated.records.length);
+    const calls = read_calls();
+    expect(calls).toHaveLength(1);
+    const json_value = json_argument(calls[0].args);
+    expect(json_value.startsWith("@"), "转义后在预算内必须保持 inline").toBe(false);
+    expect(json_value).toBe(calibrated.json);
+    const logged = (calls[0] as { json?: unknown }).json as { create_records: unknown[] };
+    expect(logged.create_records).toHaveLength(calibrated.records.length);
+    expect(read_state().records.tbl_cards).toHaveLength(calibrated.records.length);
+  });
+
+  test("sends small raw json to a file once the escaped command line exceeds the budget", async () => {
+    write_state({
+      tables: [
+        {
+          id: "tbl_cards",
+          name: "KnowledgeCards",
+          fields: with_field_ids([
+            { name: "card_id", type: "text" },
+            { name: "content", type: "text" },
+          ]),
+        },
+      ],
+      records: {},
+    });
+    env.FAKE_LOG_JSON = "1";
+    const payload = create_records_with_raw_length(6_500);
+
+    // 原始 JSON 看起来不大（6k 级别，旧口径 24k 会放行），但转义后整条命令行已超预算。
+    expect(payload.json.length).toBeGreaterThanOrEqual(6_000);
+    expect(payload.json.length).toBeLessThanOrEqual(8_000);
+    expect(payload.escaped_length).toBeGreaterThan(JSON_ARG_ESCAPED_LINE_BUDGET);
+
+    const result = expect_ok(
+      await batch_create_records(context(), "tbl_cards", payload.records),
+    );
+
+    expect(result.record_ids).toHaveLength(payload.records.length);
+    const calls = read_calls();
+    expect(calls).toHaveLength(1);
+    const json_value = json_argument(calls[0].args);
+    expect(json_value.startsWith("@")).toBe(true);
+    expect(existsSync(json_value.slice(1)), "临时文件必须用完即删").toBe(false);
+    // 子进程在调用瞬间真的读到了文件：假 CLI 把解析后的 body 记进了 payload 日志。
+    const logged = (calls[0] as { json?: unknown }).json as {
+      create_records: Array<{ card_id: string; content: string }>;
+    };
+    expect(logged.create_records).toHaveLength(payload.records.length);
+    expect(logged.create_records.at(-1)).toEqual(payload.records.at(-1));
+    expect(read_state().records.tbl_cards).toHaveLength(payload.records.length);
   });
 
   // Task 2 结转 Minor：create/update 已覆盖 200/201，这里补 delete 的分块边界。

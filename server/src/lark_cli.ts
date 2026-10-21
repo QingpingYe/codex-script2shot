@@ -532,6 +532,29 @@ export function spawn_target(
   return { command: cli_path, args, windows_verbatim_arguments: false };
 }
 
+/** `cmd.exe /d /s /c "<逐参数转义后的命令行>"` 相对命令行的固定开销（19 个字符）。 */
+const CMD_WRAPPER_OVERHEAD = 19;
+
+/**
+ * 计算「经 cmd.exe 生产路径」转义后的整条命令行长度（字符数），供上层按 Windows
+ * 命令行上限做预算判断。
+ *
+ * 口径与 `spawn_target` 的 `.cmd` / `.bat` 分支一致：命令路径 1 层转义、其余参数 2 层
+ * 转义，再加上 `cmd.exe /d /s /c "<...>"` 包装的固定开销。判定与宿主平台无关：即使
+ * 当前平台不经 cmd.exe（argv 直传、不需要转义），也统一按该口径保守计算，保证同一份
+ * payload 的 inline / `@file` 决策跨平台确定、可测试。
+ */
+export function escaped_command_line_length(
+  cli_path: string,
+  args: readonly string[],
+): number {
+  const command_line = [
+    escape_cmd_argument(cli_path, 1),
+    ...args.map((arg) => escape_cmd_argument(arg, 2)),
+  ].join(" ");
+  return command_line.length + CMD_WRAPPER_OVERHEAD;
+}
+
 /**
  * 把一个参数转义成 cmd.exe 能原样转交的形式：
  * - 先按 CRT 规则处理内嵌双引号（`\"`）与结尾反斜杠，保证子进程能还原引号本身；
