@@ -4,9 +4,10 @@
  *
  * - `tags`、`entities`、`target_models` 在 Base 中存 JSON 文本数组；
  *   `priority`、`source_revision`、`card_count` 存数字。
- * - `updated_at`、`last_synced_at` 的 Base datetime CellValue 固定为
- *   `YYYY-MM-DD HH:mm`（无秒），时间换算固定按 `+08:00` 墙钟时间处理；
- *   换算函数只在本模块实现（决定记录在 server/README.md）。
+ * - `updated_at`、`last_synced_at` 的 Base datetime CellValue 写入时固定为
+ *   `YYYY-MM-DD HH:mm`（无秒）；读回时可能是同形或 ISO 8601。两种输入都按
+ *   时间点换算为带 `+08:00` 的 ISO 8601，换算函数只在本模块实现
+ *   （决定记录在 server/README.md）。
  * - `obj_edit_time` 是不透明字符串：原样写入、原样读回，不做任何时间换算。
  * - 可空文本字段（`project_id`、`source_block_id`）写入空字符串，读回为 null。
  * - 输入对象先按 `schemas/*.schema.json` 校验再调用本模块；读单元格遇到不可解析
@@ -77,6 +78,8 @@ export interface BaseRecord {
 export const BASE_DATETIME_OFFSET = "+08:00";
 
 const BASE_CELL_PATTERN = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/;
+const ISO8601_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|([+-])(\d{2}):(\d{2}))$/;
 const OFFSET_MINUTES = 8 * 60;
 const MINUTE_MS = 60_000;
 
@@ -104,19 +107,82 @@ export function iso8601_to_base_cell(iso: string): string {
   return shifted.toISOString().slice(0, 16).replace("T", " ");
 }
 
-/** Base datetime CellValue `YYYY-MM-DD HH:mm`（+08:00 墙钟时间）→ ISO 8601。 */
+/** Base datetime CellValue（写入形状或 ISO 8601）→ 带 `+08:00` 的 ISO 8601。 */
 export function base_cell_to_iso8601(cell: string): string {
-  const match = BASE_CELL_PATTERN.exec(cell);
-  if (match === null) {
-    throw new Error(`Base datetime 单元格应为 YYYY-MM-DD HH:mm 格式："${cell}"。`);
+  const base_match = BASE_CELL_PATTERN.exec(cell);
+  if (base_match !== null) {
+    const [year, month, day, hour, minute] = base_match.slice(1);
+    const normalized = `${year}-${month}-${day}T${hour}:${minute}`;
+    const probe = new Date(`${normalized}:00Z`);
+    if (Number.isNaN(probe.getTime()) || probe.toISOString().slice(0, 16) !== normalized) {
+      throw new Error(`Base datetime 单元格不是有效时间："${cell}"。`);
+    }
+    return `${normalized}:00${BASE_DATETIME_OFFSET}`;
   }
-  const [year, month, day, hour, minute] = match.slice(1);
-  const normalized = `${year}-${month}-${day}T${hour}:${minute}`;
-  const probe = new Date(`${normalized}:00Z`);
-  if (Number.isNaN(probe.getTime()) || probe.toISOString().slice(0, 16) !== normalized) {
+
+  const iso_match = ISO8601_PATTERN.exec(cell);
+  if (iso_match === null) {
+    throw new Error(
+      `Base datetime 单元格应为 YYYY-MM-DD HH:mm 或 ISO 8601 格式："${cell}"。`,
+    );
+  }
+  const timestamp = parse_iso8601_timestamp(iso_match);
+  if (timestamp === null) {
     throw new Error(`Base datetime 单元格不是有效时间："${cell}"。`);
   }
-  return `${normalized}:00${BASE_DATETIME_OFFSET}`;
+  const shifted = new Date(timestamp + OFFSET_MINUTES * MINUTE_MS);
+  return `${shifted.toISOString().slice(0, 19)}${BASE_DATETIME_OFFSET}`;
+}
+
+function parse_iso8601_timestamp(match: RegExpExecArray): number | null {
+  const [, year, month, day, hour, minute, second, , zone, sign, offset_hour, offset_minute] =
+    match;
+  const year_number = Number(year);
+  const month_number = Number(month);
+  const day_number = Number(day);
+  const hour_number = Number(hour);
+  const minute_number = Number(minute);
+  const second_number = Number(second);
+  if (
+    month_number < 1 ||
+    month_number > 12 ||
+    day_number < 1 ||
+    day_number > 31 ||
+    hour_number > 23 ||
+    minute_number > 59 ||
+    second_number > 59
+  ) {
+    return null;
+  }
+
+  const probe = new Date(0);
+  probe.setUTCFullYear(year_number, month_number - 1, day_number);
+  probe.setUTCHours(hour_number, minute_number, second_number, 0);
+  if (
+    probe.getUTCFullYear() !== year_number ||
+    probe.getUTCMonth() !== month_number - 1 ||
+    probe.getUTCDate() !== day_number ||
+    probe.getUTCHours() !== hour_number ||
+    probe.getUTCMinutes() !== minute_number ||
+    probe.getUTCSeconds() !== second_number
+  ) {
+    return null;
+  }
+
+  let offset_minutes = 0;
+  if (zone !== "Z") {
+    const offset_hour_number = Number(offset_hour);
+    const offset_minute_number = Number(offset_minute);
+    if (
+      offset_minute_number > 59 ||
+      offset_hour_number > 14 ||
+      (offset_hour_number === 14 && offset_minute_number !== 0)
+    ) {
+      return null;
+    }
+    offset_minutes = (offset_hour_number * 60 + offset_minute_number) * (sign === "+" ? 1 : -1);
+  }
+  return probe.getTime() - offset_minutes * MINUTE_MS;
 }
 
 function card_to_base_fields(card: KnowledgeCard): BaseFieldMap {

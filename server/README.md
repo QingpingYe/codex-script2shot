@@ -96,6 +96,8 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
 - `updated_at`、`last_synced_at` 在逻辑模型中为 ISO 8601；写入飞书 Base 的
   datetime CellValue 时固定换算为 `YYYY-MM-DD HH:mm`（不带秒），读回时还原为
   带 `+08:00` 偏移的 ISO 8601。
+- Base datetime 写入用 `YYYY-MM-DD HH:mm`（+08:00 墙钟）、读回可能是 ISO 8601
+  （含毫秒与偏移），映射层统一按时间点换算回 `+08:00` ISO。
 - 换算首版固定按 `+08:00` 墙钟时间处理，不读取系统时区；换算函数集中放在
   `server/src/base_mapping.ts`（`iso8601_to_base_cell`、`base_cell_to_iso8601`），
   其他模块不得自行实现时间换算。
