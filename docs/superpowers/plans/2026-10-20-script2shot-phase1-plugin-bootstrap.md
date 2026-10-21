@@ -341,6 +341,61 @@ git add docs/lark-cli-capability-notes.md server/tests/fixtures/
 git commit -m "docs: record lark-cli capability verification and add sanitized fixtures"
 ```
 
+### Task 8: 默认知识库与配置扩展（Phase 1 补充，2026-10-21）
+
+**Files:**
+- Create: `server/src/setup_defaults.ts`
+- Modify: `server/src/config.ts`
+- Modify: `server/src/tools/write_config.ts`
+- Modify: `server/tests/config.test.ts`、`server/tests/write_config.test.ts`
+- Modify: `skills/setup/SKILL.md`
+- Create: `.agents/plugins/marketplace.json`
+- Create: `.codex/config.toml`（若沙箱阻止写入则跳过并在报告中注明）
+- Modify: `docs/architecture.md` §7.3
+- Modify: `docs/superpowers/plans/2026-10-20-script2shot-implementation-outline.md` §6.2
+
+**Interfaces:**
+- Consumes: Task 3 配置模块、Task 6 `write_config`、Task 7 的 live 实测值。
+- Produces:
+  - `SETUP_DEFAULTS`（`server/src/setup_defaults.ts`）：`{ lark: { profile: "default", space_a: "7695983197091302359", base_b: "WRrVblDbqaEFOSs39P0cFzilnfd", project_roots: [{ node_token: "Ou9Vw0emviJajPklYjQc4fqjnie", project_id: "wufu-linmen" }] }, retrieval: { default_top_k: 12 } }`。A/B 为插件默认知识库，用户可替换。
+  - `config.ts`：`LarkConfig` 增加 `project_roots: Array<{ node_token, project_id }>`，load/save 支持 TOML `[[lark.project_roots]]` 往返。
+  - `write_config`：缺省字段用 `SETUP_DEFAULTS` 填充（显式提供值优先），返回值新增 `applied_defaults[]`。
+  - `skills/setup/SKILL.md`：默认知识库说明（可直接采用或替换）与 `project_roots` 默认映射说明。
+  - `.agents/plugins/marketplace.json`（repo-scoped）与 `.codex/config.toml` 启用条目，便于本机 Codex 安装验证。
+  - 架构 §7.3：默认知识库与 `project_roots` 的缺省来源、替换语义。
+
+- [ ] **Step 1: 写失败测试**
+
+```text
+test("write_config applies setup defaults when omitted")
+test("write_config explicit values override defaults")
+test("write_config reports applied defaults")
+test("config roundtrips project roots array")
+```
+
+- [ ] **Step 2: 运行并确认失败**
+
+Run: `npm --prefix server test -- write_config`、`npm --prefix server test -- config`
+Expected: FAIL。
+
+- [ ] **Step 3: 实现 defaults、config 扩展与 write_config 变更，更新 setup Skill**
+
+- [ ] **Step 4: 写 marketplace 与启用配置**
+
+按官方格式（https://developers.openai.com/plugins/build/plugins，2026-10-21 核对）：顶层 `name` + `interface.displayName`；条目含 `name`、`source: { source: "local", path: "./" }`、`policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" }`、`category`。`.codex/config.toml` 写 `[plugins."script2shot@<marketplace-name>"] enabled = true`。
+
+- [ ] **Step 5: 同步架构 §7.3 与大纲 §6.2**
+
+- [ ] **Step 6: 回归并提交**
+
+Run: `npm --prefix server run build`；`npm --prefix server test`
+Expected: 全部 PASS。
+
+```bash
+git add server/src/setup_defaults.ts server/src/config.ts server/src/tools/write_config.ts server/tests/ skills/setup/SKILL.md .agents/ .codex/ docs/architecture.md docs/superpowers/plans/2026-10-20-script2shot-implementation-outline.md
+git commit -m "feat: ship default knowledge bases and local marketplace entry"
+```
+
 ---
 
 ## 阶段出口检查
@@ -349,3 +404,5 @@ git commit -m "docs: record lark-cli capability verification and add sanitized f
 - [ ] `docs/lark-cli-capability-notes.md` 已记录版本、日期与偏差。
 - [ ] 测试全绿；`rg "<(ext|test-ext|test-cmd|build-cmd|run-cmd)>" docs/superpowers/plans/` 无输出。
 - [ ] 架构 §7.1 与实现一致（技术栈、目录、运行方式）。
+- [ ] 默认知识库（A/B）与 `project_roots` 随插件默认配置提供，测试覆盖「默认应用/显式覆盖」。
+- [ ] 在本机 Codex 通过 repo marketplace 安装插件并运行 `$setup` / `$health`，`tools/list` 可响应（关闭 Task 2 遗留 ⚠️）。
