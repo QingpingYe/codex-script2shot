@@ -219,6 +219,13 @@ MCP Server 执行；沿用本文件口径，只保留公开知识库标识与数
   `deleted_cards=0` / `deleted_state=0`（幂等）。
 - 零变化路径：未变化文档只走 `wiki nodes list` + `base +record-list`，不产生
   `docs +fetch`。
+- 200 条批量上限探查（计划 Task 7 第 6 项）：单次 `replace_doc_cards` 写入 200 条
+  （`created_record_ids=200`）→ 读回 200 行 → `delete_doc_cards` 清理
+  `deleted_cards=200`/`deleted_state=0` → 清理后残留 0。200 条批量写入上限实测通过。
+- 列表读的可见性延迟（本次探查发现）：`base +record-list` 在写入后**立即**读回可能
+  返回 0 行（同一批记录等待约 3 秒后读到 200/200）。属平台侧可见性延迟，不是写入
+  失败；需要“写入后核对”的流程应在读回前留出短暂等待，或按 `rev`/写入返回的
+  `record_id_list` 判断成功。
 - 演练清理：3 条测试文档节点已删除；`KnowledgeCards` 与 `SyncState` 两张表回到
   0 条记录；知识库 A 只剩原有 12 个 docx 节点（另有 1 条预期的 PDF 跳过 warning，
   见 §2.4）。
