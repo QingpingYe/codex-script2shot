@@ -5,8 +5,8 @@
 `forbidden`）的逐值来源。全部值的检索/核对日期均为 **2026-10-22**。
 
 范围说明：Task 4b-1 落规划子集（§2.1 / §2.2）；Task 4c-2 追加硬规则子集
-`required_fields` 与 `forbidden`（§2.3）；`render` 由 4c-3 补齐，补齐时在本文件
-追加对应来源。
+`required_fields` 与 `forbidden`（§2.3）；Task 4c-3 补齐渲染模板 `render`
+（§4，插件设计决策，不对应外部来源）。
 
 ## 1. 来源清单
 
@@ -102,3 +102,61 @@
   `lighting` / `color` / `style`、`continuity.character_state` /
   `continuity.environment_state`、以及 `negative_prompt[]` 条目；`knowledge_refs` 是知识
   溯源元数据，不渲染进正文，不参与扫描。改扫描范围需在同一改动内同步代码与本文件。
+
+## 4. 提示词渲染模板（Task 4c-3，插件设计决策，无外部来源）
+
+`rules/models/*.json` 的 `render` 字段是插件自己的渲染模板，不属于官方 API 参数，
+本节全部内容为插件设计裁决，不引用外部资料。两个规则文件的 `render` 当前只在
+`title`（模型 label）上不同，节标签与节顺序一致。
+
+### 4.1 模板字段
+
+| 字段 | 含义 | 当前取值 |
+| --- | --- | --- |
+| `title` | 文档一级标题（含 `#`），逐字输出 | `# Seedance 2.0 提示词` / `# Seedance 2.5 提示词` |
+| `shot_heading` | 单镜头分节标题模板，占位符 `{shot_id}` / `{duration}` / `{aspect_ratio}` | `## 镜头 {shot_id}（时长 {duration} 秒，画幅 {aspect_ratio}）` |
+| `section_labels` | 节 key → 中文节标签 | 见 §4.2 |
+| `section_order` | 节输出顺序 | `subject_action` → `setting_time` → `camera` → `light_color` → `style` → `continuity` → `negative` |
+| `empty_negative` | 空 `negative_prompt` 的稳定占位 | `无` |
+
+规则文件只承载「人可见的中文标题与节标签 / 节顺序」；字段到节内容的组装在
+`server/src/tools/render_prompt.ts`。`section_order` 必须是节 key 全集的固定顺序：
+渲染层持有节 key 全集，多节 / 少节都按插件安装损坏处理（`RENDER_FAILED`）。
+
+### 4.2 节顺序与 brief 冻结顺序的对应
+
+| 冻结顺序 | 模板落点与节内格式 |
+| --- | --- |
+| 镜头号与时长 | `shot_heading` 分节标题行；PromptIR 的 `aspect_ratio` 必须进入产物但不在冻结的八个节名内，与镜头号、时长同一行 |
+| 主体与动作 | `subject_action`：`主体：{subject}；动作：{action}` |
+| 环境与时间 | `setting_time`：`环境：{setting}；时间：{time}` |
+| 机位与运镜 | `camera`：`机位：{camera_angle 中文标签}；运镜：{camera_movement 中文标签}` |
+| 光线与色彩 | `light_color`：`光线：{lighting}；色彩：{color}` |
+| 风格 | `style`：`{style}`（单字段，无子标签） |
+| 连续性 | `continuity`：`承接镜头：{previous_shot}；角色状态：{character_state}；环境状态：{environment_state}` |
+| 负面约束 | `negative`：`{negative_prompt 条目以「、」连接}`；空数组渲染为 `empty_negative` |
+
+### 4.3 裁决记录
+
+- 空 `negative_prompt`：**不省略节**，稳定渲染 `- 负面约束：无`（占位可配）。理由：
+  每个镜头维持同一套节骨架，便于逐镜头复制与快照比对；`negative_prompt` 允许为空
+  （4c-2 未列入 `required_fields`），省略节会让节数随内容变化。
+- 中文正文与自由文本：节标签、子标签为中文；`subject` / `action` / `setting` /
+  `time` / `lighting` / `color` / `style` 与 `continuity` 状态字段是自由文本，渲染层
+  原样输出、不翻译。`time` 在 schema 里是英文术语（如 `night`），渲染层不内置时间
+  词表，避免发明未定义的映射。
+- 英文枚举 → 中文：只有冻结枚举 `camera_angle` / `camera_movement` 做映射，取值与
+  `schemas/prompt_ir.schema.json` 的字段描述、`schemas/shot_plan.schema.json` 的中文
+  枚举一一对应（13 个机位、16 个运镜；映射表在 `server/src/tools/render_prompt.ts`）。
+- 空子字段：可为空的子字段（`time`、`previous_shot` 缺省 / `null`）为空时不生成子
+  标签；必填字段由 4c-2 硬规则保证非空。
+- 校验失败不渲染：`render_prompt` 先调用 `validate_prompt`；不通过返回
+  `HARD_RULE_VIOLATION`（`details.errors` 为校验错误明细）且不创建目录、不写文件。
+- 文档级元信息：标题行含模型 label；单镜头正文不写模型名、`run_id`、时间戳等工程
+  信息（与 §2.3.2 的 forbidden 口径一致：禁止项扫描只作用于 PromptIR 正文字段）。
+  渲染产物不含时间戳，行尾统一 `\n`，同输入逐字节一致。
+- golden 先行：`tests/fixtures/prompts/seedance-2.0.golden.md` 与
+  `seedance-2.5.golden.md` 按本设计手写，再让实现对齐 golden；对齐过程中未修改
+  golden，因此没有需要记录的「迁就实现」修改。快照按字节比较，行尾参与比对：
+  `.gitattributes` 对 `tests/fixtures/prompts/*.golden.md` 固定 `text eol=lf`，
+  避免 Windows 上的 `core.autocrlf` 在检出时改写快照。

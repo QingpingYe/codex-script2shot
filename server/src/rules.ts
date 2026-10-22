@@ -12,9 +12,9 @@
  * 文件内的 `model` 与请求的 `model_id` 不一致属于插件安装损坏，直接抛错
  * （与 `schemas.ts` 的 schema 加载失败处理一致）。
  *
- * 目前已覆盖规划子集（时长、画幅、镜头拆分边界）与硬规则子集
- * （`required_fields` 必填非空字段、`forbidden` 禁止项）；`render` 由 4c-3 补齐，
- * 届时同步扩展类型。
+ * 目前已覆盖规划子集（时长、画幅、镜头拆分边界）、硬规则子集
+ * （`required_fields` 必填非空字段、`forbidden` 禁止项）与渲染模板
+ * （`render`：标题、分节标题模板、节标签、节顺序、空负面约束占位）。
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -38,6 +38,24 @@ export interface ModelRulesShotSplit {
   multi_action_rule: string;
 }
 
+/**
+ * 提示词渲染模板（Task 4c-3；模板设计见 docs/model-rules-notes.md §4）。
+ * 规则文件负责「人可见的中文标题与节标签 / 节顺序」，字段到节内容的组装由
+ * `server/src/tools/render_prompt.ts` 负责。
+ */
+export interface ModelRulesRender {
+  /** 文档一级标题，逐字输出。 */
+  title: string;
+  /** 单镜头分节标题模板；占位符 `{shot_id}` / `{duration}` / `{aspect_ratio}`。 */
+  shot_heading: string;
+  /** 节 key → 中文节标签；key 与渲染层的节组装表一一对应。 */
+  section_labels: Record<string, string>;
+  /** 节输出顺序；元素必须出现在 section_labels 中且不重复。 */
+  section_order: string[];
+  /** `negative_prompt` 为空数组时的稳定占位文本。 */
+  empty_negative: string;
+}
+
 export interface ModelRules {
   model: ModelRuleId;
   label: string;
@@ -48,6 +66,8 @@ export interface ModelRules {
   required_fields: string[];
   /** 提示词正文字段不得命中的禁止项；validate_prompt 按大小写不敏感子串匹配。 */
   forbidden: string[];
+  /** 提示词渲染模板。 */
+  render: ModelRulesRender;
   source: string[];
   checked_at: string;
 }
@@ -152,6 +172,8 @@ function parse_model_rules(raw: unknown, file_path: string, model_id: ModelRuleI
     fail("缺少字符串数组字段 forbidden");
   }
 
+  const render = parse_render_template(value.render, fail);
+
   const duration = value.duration;
   if (duration === null || typeof duration !== "object" || Array.isArray(duration)) {
     fail("缺少对象字段 duration");
@@ -196,8 +218,66 @@ function parse_model_rules(raw: unknown, file_path: string, model_id: ModelRuleI
     },
     required_fields: value.required_fields as string[],
     forbidden: value.forbidden as string[],
+    render,
     source: value.source as string[],
     checked_at: value.checked_at as string,
+  };
+}
+
+/** `render` 模板的读取与结构校验；结构不符按插件安装损坏处理（抛错）。 */
+function parse_render_template(
+  raw: unknown,
+  fail: (reason: string) => never,
+): ModelRulesRender {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    fail("缺少对象字段 render");
+  }
+  const value = raw as Record<string, unknown>;
+
+  for (const key of ["title", "shot_heading", "empty_negative"] as const) {
+    if (typeof value[key] !== "string" || (value[key] as string).trim() === "") {
+      fail(`render.${key} 必须是非空字符串`);
+    }
+  }
+
+  const section_labels = value.section_labels;
+  if (
+    section_labels === null ||
+    typeof section_labels !== "object" ||
+    Array.isArray(section_labels) ||
+    Object.keys(section_labels).length === 0
+  ) {
+    fail("render.section_labels 必须是非空对象");
+  }
+  const labels = section_labels as Record<string, unknown>;
+  for (const [key, label] of Object.entries(labels)) {
+    if (typeof label !== "string" || label.trim() === "") {
+      fail(`render.section_labels.${key} 必须是非空字符串`);
+    }
+  }
+
+  const section_order = value.section_order;
+  if (!is_string_array(section_order)) {
+    fail("render.section_order 必须是非空字符串数组");
+  }
+  const seen = new Set<string>();
+  for (const key of section_order) {
+    if (!(key in labels)) {
+      fail(`render.section_order 引用了未定义的节 key "${key}"`);
+    }
+    if (seen.has(key)) {
+      fail(`render.section_order 含重复的节 key "${key}"`);
+    }
+    seen.add(key);
+  }
+
+  return {
+    title: value.title as string,
+    shot_heading: value.shot_heading as string,
+    // 上面已逐条校验为非空字符串；此处用断言收敛 unknown 值。
+    section_labels: labels as Record<string, string>,
+    section_order,
+    empty_negative: value.empty_negative as string,
   };
 }
 

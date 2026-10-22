@@ -13,6 +13,29 @@
   },
   "required_fields": ["subject", "action", "setting", "camera_movement", "lighting", "color", "style"],
   "forbidden": ["--ar", "aspect_ratio", "duration", "fps", "resolution", "run_id", "seedance"],
+  "render": {
+    "title": "# Seedance 2.5 提示词",
+    "shot_heading": "## 镜头 {shot_id}（时长 {duration} 秒，画幅 {aspect_ratio}）",
+    "section_labels": {
+      "subject_action": "主体与动作",
+      "setting_time": "环境与时间",
+      "camera": "机位与运镜",
+      "light_color": "光线与色彩",
+      "style": "风格",
+      "continuity": "连续性",
+      "negative": "负面约束"
+    },
+    "section_order": [
+      "subject_action",
+      "setting_time",
+      "camera",
+      "light_color",
+      "style",
+      "continuity",
+      "negative"
+    ],
+    "empty_negative": "无"
+  },
   "source": [
     "https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh",
     "https://docs.volcengine.com/docs/ark/seedance-2-5?lang=zh"

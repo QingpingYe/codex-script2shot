@@ -1,0 +1,50 @@
+{
+  "run_id": "run-20261022-090000",
+  "target_model": "seedance-2.0",
+  "shots": [
+    {
+      "shot_id": "ep01-sc01-sh01",
+      "target_model": "seedance-2.0",
+      "duration": 5,
+      "aspect_ratio": "16:9",
+      "subject": "角色A",
+      "action": "推开铁门走进废弃剧院前厅",
+      "setting": "废弃剧院前厅，灰尘与破损海报",
+      "time": "night",
+      "camera_angle": "eye-level",
+      "camera_movement": "push-in",
+      "lighting": "冷白顶灯",
+      "color": "灰蓝低饱和",
+      "style": "写实电影质感",
+      "continuity": {
+        "character_state": "角色A站在门内，手扶铁门",
+        "environment_state": "门缝透出冷光"
+      },
+      "negative_prompt": ["画面抖动", "人物变形"],
+      "knowledge_refs": []
+    },
+    {
+      "shot_id": "ep01-sc01-sh02",
+      "target_model": "seedance-2.0",
+      "duration": 4,
+      "aspect_ratio": "16:9",
+      "subject": "角色B",
+      "action": "从舞台后方走到追光里",
+      "setting": "剧院舞台区，幕布半垂",
+      "time": "dawn",
+      "camera_angle": "over-the-shoulder",
+      "camera_movement": "tracking",
+      "lighting": "舞台追光",
+      "color": "暖黄与深褐",
+      "style": "写实电影质感",
+      "continuity": {
+        "previous_shot": "ep01-sc01-sh01",
+        "character_state": "角色B停在舞台中央",
+        "environment_state": "幕布轻微摆动"
+      },
+      "negative_prompt": [],
+      "knowledge_refs": []
+    }
+  ],
+  "generated_at": "2026-10-22T09:00:00+08:00"
+}

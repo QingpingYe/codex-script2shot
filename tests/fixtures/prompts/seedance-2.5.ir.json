@@ -1,0 +1,51 @@
+{
+  "run_id": "run-20261022-090500",
+  "target_model": "seedance-2.5",
+  "shots": [
+    {
+      "shot_id": "ep02-sc01-sh01",
+      "target_model": "seedance-2.5",
+      "duration": 8,
+      "aspect_ratio": "16:9",
+      "subject": "角色A",
+      "action": "在雨夜穿过旧城区巷道",
+      "setting": "狭窄巷道，湿润砖墙，霓虹灯反射",
+      "time": "night",
+      "camera_angle": "low-angle",
+      "camera_movement": "handheld",
+      "lighting": "冷调霓虹",
+      "color": "青蓝与暗红",
+      "style": "阴郁写实电影质感",
+      "continuity": {
+        "previous_shot": "ep02-sc01-sh00",
+        "character_state": "角色A握紧黑色伞柄",
+        "environment_state": "暴雨持续"
+      },
+      "negative_prompt": ["画面抖动", "人物变形", "多余手指"],
+      "knowledge_refs": []
+    },
+    {
+      "shot_id": "ep02-sc01-sh02",
+      "target_model": "seedance-2.5",
+      "duration": 6,
+      "aspect_ratio": "9:16",
+      "subject": "角色A",
+      "action": "抬头迎向巷道尽头的灯牌",
+      "setting": "巷道尽头的灯牌墙，积水地面",
+      "time": "",
+      "camera_angle": "back-view",
+      "camera_movement": "dolly-zoom",
+      "lighting": "灯牌自发光",
+      "color": "青蓝与暗红",
+      "style": "阴郁写实电影质感",
+      "continuity": {
+        "previous_shot": "ep02-sc01-sh01",
+        "character_state": "角色A停步仰望",
+        "environment_state": "积水映出灯牌倒影"
+      },
+      "negative_prompt": [],
+      "knowledge_refs": []
+    }
+  ],
+  "generated_at": "2026-10-22T09:05:00+08:00"
+}

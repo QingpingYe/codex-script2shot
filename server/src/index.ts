@@ -44,6 +44,7 @@ import {
   type ValidateStageArtifactInput,
 } from "./tools/validate_stage_artifact.js";
 import { validate_prompt, type ValidatePromptInput } from "./tools/validate_prompt.js";
+import { render_prompt, type RenderPromptInput } from "./tools/render_prompt.js";
 
 const server = new Server(
   { name: "script2shot", version: "0.1.0" },
@@ -360,6 +361,28 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "render_prompt",
+    description:
+      "渲染 Seedance 提示词文档：先调用 validate_prompt 校验 PromptIR 的结构与硬规则，" +
+      "通过后按目标模型规则文件的 render 模板生成按镜头分节的中文 Markdown 并写入 " +
+      "output_path，返回 { output_path }；校验不通过返回 HARD_RULE_VIOLATION，不写文件。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt_ir_path: {
+          type: "string",
+          description: "PromptIR（prompts.ir.json）文件路径。",
+        },
+        output_path: {
+          type: "string",
+          description: "提示词 Markdown 输出路径（约定为 prompts.<model>.md）。",
+        },
+      },
+      required: ["prompt_ir_path", "output_path"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -430,6 +453,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (name === "validate_prompt") {
     const parsed = parse_validate_prompt_arguments(request.params.arguments);
     return parsed.ok ? tool_json(validate_prompt(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "render_prompt") {
+    const parsed = parse_render_prompt_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(render_prompt(parsed.value)) : tool_json(parsed);
   }
   throw new McpError(ErrorCode.MethodNotFound, `未知工具：${name}`);
 });
@@ -801,6 +828,30 @@ function parse_validate_prompt_arguments(raw: unknown): Parsed<ValidatePromptInp
     });
   }
   return { ok: true, value: { prompt_ir_path } };
+}
+
+function parse_render_prompt_arguments(raw: unknown): Parsed<RenderPromptInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, ["prompt_ir_path", "output_path"]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  const prompt_ir_path = parsed.value.prompt_ir_path;
+  if (typeof prompt_ir_path !== "string" || prompt_ir_path.trim() === "") {
+    return invalid_arguments('入参字段 "prompt_ir_path" 期望非空字符串。', {
+      field: "prompt_ir_path",
+    });
+  }
+  const output_path = parsed.value.output_path;
+  if (typeof output_path !== "string" || output_path.trim() === "") {
+    return invalid_arguments('入参字段 "output_path" 期望非空字符串。', {
+      field: "output_path",
+    });
+  }
+  return { ok: true, value: { prompt_ir_path, output_path } };
 }
 
 function is_record(value: unknown): value is Record<string, unknown> {

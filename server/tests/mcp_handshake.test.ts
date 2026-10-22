@@ -1,5 +1,14 @@
 import { spawn } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -143,6 +152,7 @@ describe("mcp handshake", () => {
       expect(toolNames).toContain("health");
       expect(toolNames).toContain("write_config");
       expect(toolNames).toContain("validate_prompt");
+      expect(toolNames).toContain("render_prompt");
       for (const tool of result.tools) {
         expect(typeof tool.name).toBe("string");
         expect(tool.name.length).toBeGreaterThan(0);
@@ -305,6 +315,76 @@ describe("mcp handshake", () => {
       expect(errors.join(""), "server stderr should stay empty").toBe("");
     } finally {
       await client.close();
+    }
+  }, 30000);
+
+  test("tools/call renders prompt ir and rejects malformed arguments", async () => {
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), "script2shot-tools-render-"));
+    const { client, errors } = await connect_server(
+      server_env({ SCRIPT2SHOT_HOME: path.join(tempRoot, "home") }),
+    );
+
+    try {
+      const prompt_ir_path = path.join(
+        repoRoot,
+        "tests",
+        "fixtures",
+        "prompts",
+        "seedance-2.5.ir.json",
+      );
+      const output_path = path.join(tempRoot, "prompts.seedance-2.5.md");
+      const rendered = parse_tool_json(
+        await client.callTool({
+          name: "render_prompt",
+          arguments: { prompt_ir_path, output_path },
+        }),
+      );
+
+      expect(rendered).toEqual({ ok: true, output_path });
+      expect(readFileSync(output_path, "utf8")).toBe(
+        readFileSync(
+          path.join(repoRoot, "tests", "fixtures", "prompts", "seedance-2.5.golden.md"),
+          "utf8",
+        ),
+      );
+
+      const unknownKey = parse_tool_json(
+        await client.callTool({
+          name: "render_prompt",
+          arguments: { prompt_ir_path, output_path, unexpected: true },
+        }),
+      );
+      expect(unknownKey).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "unexpected" } },
+      });
+
+      const blankOutput = parse_tool_json(
+        await client.callTool({
+          name: "render_prompt",
+          arguments: { prompt_ir_path, output_path: "   " },
+        }),
+      );
+      expect(blankOutput).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "output_path" } },
+      });
+
+      const nonStringPromptIr = parse_tool_json(
+        await client.callTool({
+          name: "render_prompt",
+          arguments: { prompt_ir_path: 42, output_path },
+        }),
+      );
+      expect(nonStringPromptIr).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "prompt_ir_path" } },
+      });
+
+      expect(errors.join(""), "server stderr should stay empty").toBe("");
+    } finally {
+      await client.close();
+      rmSync(tempRoot, { recursive: true, force: true });
     }
   }, 30000);
 

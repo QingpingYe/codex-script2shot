@@ -1,10 +1,10 @@
 # script2shot 本地 MCP Server
 
-本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册 15 个工具：
+本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册 16 个工具：
 `health`、`write_config`、`init_knowledge_b`、`scan_knowledge_a`、`read_sync_state`、
 `build_sync_plan`、`fetch_knowledge_a_doc`、`replace_doc_cards`、`update_doc_sync_state`、
 `delete_doc_cards`、`refresh_local_index`、`search_knowledge`、`load_knowledge_pack`、
-`validate_stage_artifact`、`validate_prompt`。
+`validate_stage_artifact`、`validate_prompt`、`render_prompt`。
 
 文档中的「原始库 / AI 库」分别指飞书知识库（原始资料）和飞书知识库（AI）；
 工具名与配置键中的 `a/b` 标识保留兼容。
@@ -30,6 +30,11 @@ Phase 3 注册的三个本地检索工具：
   `FORBIDDEN_TERM` / `MODEL_MISMATCH`；目标模型规则文件缺失 / 损坏（安装问题）返回
   文档级 `MODEL_RULES_UNAVAILABLE`；顺序固定为镜头顺序 → 镜头内字段顺序；
   文件缺失 / 不可读 / JSON 非法返回单条 `field: "prompt_ir_path"` 的结构化错误。
+- `render_prompt`：先调用 `validate_prompt`，不通过返回 `HARD_RULE_VIOLATION`
+  （`{ ok: false, error: { code, message, details } }`，`details.errors` 为校验错误明细）
+  且不写文件；通过后按目标模型规则文件的 `render` 模板渲染中文 Markdown
+  （按镜头分节，节顺序固定，不含时间戳，行尾统一 `\n`）写入 `output_path`，
+  返回 `{ ok, output_path }`；校验通过后的渲染 / 写盘失败返回 `RENDER_FAILED`。
 
 阶段运行工具（`init_run` 等）由后续阶段注册。
 
@@ -159,6 +164,6 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
 
 ## 已知限制
 
-- 已注册上列 15 个工具（健康检查、配置写入、AI 库初始化与知识库同步、
+- 已注册上列 16 个工具（健康检查、配置写入、AI 库初始化与知识库同步、
   本地检索）；阶段运行工具由后续阶段注册。
 - 启动依赖已构建的 `server/dist/server.mjs`，源码目录不直接运行。

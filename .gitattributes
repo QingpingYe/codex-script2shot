@@ -1,0 +1,2 @@
+# 渲染快照按字节比较，行尾必须固定为 LF（Task 4c-3）。
+tests/fixtures/prompts/*.golden.md text eol=lf
