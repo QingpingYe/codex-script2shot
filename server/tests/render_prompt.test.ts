@@ -217,6 +217,73 @@ describe("prompt rendering", () => {
     );
   });
 
+  test("render formats dialogue with optional language and delivery", () => {
+    // 固定拼接顺序：`{speaker}用{language}{delivery}说：{text}`（text 用 {} 包裹）；
+    // language / delivery 缺失或纯空白串时省略对应片段，条目间用「；」连接。
+    const mutated = JSON.parse(
+      readFileSync(path.join(promptFixturesDir, "seedance-2.5.ir.json"), "utf8"),
+    ) as { shots: Array<{ dialogue: unknown[] }> };
+    mutated.shots[0].dialogue = [
+      { speaker: "角色A", text: "你一个外人" },
+      { speaker: "角色B", language: "日语", delivery: "轻声", text: "もう大丈夫です" },
+      { speaker: "角色C", language: "粤语", delivery: "   ", text: "顶住啊" },
+      { speaker: "角色D", delivery: "压低声音", text: "别回头" },
+    ];
+    const prompt_ir_path = path.join(tempDir, "seedance-2.5.dialogue.ir.json");
+    writeFileSync(prompt_ir_path, JSON.stringify(mutated, null, 2), "utf8");
+    const output_path = path.join(tempDir, "prompts.seedance-2.5.dialogue.md");
+
+    const result = render_prompt({ prompt_ir_path, output_path });
+
+    expect(result).toEqual({ ok: true, output_path });
+    const dialogue_line = readFileSync(output_path, "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("- 对白："));
+    expect(dialogue_line).toBe(
+      "- 对白：角色A说：{你一个外人}；角色B用日语轻声说：{もう大丈夫です}；" +
+        "角色C用粤语说：{顶住啊}；角色D压低声音说：{别回头}",
+    );
+  });
+
+  test("render marks silent shots with empty dialogue placeholder", () => {
+    const { result, output_path } = render_fixture(
+      "seedance-2.5.ir.json",
+      "prompts.seedance-2.5.silent.md",
+    );
+
+    expect(result).toEqual({ ok: true, output_path });
+
+    // 空数组不省略节：渲染规则文件的 empty_dialogue 占位，明确无对白、无旁白。
+    const dialogue_lines = readFileSync(output_path, "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("- 对白："));
+    expect(dialogue_lines).toEqual([
+      "- 对白：角色A说：{你一个外人}；角色B用日语轻声说：{もう大丈夫です}",
+      "- 对白：无对白；人物自然闭口，无旁白",
+    ]);
+  });
+
+  test("render preserves verbatim dialogue text", () => {
+    // 裁决：dialogue 是原文保真豁免区。台词原文含禁止项词（fps / duration）时，
+    // 渲染前复校验仍通过，且渲染正文逐字保留原文，不做删改。
+    const verbatim = "把 fps 与 duration 原样写进台词";
+    const mutated = JSON.parse(
+      readFileSync(path.join(promptFixturesDir, "seedance-2.5.ir.json"), "utf8"),
+    ) as { shots: Array<{ dialogue: unknown[] }> };
+    mutated.shots[0].dialogue = [{ speaker: "角色A", text: verbatim }];
+    const prompt_ir_path = path.join(tempDir, "seedance-2.5.verbatim-dialogue.ir.json");
+    writeFileSync(prompt_ir_path, JSON.stringify(mutated, null, 2), "utf8");
+    const output_path = path.join(tempDir, "prompts.seedance-2.5.verbatim-dialogue.md");
+
+    const result = render_prompt({ prompt_ir_path, output_path });
+
+    expect(result).toEqual({ ok: true, output_path });
+    const dialogue_line = readFileSync(output_path, "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("- 对白："));
+    expect(dialogue_line).toBe(`- 对白：角色A说：{${verbatim}}`);
+  });
+
   test("render reports failure when output directory cannot be created", () => {
     // 把 output_path 的父路径做成普通文件：mkdirSync 会失败，写盘未发生。
     const blocked_parent = path.join(tempDir, "blocked-parent");

@@ -128,4 +128,29 @@ describe("model rules", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("rules reject missing empty dialogue", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-rules-dialogue-"));
+    try {
+      const rules = read_rule_file("seedance-2.5.json");
+      const file_path = path.join(tempDir, "seedance-2.5.json");
+
+      // 缺失 empty_dialogue：渲染层没有稳定的空对白占位，属安装损坏。
+      const missing = { ...(rules.render as Record<string, unknown>) };
+      delete missing.empty_dialogue;
+      writeFileSync(file_path, JSON.stringify({ ...rules, render: missing }), "utf8");
+      expect(() => load_model_rules("seedance-2.5", { rules_dir: tempDir })).toThrow(
+        /render\.empty_dialogue/,
+      );
+
+      // 纯空白同属非法：占位必须是非空字符串。
+      const blank = { ...(rules.render as Record<string, unknown>), empty_dialogue: "   " };
+      writeFileSync(file_path, JSON.stringify({ ...rules, render: blank }), "utf8");
+      expect(() => load_model_rules("seedance-2.5", { rules_dir: tempDir })).toThrow(
+        /render\.empty_dialogue/,
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });

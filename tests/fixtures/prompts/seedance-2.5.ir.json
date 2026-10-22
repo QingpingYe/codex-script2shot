@@ -10,6 +10,18 @@
       "shot_size": "medium-shot",
       "subject": "角色A",
       "action": "在雨夜穿过旧城区巷道",
+      "dialogue": [
+        {
+          "speaker": "角色A",
+          "text": "你一个外人"
+        },
+        {
+          "speaker": "角色B",
+          "language": "日语",
+          "delivery": "轻声",
+          "text": "もう大丈夫です"
+        }
+      ],
       "setting": "狭窄巷道，湿润砖墙，霓虹灯反射",
       "time": "night",
       "camera_angle": "low-angle",
@@ -33,6 +45,7 @@
       "shot_size": "medium-close-up",
       "subject": "角色A",
       "action": "抬头迎向巷道尽头的灯牌",
+      "dialogue": [],
       "setting": "巷道尽头的灯牌墙，积水地面",
       "time": "",
       "camera_angle": "back-view",

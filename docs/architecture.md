@@ -869,6 +869,12 @@ $script2shot 只执行 shot-prompting，run_id 是 <run_id>
 
 - 为每个镜头构造检索查询，执行过滤和关键词检索，按镜头组装知识上下文。
 - 生成 PromptIR。
+- 台词只取 `script_analysis.json` 的 `dialogue_units.text` 原文：不扩写、不改写、
+  不翻译、不补旁白；只有意图没有台词原文时不编造，改为可观察的口型、停顿与反应。
+  多人对话逐句标说话人；无对白镜头的 `dialogue` 留空数组。
+- `dialogue[].language` 只在台词文本为非中文且语种可由文字直接判定时填写；
+  `dialogue[].delivery` 只在原文或检索卡片有依据时填写。两者都用中文短词，
+  没有依据就省略对应片段。
 - 调用 `validate_prompt` 校验硬规则，失败时按结构化错误重新生成。
 - 调用 `render_prompt` 渲染目标模型提示词。
 - 依赖提示词技巧、Seedance 2.0 和 2.5 软知识和模型规则文件。
@@ -1045,6 +1051,12 @@ general / project 块重复归类。
   "shot_size": "medium-shot",
   "subject": "角色A",
   "action": "在雨夜穿过旧城区巷道",
+  "dialogue": [
+    {
+      "speaker": "角色A",
+      "text": "你一个外人"
+    }
+  ],
   "setting": "狭窄巷道，湿润砖墙，霓虹灯反射",
   "time": "night",
   "camera_angle": "low-angle",
@@ -1066,6 +1078,16 @@ general / project 块重复归类。
 
 - 结构性枚举（`aspect_ratio`、`shot_size`、`camera_angle`、`camera_movement`）
   使用英文标识，取值集合冻结在 `schemas/prompt_ir.schema.json`。
+- `dialogue` 是必填数组（可为空），条目为
+  `{ speaker: 非空字符串, text: 非空字符串, language?: 字符串, delivery?: 字符串 }`，
+  `additionalProperties: false`。渲染节标签为「对白」，条目按
+  `{speaker}用{language}{delivery}说：{text}` 拼接（`text` 用 `{}` 包裹，
+  `language` / `delivery` 缺失或为纯空白串时省略对应片段），条目间用「；」连接；
+  空数组渲染为「无对白；人物自然闭口，无旁白」。
+- `dialogue` 是**原文保真豁免区**：台词取自上游 `dialogue_units.text` 原文，
+  `validate_prompt` 的禁止项（`forbidden`）扫描不覆盖 `dialogue`，不得为通过校验
+  改写、删词或屏蔽台词原文。禁止项扫描的范围口径见 `docs/model-rules-notes.md`
+  §2.3.2 / §3。
 - `shot_size` 取自上游 `shot_plan.json` 的 9 值中文景别枚举，按冻结映射译成英文，
   顺序一一对应：大远景=`extreme-long-shot`、远景=`long-shot`、全景=`full-shot`、
   中全景=`medium-full-shot`、中景=`medium-shot`、中近景=`medium-close-up`、

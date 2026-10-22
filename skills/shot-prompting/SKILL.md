@@ -40,8 +40,9 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 - `script_analysis.json`：同一 run 的上一阶段产物，用于取回镜头对应的场景与原文单元
   （`location`、`time_of_day`、`characters`、`action_units`、`emotion_units`、
   `dialogue_units`、`shot_group_suggestions` 与 `continuity`），作为 PromptIR 的
-  `subject`、`action`、`setting`、`time` 的取材来源。只读；本阶段的 `knowledge_refs`
-  只来自本阶段自己的检索，不继承也不改写该文件。使用前必须确认它在本 run 内已通过
+  `subject`、`action`、`dialogue`、`setting`、`time` 的取材来源。只读；本阶段的
+  `knowledge_refs` 只来自本阶段自己的检索，不继承也不改写该文件。使用前必须确认
+  它在本 run 内已通过
   `validate_stage_artifact({ stage: "script_breakdown", path })`。
 - `run.json`：可选运行时上下文，用于核对 `run_id`、`project_id`、`target_model`。
   可读时若与已校验的 `shot_plan.json` 冲突，停止并报告；不可读时以上游产物为准
@@ -89,6 +90,13 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
      的冻结映射表把中文枚举译成英文枚举；`subject`、`action`、`setting`、`time`
      取材于 `script_analysis.json` 的对应场景与原文单元；`lighting`、`color`、
      `style` 取材于上游信息与检索卡片。
+   - `dialogue` 逐句对应上游 `dialogue_units`：`speaker` 取原文说话人，`text` 只取
+     `dialogue_units.text` 原文——不扩写、不改写、不翻译、不补旁白；原文只有意图
+     没有台词时不编造台词，改为可观察的口型、停顿与反应。`language` 只在台词文本
+     为非中文且语种可由文字直接判定时填写；`delivery` 只在原文或检索卡片有依据时
+     填写；两者都用中文短词。多人对话逐句标说话人；无对白镜头写空数组（渲染层按
+     规则文件的 `empty_dialogue` 输出占位）。台词是原文保真豁免区：不要为通过
+     禁止项校验改写、删词或屏蔽台词原文。
    - 引用的 `source_doc_token`、`source_path`、`source_revision`、`last_synced_at`
      用 `card_id` 从第 2 步的知识包里匹配补齐；`scene_id`、`shot_id`、`query` 取本镜头
      自己的上下文（`shot_id` 必须等于所属镜头的 `shot_id`）。
@@ -203,6 +211,7 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 | `shot_size` | string | 英文枚举，取自上游 `shot_size`，映射见下表 |
 | `subject` | string | 取自上游场景与角色信息 |
 | `action` | string | 取自上游动作单元与镜头计划 |
+| `dialogue` | array | 台词条目数组，必填、可为空：`{ speaker, text, language?, delivery? }`；`speaker` / `text` 为非空字符串，`text` 只取上游 `dialogue_units.text` 原文；无对白镜头写 `[]` |
 | `setting` | string | 取自上游场景地点与检索到的场景说明 |
 | `time` | string | 英文时间术语（例如 `night`、`day`、`dawn`、`dusk`） |
 | `camera_angle` | string | 英文枚举，映射见下表 |
@@ -282,6 +291,7 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 | `dropped_by_budget` 的 `card_id` 在知识包中不存在 | 停止本阶段并报告缺失的 `card_id`；不伪造来源字段，也不扩大预算或追加检索绕过 |
 | 知识卡与上游冲突 | 以上游产物为准，不采用冲突内容；冲突意味着上游缺失或错误时停止并回报 |
 | `validate_prompt` 返回 `MISSING_FIELD` / `OUT_OF_RANGE` / `FORBIDDEN_TERM` / `MODEL_MISMATCH` | 只重新生成 `errors[].shot_id` 指到的镜头，整体重写 `prompts.ir.json` 后重新校验；最多 2 轮 |
+| `dialogue[].text` 为空（`errors[].field` 形如 `dialogue[0].text`） | 只重新生成 `errors[].shot_id` 指到的镜头，整体重写 `prompts.ir.json` 后重新校验；最多 2 轮；上游没有台词原文时该镜头写空数组，不编造台词 |
 | 修复 2 轮后仍 `ok: false` | 停止本阶段，保留已生成的 `prompts.ir.json`，报 `HARD_RULE_VIOLATION` 与 `errors[]` 明细；不渲染、不写提示词文件、不更新 `run.json` 阶段状态 |
 | `OUT_OF_RANGE` 根因在上游镜头计划（例如 `duration_sec` 超出模型范围或不是整数秒） | 停止本阶段，回退 `shot-planning` 调整；不取整、不改时长、不修改 `shot_plan.json` |
 | `validate_prompt` 返回 `MODEL_MISMATCH` | 先对齐 PromptIR 顶层与逐镜头的 `target_model`；若上游镜头计划本身与目标模型不一致，停止并回退 `shot-planning` |

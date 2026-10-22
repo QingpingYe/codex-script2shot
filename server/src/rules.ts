@@ -14,7 +14,7 @@
  *
  * 目前已覆盖规划子集（时长、画幅、镜头拆分边界）、硬规则子集
  * （`required_fields` 必填非空字段、`forbidden` 禁止项）与渲染模板
- * （`render`：标题、分节标题模板、节标签、节顺序、空负面约束占位）。
+ * （`render`：标题、分节标题模板、节标签、节顺序、空负面约束与空对白占位）。
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -54,6 +54,8 @@ export interface ModelRulesRender {
   section_order: string[];
   /** `negative_prompt` 为空数组时的稳定占位文本。 */
   empty_negative: string;
+  /** `dialogue` 为空数组（无对白镜头）时的稳定占位文本。 */
+  empty_dialogue: string;
 }
 
 export interface ModelRules {
@@ -234,7 +236,7 @@ function parse_render_template(
   }
   const value = raw as Record<string, unknown>;
 
-  for (const key of ["title", "shot_heading", "empty_negative"] as const) {
+  for (const key of ["title", "shot_heading", "empty_negative", "empty_dialogue"] as const) {
     if (typeof value[key] !== "string" || (value[key] as string).trim() === "") {
       fail(`render.${key} 必须是非空字符串`);
     }
@@ -278,6 +280,7 @@ function parse_render_template(
     section_labels: labels as Record<string, string>,
     section_order,
     empty_negative: value.empty_negative as string,
+    empty_dialogue: value.empty_dialogue as string,
   };
 }
 

@@ -19,6 +19,7 @@ interface PromptIrShot {
   aspect_ratio: string;
   subject: string;
   action: string;
+  dialogue: DialogueEntry[];
   setting: string;
   time: string;
   camera_angle: string;
@@ -33,6 +34,13 @@ interface PromptIrShot {
   };
   negative_prompt: string[];
   knowledge_refs: unknown[];
+}
+
+interface DialogueEntry {
+  speaker: string;
+  text: string;
+  language?: string;
+  delivery?: string;
 }
 
 interface PromptIr {
@@ -113,6 +121,16 @@ describe("prompt hard rule validation", () => {
     expect(result.errors[0]?.message).toContain("subject");
   });
 
+  test("validate reports empty dialogue text as an out of range field error", () => {
+    const result = validate_prompt({
+      prompt_ir_path: path.join(fixturesDir, "prompts_ir.invalid.bad_dialogue.json"),
+    });
+
+    // schema 层 minLength 违规映射为镜头内字段错误：field 取相对路径，定位到具体条目。
+    expect(error_keys(result)).toEqual(["ep01-sc01-sh01|dialogue[0].text|OUT_OF_RANGE"]);
+    expect(result.errors[0]?.message).toContain("镜头 ep01-sc01-sh01");
+  });
+
   test("validate rejects duration out of range", () => {
     const ir = read_prompt_ir("prompts_ir.sample.json");
     ir.shots[0].duration = 3;
@@ -155,6 +173,27 @@ describe("prompt hard rule validation", () => {
 
     expect(error_keys(result)).toEqual(["ep01-sc01-sh01|subject|FORBIDDEN_TERM"]);
     expect(result.errors[0]?.message).toContain(forbidden_term);
+  });
+
+  test("validate keeps verbatim dialogue even when it contains forbidden terms", () => {
+    const rules = load_model_rules("seedance-2.5");
+    expect(rules.ok).toBe(true);
+    if (!rules.ok) {
+      throw new Error("expected seedance-2.5 rules to load");
+    }
+    // 非空转：断言两个禁词确实在规则文件词表里，而不是测试自造的词。
+    for (const term of ["fps", "duration"]) {
+      expect(rules.rules.forbidden).toContain(term);
+    }
+
+    const ir = read_prompt_ir("prompts_ir.sample.json");
+    ir.shots[0].dialogue = [
+      { speaker: "角色A", text: "把 fps 和 duration 都留在台词原文里" },
+    ];
+    const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
+
+    // 裁决：dialogue 是原文保真豁免区，不参与 forbidden 扫描；不得为通过校验改写台词。
+    expect(result).toEqual({ ok: true, errors: [] });
   });
 
   test("validate rejects model mismatch", () => {

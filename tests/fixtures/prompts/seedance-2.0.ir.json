@@ -10,6 +10,12 @@
       "shot_size": "full-shot",
       "subject": "角色A",
       "action": "推开铁门走进废弃剧院前厅",
+      "dialogue": [
+        {
+          "speaker": "角色A",
+          "text": "这地方还有人吗"
+        }
+      ],
       "setting": "废弃剧院前厅，灰尘与破损海报",
       "time": "night",
       "camera_angle": "eye-level",
@@ -32,6 +38,7 @@
       "shot_size": "medium-full-shot",
       "subject": "角色B",
       "action": "从舞台后方走到追光里",
+      "dialogue": [],
       "setting": "剧院舞台区，幕布半垂",
       "time": "dawn",
       "camera_angle": "over-the-shoulder",

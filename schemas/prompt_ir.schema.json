@@ -37,6 +37,28 @@
         "type": "string"
       }
     },
+    "dialogue_unit": {
+      "type": "object",
+      "description": "台词条目。speaker / text 为非空字符串；language / delivery 是可选的中文短词，只在有依据时填写（language 仅当台词文本为非中文且语种可由文字直接判定）。台词只取上游 dialogue_units.text 原文，不扩写、不改写。",
+      "additionalProperties": false,
+      "required": ["speaker", "text"],
+      "properties": {
+        "speaker": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "type": "string"
+        },
+        "delivery": {
+          "type": "string"
+        }
+      }
+    },
     "continuity": {
       "type": "object",
       "description": "本镜头的连续性。previous_shot 为上一镜头的 shot_id（首个镜头省略该字段或填 null）；character_state 与 environment_state 是镜头结束时的角色与环境状态，均为非空字符串。",
@@ -67,6 +89,7 @@
         "shot_size",
         "subject",
         "action",
+        "dialogue",
         "setting",
         "time",
         "camera_angle",
@@ -115,6 +138,13 @@
         },
         "action": {
           "type": "string"
+        },
+        "dialogue": {
+          "type": "array",
+          "description": "本镜头的台词条目，必填但可为空数组（无对白镜头留空）。台词只取上游 dialogue_units.text 原文，不扩写、不改写；dialogue 是原文保真豁免区，禁止项（forbidden）扫描不覆盖该字段。渲染为「对白」节：条目格式 {speaker}用{language}{delivery}说：{text}（text 用 {} 包裹，language / delivery 缺失或为纯空白串时省略对应片段），条目间用「；」连接，空数组渲染为规则文件 render.empty_dialogue 的占位。",
+          "items": {
+            "$ref": "#/$defs/dialogue_unit"
+          }
         },
         "setting": {
           "type": "string"

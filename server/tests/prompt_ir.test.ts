@@ -43,6 +43,24 @@ describe("prompt ir schema validation", () => {
     expect(error_paths(result)).toEqual(["shots[0].continuity.environment_state"]);
   });
 
+  test("prompt ir rejects dialogue entry with empty text", () => {
+    const result = validate_prompt_ir(
+      read_fixture("prompts_ir.invalid.bad_dialogue.json"),
+    );
+    expect(result.ok).toBe(false);
+    expect(error_paths(result)).toEqual(["shots[0].dialogue[0].text"]);
+  });
+
+  test("prompt ir requires dialogue field per shot", () => {
+    const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
+    delete edited.shots[0].dialogue;
+
+    const result = validate_prompt_ir(edited);
+
+    expect(result.ok).toBe(false);
+    expect(error_paths(result)).toEqual(["shots[0].dialogue"]);
+  });
+
   test("prompt ir requires knowledge refs field per shot", () => {
     const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
     delete edited.shots[0].knowledge_refs;

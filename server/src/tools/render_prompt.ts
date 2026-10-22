@@ -8,13 +8,13 @@
  *    且不创建目录、不写文件。避免「校验读一次、渲染再读一次」之间文件被替换。
  * 2. 通过后按目标模型规则文件的 `render` 模板渲染同一份 document。模板只承载
  *    人可见的中文标题、节标签与节顺序；字段到节内容的组装在渲染层。
- * 3. 输出为 Markdown：整篇标题 → 每个镜头一节（分节标题行 + 固定顺序的七条节内容）。
+ * 3. 输出为 Markdown：整篇标题 → 每个镜头一节（分节标题行 + 固定顺序的八条节内容）。
  *    正文不含时间戳 / run 元数据，行尾统一 `\n`，同输入逐字节一致。
  *
- * 节顺序（与 brief 冻结的 镜头号与时长 → 主体与动作 → 环境与时间 → 景别、机位与运镜 →
- * 光线与色彩 → 风格 → 连续性 → 负面约束 一致）：「镜头号与时长」由分节标题行
- * `## 镜头 {shot_id}（时长 {duration} 秒，画幅 {aspect_ratio}）` 承载，其余七节
- * 是节内条目，顺序由规则文件 `render.section_order` 给出。
+ * 节顺序（与 brief 冻结的 镜头号与时长 → 主体与动作 → 对白 → 环境与时间 →
+ * 景别、机位与运镜 → 光线与色彩 → 风格 → 连续性 → 负面约束 一致）：「镜头号与时长」
+ * 由分节标题行 `## 镜头 {shot_id}（时长 {duration} 秒，画幅 {aspect_ratio}）` 承载，
+ * 其余八节是节内条目，顺序由规则文件 `render.section_order` 给出。
  *
  * 冻结英文枚举 `shot_size` / `camera_angle` / `camera_movement` 渲染为中文标签（映射表与
  * `schemas/prompt_ir.schema.json` 描述、`schemas/shot_plan.schema.json` 的中文词表
@@ -23,6 +23,11 @@
  *
  * 空 `negative_prompt` 的裁决：不省略节，稳定输出「负面约束：{empty_negative}」
  * （当前规则文件取值为「无」），保证每个镜头都是同一套节骨架。
+ *
+ * 空 `dialogue` 的裁决（Task A3）：同样不省略节，按规则文件 `render.empty_dialogue`
+ * 输出占位（当前取值为「无对白；人物自然闭口，无旁白」）。`dialogue` 是原文保真
+ * 豁免区：`text` 逐字渲染进 `{}`（Seedance 台词记号，来源见
+ * `docs/model-rules-notes.md` §2.4），渲染层不翻译、不删改，也不做禁止项改写。
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -60,6 +65,7 @@ export type RenderPromptResult = RenderPromptSuccess | RenderPromptFailure;
 /** 节 key：与规则文件 `render.section_labels` / `render.section_order` 一一对应。 */
 const SECTION_KEYS = [
   "subject_action",
+  "dialogue",
   "setting_time",
   "camera",
   "light_color",
@@ -76,6 +82,7 @@ interface RenderTemplate {
   section_order: RenderSectionKey[];
   section_labels: Record<RenderSectionKey, string>;
   empty_negative: string;
+  empty_dialogue: string;
 }
 
 /**
@@ -218,6 +225,7 @@ interface PromptIrShot {
   shot_size: string;
   subject: string;
   action: string;
+  dialogue: DialogueEntry[];
   setting: string;
   time: string;
   camera_angle: string;
@@ -231,6 +239,13 @@ interface PromptIrShot {
     environment_state: string;
   };
   negative_prompt: string[];
+}
+
+interface DialogueEntry {
+  speaker: string;
+  text: string;
+  language?: string;
+  delivery?: string;
 }
 
 interface PromptIrDocument {
@@ -281,6 +296,7 @@ function resolve_template(render: ModelRulesRender): RenderTemplate {
     section_order: render.section_order as RenderSectionKey[],
     section_labels,
     empty_negative: render.empty_negative,
+    empty_dialogue: render.empty_dialogue,
   };
 }
 
@@ -303,6 +319,8 @@ function render_section(
   switch (key) {
     case "subject_action":
       return join_parts([field("主体", shot.subject), field("动作", shot.action)]);
+    case "dialogue":
+      return render_dialogue(shot.dialogue, template.empty_dialogue);
     case "setting_time":
       return join_parts([
         field("环境", shot.setting),
@@ -352,6 +370,26 @@ function time_label(value: string): string {
 function render_negative(entries: string[], empty_negative: string): string {
   const terms = entries.filter((entry) => entry.trim() !== "");
   return terms.length === 0 ? empty_negative : terms.join("、");
+}
+
+/**
+ * 台词条目渲染（Task A3）：固定顺序 `{speaker}用{language}{delivery}说：{text}`，
+ * `text` 用 `{}` 包裹并逐字保留（原文保真豁免区，渲染层不删改）。`language` /
+ * `delivery` 缺失或纯空白串时省略对应片段，拼接用的是去掉首尾空白后的值。空
+ * `dialogue` 不省略节，渲染规则文件的 `empty_dialogue` 占位。
+ */
+function render_dialogue(entries: DialogueEntry[], empty_dialogue: string): string {
+  if (entries.length === 0) {
+    return empty_dialogue;
+  }
+  return entries
+    .map((entry) => {
+      const language = (entry.language ?? "").trim();
+      const delivery = (entry.delivery ?? "").trim();
+      const language_part = language === "" ? "" : `用${language}`;
+      return `${entry.speaker}${language_part}${delivery}说：{${entry.text}}`;
+    })
+    .join("；");
 }
 
 function write_text(output_path: string, content: string): void {

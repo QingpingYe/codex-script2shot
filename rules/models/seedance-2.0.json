@@ -18,6 +18,7 @@
     "shot_heading": "## 镜头 {shot_id}（时长 {duration} 秒，画幅 {aspect_ratio}）",
     "section_labels": {
       "subject_action": "主体与动作",
+      "dialogue": "对白",
       "setting_time": "环境与时间",
       "camera": "景别、机位与运镜",
       "light_color": "光线与色彩",
@@ -27,6 +28,7 @@
     },
     "section_order": [
       "subject_action",
+      "dialogue",
       "setting_time",
       "camera",
       "light_color",
@@ -34,7 +36,8 @@
       "continuity",
       "negative"
     ],
-    "empty_negative": "无"
+    "empty_negative": "无",
+    "empty_dialogue": "无对白；人物自然闭口，无旁白"
   },
   "source": [
     "https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh",

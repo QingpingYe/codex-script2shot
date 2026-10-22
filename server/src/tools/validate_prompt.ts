@@ -5,7 +5,8 @@
  * 1. 结构层：复用 `validate_prompt_ir`（Task 4c-1 的冻结 schema）。结构不成立时
  *    直接返回，不再进入模型硬规则——结构错位时越界 / 禁止项的结论没有意义。
  * 2. 硬规则层：`duration` 落在规则文件区间、`aspect_ratio` 在规则文件集合内、
- *    逐镜头 `target_model` 与顶层及规则文件一致、禁止项词表不得命中提示词正文字段。
+ *    逐镜头 `target_model` 与顶层及规则文件一致、禁止项词表不得命中由 Agent 撰写、
+ *    可改写的提示词正文字段（`dialogue` 是原文保真豁免区，不参与扫描）。
  *
  * 输出固定为 `{ ok, errors[] }`，`errors[] = { shot_id, field, code, message }`。
  * 校验码是 brief 冻结的四个 —— `MISSING_FIELD` / `OUT_OF_RANGE` / `FORBIDDEN_TERM` /
@@ -65,6 +66,7 @@ const SHOT_FIELD_ORDER = [
   "shot_size",
   "subject",
   "action",
+  "dialogue",
   "setting",
   "time",
   "camera_angle",
@@ -78,11 +80,13 @@ const SHOT_FIELD_ORDER = [
 ] as const;
 
 /**
- * 禁止项扫描范围：最终会渲染进提示词正文的文本字段（画面 / 动作 / 场景 / 时间 /
- * 机位 / 运镜 / 光影 / 色调 / 风格），另加 `continuity` 的两个状态字段与
- * `negative_prompt[]` 条目。`knowledge_refs` 是知识溯源元数据，不渲染进正文，不扫描。
- * `shot_size` / `aspect_ratio` 同属冻结枚举且渲染成固定中文标签，文本里不可能夹带
- * 禁止项，因此不入扫描范围。
+ * 禁止项扫描范围：**由 Agent 撰写、可改写的提示词正文字段**（画面 / 动作 / 场景 /
+ * 时间 / 机位 / 运镜 / 光影 / 色调 / 风格），另加 `continuity` 的两个状态字段与
+ * `negative_prompt[]` 条目。`dialogue` 是原文保真豁免区：台词逐字取上游原文，不得
+ * 为通过校验改写、删词或屏蔽，因此不参与扫描（Task A3 裁决，见
+ * `docs/model-rules-notes.md` §2.3.2 / §3）。`knowledge_refs` 是知识溯源元数据，
+ * 不渲染进正文，不扫描。`shot_size` / `aspect_ratio` 同属冻结枚举且渲染成固定中文
+ * 标签，文本里不可能夹带禁止项，因此不入扫描范围。
  */
 const FORBIDDEN_SCAN_FIELDS = [
   "subject",
