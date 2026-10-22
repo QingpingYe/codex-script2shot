@@ -1070,8 +1070,10 @@ general / project 块重复归类。
   顺序一一对应：大远景=`extreme-long-shot`、远景=`long-shot`、全景=`full-shot`、
   中全景=`medium-full-shot`、中景=`medium-shot`、中近景=`medium-close-up`、
   近景=`close-shot`、特写=`close-up`、插入镜头=`insert-shot`。
-- 自由文本字段（`subject`、`action`、`setting`、`time`、`lighting`、`color`、
+- 自由文本字段（`subject`、`action`、`setting`、`lighting`、`color`、
   `style` 与 `continuity` 的状态字段）渲染时原样输出，渲染层不补写内容。
+- `time` 由渲染层按 `TIME_LABELS` 本地化为中文（未收录词原样输出），PromptIR 与
+  schema 中仍保留英文术语。
 
 PromptIR 的结构化枚举和字段标识使用英文；最终渲染的 Seedance 提示词正文
 统一使用中文。用户没有额外指定语言时不生成英文提示词。
