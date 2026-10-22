@@ -83,7 +83,8 @@
           "type": "integer"
         },
         "duration_sec": {
-          "type": "number"
+          "type": "number",
+          "description": "规划时长，整数秒；取值由 validate_stage_artifact 按目标模型规则的范围校验。"
         },
         "shot_size": {
           "type": "string",

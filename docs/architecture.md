@@ -847,6 +847,7 @@ $script2shot 只执行 shot-prompting，run_id 是 <run_id>
 输出：`shot_plan.json`，其中包含本阶段的 `knowledge_refs`。
 
 - 把镜头组建议落实为镜头清单：景别、机位、运镜、时长、转场和连贯性。
+- 单镜头时长为整数秒（`duration_sec` 非整数即 `OUT_OF_RANGE`）。
 - 检查目标模型的时长和镜头拆分边界。
 - 记录每个镜头的进入状态和离开状态。
 - 依赖通用知识 `镜头语言` 和 `Seedance 模型提示词说明`。
@@ -1142,6 +1143,7 @@ Base 权限，而不是依赖 `project_id` 过滤承担访问控制。
 | 关键词索引 ready 后读取失败 | 与索引 missing / corrupt / unreadable 一样回退缓存并写 `INDEX_UNAVAILABLE`；warning 说明并发重建或占用可能；`refresh_local_index` 写路径 fail-closed，保留索引文件 |
 | 本地索引卡片归属不一致 | 索引写入在事务开始前拒绝并保持索引原样；工具层同时给出文档与行号上下文 |
 | 阶段产物缺失或 schema 校验失败 | 停止该阶段，提示缺少的上游产物或字段，不进入下一阶段 |
+| `shot_plan.json` 的 `duration_sec` 非整数 | 返回 `OUT_OF_RANGE`，回退 `shot-planning` 修正为整数秒后重新校验；不进入下一阶段 |
 | 阶段产物被人工修改 | 重新校验通过后，从该阶段之后继续运行 |
 | `run.json` 与产物不一致 | 阶段状态以产物为准重新校验并修正；身份字段（`run_id`、`input_mode`、`project_id`、`target_model`）与产物冲突时 fail-closed：冲突产物所属阶段置 `failed`，写 `RUN_STATE_RECONCILED` warning（`details.conflicts[]` 逐条记录 `artifact` / `field` / 两侧取值），不重写 `run.json` 的身份字段 |
 | 目标模型未知 | 只支持 `seedance-2.0` 和 `seedance-2.5` |

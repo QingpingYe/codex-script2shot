@@ -236,6 +236,35 @@ describe("stage artifact validation", () => {
     }
   });
 
+  test("shot plan rejects non integer duration", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-artifact-"));
+    try {
+      const edited = read_fixture("shot_plan.sample.json") as {
+        scenes: Array<{ shots: Array<{ duration_sec: number }> }>;
+      };
+      edited.scenes[0].shots[0].duration_sec = 7.5;
+      const editedPath = path.join(tempDir, "shot_plan.json");
+      writeFileSync(editedPath, JSON.stringify(edited), "utf8");
+
+      const result = validate_stage_artifact({
+        stage: "shot_planning",
+        path: editedPath,
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors).toMatchObject([
+        {
+          path: "/scenes/0/shots/0/duration_sec",
+          code: "OUT_OF_RANGE",
+        },
+      ]);
+      expect(result.errors[0]?.message).toContain("整数");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("shot plan rejects duration outside model rules", () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-artifact-"));
     try {

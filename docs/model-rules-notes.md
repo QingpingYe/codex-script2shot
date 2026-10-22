@@ -96,6 +96,11 @@
   面向文本生成与规划，不覆盖这些任务类型。
 - `duration.default_sec = 5`（2.5）与 `shot_split.prefer_max_sec` 都只约束「规划默认口径」，
   不改变官方取值范围；校验逻辑只能使用 `min_sec` / `max_sec` 判越界。
+- `shot_plan.json` 的 `duration_sec` 采用「整数秒 + 范围」双口径：先由校验层判定
+  `Number.isInteger`，非整数直接返回 `OUT_OF_RANGE` 且不再判范围（每镜头至多一条时长
+  错误）；整数再与目标模型 `min_sec` / `max_sec` 比较。`schemas/shot_plan.schema.json`
+  保持 `type: number`，不收紧为 `integer`：冻结接口不因校验口径变化，整数约束由
+  `validate_stage_artifact` 执行。
 - `forbidden` 匹配口径由 `server/src/tools/validate_prompt.ts` 定义：大小写不敏感的
   子串匹配（中文提示词没有词边界）；扫描范围是最终渲染进提示词正文的文本，即
   `subject` / `action` / `setting` / `time` / `camera_angle` / `camera_movement` /

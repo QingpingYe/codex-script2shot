@@ -183,7 +183,7 @@ MCP 工具，不自己实现检索、排序、校验或渲染；目标模型规�
 | --- | --- | --- |
 | `shot_id` | string | 同一 run 内稳定唯一 |
 | `order` | integer | 场景内镜头顺序 |
-| `duration_sec` | number | 规划时长；最终由 `validate_stage_artifact` 按目标模型规则校验 |
+| `duration_sec` | number | 规划时长，必须为整数秒；最终由 `validate_stage_artifact` 按整数秒 + 目标模型规则的范围校验 |
 | `shot_size` | string | `大远景`、`远景`、`全景`、`中全景`、`中景`、`中近景`、`近景`、`特写`、`插入镜头` |
 | `camera_angle` | string | `平视`、`仰视`、`俯视`、`鸟瞰`、`虫视`、`荷兰角`、`过肩`、`主观视角`、`反打`、`侧面`、`四分之三侧面`、`背身`、`双人镜头` |
 | `camera_movement` | string | `固定`、`横摇`、`竖摇`、`推近`、`拉远`、`平移`、`升降`、`摇臂`、`变焦`、`跟拍`、`环绕`、`手持`、`稳定器`、`甩镜`、`滑动变焦`、`跟焦` |
@@ -240,7 +240,7 @@ MCP 工具，不自己实现检索、排序、校验或渲染；目标模型规�
 | 知识卡与上游冲突 | 以上游原文和已校验产物为准，不采用冲突内容；若冲突意味着上游缺失或错误，停止并回报 |
 | 目标模型规则文件不可读或规则加载失败 | 停止本阶段并报告；不猜测时长或拆分边界，不绕过最终校验 |
 | `validate_stage_artifact(shot_planning)` 返回 `ok: false` 且带 JSON Pointer `path` | 按 `errors[].path` 修正镜头或引用字段，整体重写后再校验；仍失败则停止报告 |
-| 校验返回 `OUT_OF_RANGE` | 按 `errors[].path` 调整对应镜头的 `duration_sec` 或拆分，重写后重新校验；不在 Skill 内另行计算边界 |
+| 校验返回 `OUT_OF_RANGE` | `duration_sec` 必须为整数秒：非整数时改为整数秒；整数时按 `errors[].path` 调整对应镜头的 `duration_sec` 或拆分，重写后重新校验；不在 Skill 内另行计算边界 |
 | 校验返回 `MODEL_RULES_UNAVAILABLE` | 停止本阶段并报告目标模型规则不可用；不把错误码写入产物 |
 | 文件级错误码 `STAGE_ARTIFACT_MISSING` / `STAGE_ARTIFACT_UNREADABLE` / `STAGE_ARTIFACT_INVALID_JSON` | 分别修正产物路径、文件可读性/权限或 JSON 写入，整体重写后再校验；错误码只用于报告，不写进产物 |
 | 上游需要新增原文没有的剧情、角色、事件、动作或对白 | 停止本阶段，回退 `script-breakdown` 重新解析或由用户补充上游；不在 `shot_plan.json` 中补写 |

@@ -109,6 +109,14 @@ function validate_shot_plan_durations(value: unknown): StageArtifactValidationEr
   const errors: StageArtifactValidationError[] = [];
   for (const [scene_index, scene] of artifact.scenes.entries()) {
     for (const [shot_index, shot] of scene.shots.entries()) {
+      if (!Number.isInteger(shot.duration_sec)) {
+        errors.push({
+          path: `/scenes/${scene_index}/shots/${shot_index}/duration_sec`,
+          message: `镜头时长 ${shot.duration_sec} 秒不是整数秒；duration_sec 必须为整数秒。`,
+          code: "OUT_OF_RANGE",
+        });
+        continue;
+      }
       if (shot.duration_sec < min_sec || shot.duration_sec > max_sec) {
         errors.push({
           path: `/scenes/${scene_index}/shots/${shot_index}/duration_sec`,
