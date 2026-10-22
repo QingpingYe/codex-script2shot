@@ -1,5 +1,5 @@
 /**
- * 知识卡与 SyncState 的 JSON Schema 加载与校验（架构 §5.2、§5.3）。
+ * 知识卡、SyncState 与 PromptIR 的 JSON Schema 加载与校验（架构 §5.2、§5.3、§11.3）。
  *
  * - schema 文件固定在插件根目录 `schemas/`。`server/src` 与构建产物
  *   `server/dist/server.mjs` 相对该目录的深度一致，开发和打包后走同一相对路径。
@@ -29,6 +29,7 @@ const SCHEMA_DIR = fileURLToPath(new URL("../../schemas/", import.meta.url));
 const ajv = new Ajv2020({ allErrors: true });
 const knowledge_card_validator = ajv.compile(load_schema("knowledge_card.schema.json"));
 const sync_state_validator = ajv.compile(load_schema("sync_state.schema.json"));
+const prompt_ir_validator = ajv.compile(load_schema("prompt_ir.schema.json"));
 
 export function validate_knowledge_card(value: unknown): ValidationResult {
   return run_validator(knowledge_card_validator, value);
@@ -36,6 +37,10 @@ export function validate_knowledge_card(value: unknown): ValidationResult {
 
 export function validate_sync_state(value: unknown): ValidationResult {
   return run_validator(sync_state_validator, value);
+}
+
+export function validate_prompt_ir(value: unknown): ValidationResult {
+  return run_validator(prompt_ir_validator, value);
 }
 
 function load_schema(file_name: string): object {

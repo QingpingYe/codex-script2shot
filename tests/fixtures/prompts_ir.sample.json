@@ -1,0 +1,41 @@
+{
+  "run_id": "run-20261020-120000",
+  "target_model": "seedance-2.5",
+  "shots": [
+    {
+      "shot_id": "ep01-sc01-sh01",
+      "target_model": "seedance-2.5",
+      "duration": 8,
+      "aspect_ratio": "16:9",
+      "subject": "角色A",
+      "action": "在雨夜穿过旧城区巷道",
+      "setting": "狭窄巷道，湿润砖墙，霓虹灯反射",
+      "time": "night",
+      "camera_angle": "low-angle",
+      "camera_movement": "handheld",
+      "lighting": "low-key neon lighting",
+      "color": "cool cyan and red accents",
+      "style": "neo-noir cinematic realism",
+      "continuity": {
+        "previous_shot": "ep01-sc01-sh00",
+        "character_state": "wet coat, holding black umbrella",
+        "environment_state": "heavy rain"
+      },
+      "negative_prompt": [],
+      "knowledge_refs": [
+        {
+          "card_id": "src:doc-token:camera_lexicon:001",
+          "scene_id": "ep01-sc01",
+          "shot_id": "ep01-sc01-sh01",
+          "query": "雨夜巷道 低角度 手持运镜",
+          "usage": "used",
+          "source_doc_token": "doc-token",
+          "source_path": "通用知识/镜头语言/景别词典",
+          "source_revision": 12,
+          "last_synced_at": "2026-10-20T12:00:00+08:00"
+        }
+      ]
+    }
+  ],
+  "generated_at": "2026-10-20T12:10:00+08:00"
+}
