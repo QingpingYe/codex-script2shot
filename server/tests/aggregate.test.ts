@@ -313,6 +313,48 @@ describe("knowledge refs and warnings aggregation", () => {
     expect(markdown).not.toContain("\r");
   });
 
+  test("warnings markdown flattens newlines and escapes block prefixes", () => {
+    const runPath = path.join(runDir, "run.json");
+    const warningsPath = path.join(runDir, "warnings.md");
+    write_json(
+      runPath,
+      run_document([
+        {
+          code: "INJECT",
+          message: "---\n# 伪造小节\n第二行",
+          refs: ["ref`a\n# b"],
+        },
+      ]),
+    );
+    write_json(scriptAnalysisPath, { missing_info: [] });
+    write_json(shotPlanPath, { missing_info: [] });
+    write_json(promptIrPath, { missing_info: [] });
+
+    const result = warnings_success(
+      write_warnings({
+        run_id: runId,
+        run_path: runPath,
+        script_analysis_path: scriptAnalysisPath,
+        shot_plan_path: shotPlanPath,
+        prompt_ir_path: promptIrPath,
+        output_path: warningsPath,
+      }),
+    );
+    expect(result).toEqual({ output_path: warningsPath, count: 1 });
+
+    // 自由文本来自 update_run_state / 阶段产物：压平换行并转义块级前缀后，
+    // 结构应与无危险字符的同类渲染完全一致（标题、小节、条目行数都不漂移）。
+    const markdown = readFileSync(warningsPath, "utf8");
+    const lines = markdown.split("\n");
+    expect(lines).toHaveLength(11);
+    expect(lines.filter((line) => line.startsWith("# "))).toEqual(["# 警告汇总"]);
+    expect(lines.filter((line) => line.startsWith("## "))).toEqual(["## 1. INJECT"]);
+    expect(lines).not.toContain("---");
+    expect(lines[7]).toBe("\\--- # 伪造小节 第二行");
+    expect(lines[9]).toBe("引用：`ref\\`a # b`");
+    expect(markdown).not.toContain("\r");
+  });
+
   test("aggregate reports missing artifacts without writing output", () => {
     copy_fixture("script_analysis.sample.json", scriptAnalysisPath);
     copy_fixture("prompts_ir.sample.json", promptIrPath);

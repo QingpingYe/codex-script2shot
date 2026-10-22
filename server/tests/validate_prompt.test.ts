@@ -4,7 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { load_model_rules } from "../src/rules.js";
-import { validate_prompt } from "../src/tools/validate_prompt.js";
+import {
+  validate_prompt,
+  validate_prompt_document,
+} from "../src/tools/validate_prompt.js";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const fixturesDir = path.join(repoRoot, "tests", "fixtures");
@@ -72,6 +75,32 @@ describe("prompt hard rule validation", () => {
     });
 
     expect(result).toEqual({ ok: true, errors: [] });
+  });
+
+  test("document-level validation matches path-level validation", () => {
+    const valid_path = path.join(fixturesDir, "prompts_ir.sample.json");
+    const document = JSON.parse(readFileSync(valid_path, "utf8")) as unknown;
+
+    // 文档级入口是 validate_prompt 的抽取：同一份 document 必须得到逐字段一致的结果，
+    // render_prompt 的单次读取才不会改变错误码 / 顺序 / 消息。
+    expect(validate_prompt_document(document)).toEqual(
+      validate_prompt({ prompt_ir_path: valid_path }),
+    );
+
+    const invalid_ir = read_prompt_ir("prompts_ir.sample.json");
+    invalid_ir.shots[0].duration = 3;
+    invalid_ir.shots[0].target_model = "seedance-2.0";
+    invalid_ir.shots[0].style = "neo-noir cinematic realism, fps=24";
+    const invalid_path = write_variant(invalid_ir);
+    expect(validate_prompt_document(invalid_ir)).toEqual(
+      validate_prompt({ prompt_ir_path: invalid_path }),
+    );
+
+    // 规则文件不可用（MODEL_RULES_UNAVAILABLE）走同一路径。
+    const missing_rules_dir = path.join(tempDir, "rules-missing");
+    expect(validate_prompt_document(document, { rules_dir: missing_rules_dir })).toEqual(
+      validate_prompt({ prompt_ir_path: valid_path }, { rules_dir: missing_rules_dir }),
+    );
   });
 
   test("validate rejects missing required field", () => {

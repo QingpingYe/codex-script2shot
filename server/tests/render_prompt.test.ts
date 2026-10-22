@@ -1,12 +1,33 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { render_prompt } from "../src/tools/render_prompt.js";
+import {
+  CAMERA_ANGLE_LABELS,
+  CAMERA_MOVEMENT_LABELS,
+  render_prompt,
+} from "../src/tools/render_prompt.js";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const promptFixturesDir = path.join(repoRoot, "tests", "fixtures", "prompts");
+
+function read_camera_enum(schema_name: string, field: string): string[] {
+  const schema = JSON.parse(
+    readFileSync(path.join(repoRoot, "schemas", schema_name), "utf8"),
+  ) as {
+    $defs?: {
+      shot?: {
+        properties?: Record<string, { enum?: unknown }>;
+      };
+    };
+  };
+  const values = schema.$defs?.shot?.properties?.[field]?.enum;
+  if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) {
+    throw new Error(`${schema_name} 的 shot.properties.${field}.enum 不是字符串数组`);
+  }
+  return values as string[];
+}
 
 describe("prompt rendering", () => {
   let tempDir: string;
@@ -92,6 +113,42 @@ describe("prompt rendering", () => {
       "- 负面约束：画面抖动、人物变形、多余手指",
       "- 负面约束：无",
     ]);
+  });
+
+  test("camera label tables match the frozen english and chinese enums", () => {
+    const prompt_ir_angles = read_camera_enum("prompt_ir.schema.json", "camera_angle");
+    const prompt_ir_movements = read_camera_enum("prompt_ir.schema.json", "camera_movement");
+    const shot_plan_angles = read_camera_enum("shot_plan.schema.json", "camera_angle");
+    const shot_plan_movements = read_camera_enum("shot_plan.schema.json", "camera_movement");
+
+    // 键 === prompt_ir 英文枚举（数量与顺序一致）；值 === shot_plan 中文枚举
+    // （沿用 4c-1 的映射裁决）。schema 增删枚举成员而表格未跟随时会在此失败。
+    expect(prompt_ir_angles).toHaveLength(13);
+    expect(prompt_ir_movements).toHaveLength(16);
+    expect(Object.keys(CAMERA_ANGLE_LABELS)).toEqual(prompt_ir_angles);
+    expect(Object.values(CAMERA_ANGLE_LABELS)).toEqual(shot_plan_angles);
+    expect(Object.keys(CAMERA_MOVEMENT_LABELS)).toEqual(prompt_ir_movements);
+    expect(Object.values(CAMERA_MOVEMENT_LABELS)).toEqual(shot_plan_movements);
+  });
+
+  test("render reports failure when output directory cannot be created", () => {
+    // 把 output_path 的父路径做成普通文件：mkdirSync 会失败，写盘未发生。
+    const blocked_parent = path.join(tempDir, "blocked-parent");
+    writeFileSync(blocked_parent, "not a directory", "utf8");
+    const output_path = path.join(blocked_parent, "prompts.md");
+    const prompt_ir_path = path.join(promptFixturesDir, "seedance-2.5.ir.json");
+
+    const result = render_prompt({ prompt_ir_path, output_path });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "RENDER_FAILED",
+        details: { prompt_ir_path, output_path },
+      },
+    });
+    expect(existsSync(output_path)).toBe(false);
+    expect(readFileSync(blocked_parent, "utf8")).toBe("not a directory");
   });
 
   test("render refuses invalid prompt ir", () => {

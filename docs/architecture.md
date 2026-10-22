@@ -734,7 +734,7 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 | `validate_prompt` | 校验 PromptIR 和 Seedance 硬规则；同类安装损坏同样返回文档级 `MODEL_RULES_UNAVAILABLE` |
 | `render_prompt` | 渲染 Seedance 2.0 或 Seedance 2.5 提示词 |
 | `aggregate_knowledge_refs` | 入参 `run_id`、三个阶段产物路径与 `output_path`；按阶段固定顺序聚合三个阶段引用写出 `knowledge_refs.json`，PromptIR 的逐镜头引用按镜头顺序展平，成功返回 `{ output_path, counts }` |
-| `write_warnings` | 入参 `run_id`、`run.json` 路径、三个阶段产物路径与 `output_path`；汇总 `run.json` 的运行级 warnings 与阶段产物 `missing_info`（按 `code` + `message` 去重）写出中文 `warnings.md`，成功返回 `{ output_path, count }`；没有 `warnings` 入参，工具 warning 必须先用 `update_run_state` 持久化 |
+| `write_warnings` | 入参 `run_id`、`run.json` 路径、三个阶段产物路径与 `output_path`；汇总 `run.json` 的运行级 warnings 与阶段产物 `missing_info`（按 `code` + `message` 去重）写出中文 `warnings.md`，成功返回 `{ output_path, count }`；没有 `warnings` 入参，工具 warning 必须先用 `update_run_state` 持久化；写入前压平 CR/LF 并转义反斜杠、反引号与行首块级前缀，warning 文本不能改写 `warnings.md` 结构 |
 
 `aggregate_knowledge_refs` 与 `write_warnings` 成功时只带 `output_path` 等字段，**不带
 `ok: true`**；只有失败才返回 `{ ok: false, error }`，调用方按 `error` / `output_path`

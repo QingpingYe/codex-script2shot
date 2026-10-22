@@ -18,6 +18,11 @@
  * 顺序确定性：镜头顺序 → 镜头内 PromptIR 字段顺序（`SHOT_FIELD_ORDER`，与
  * `schemas/prompt_ir.schema.json` 的 shot 属性顺序一致）；同一字段内先
  * MISSING_FIELD，再范围 / 模型一致，最后禁止项（按规则文件词表顺序）。结果不含时间戳。
+ *
+ * 除按路径读取的 `validate_prompt` 外，本模块导出文档级入口
+ * `validate_prompt_document`（同一校验链，不读文件）与
+ * `read_prompt_ir_document`，供 `render_prompt` 单次读取、校验与渲染共用一份
+ * document；`validate_prompt(path)` 的对外行为不变。
  */
 
 import { readFileSync } from "node:fs";
@@ -97,17 +102,32 @@ export function validate_prompt(
   input: ValidatePromptInput,
   options: LoadModelRulesOptions = {},
 ): ValidatePromptResult {
-  const loaded = read_prompt_ir(input.prompt_ir_path);
+  const loaded = read_prompt_ir_document(input.prompt_ir_path);
   if (!loaded.ok) {
     return { ok: false, errors: loaded.errors };
   }
 
-  const schema_result = validate_prompt_ir(loaded.value);
+  return validate_prompt_document(loaded.value, options);
+}
+
+/**
+ * 文档级校验入口：`validate_prompt` 中除文件读取之外的完整校验链。调用方
+ * （如 `render_prompt`）可以只读一次文件、解析一次，用同一份 document 完成
+ * 校验与后续处理，消除「校验与使用之间文件被替换」的窗口。
+ *
+ * 行为与 `validate_prompt` 完全一致：同一 schema 校验 → 同一模型规则加载 →
+ * 同一硬规则顺序，错误码 / 顺序 / 消息都不变。
+ */
+export function validate_prompt_document(
+  document_value: unknown,
+  options: LoadModelRulesOptions = {},
+): ValidatePromptResult {
+  const schema_result = validate_prompt_ir(document_value);
   if (!schema_result.ok) {
-    return { ok: false, errors: map_schema_errors(loaded.value, schema_result.errors) };
+    return { ok: false, errors: map_schema_errors(document_value, schema_result.errors) };
   }
 
-  const document = loaded.value as PromptIrDocument;
+  const document = document_value as PromptIrDocument;
   const target_model = document.target_model;
 
   const rules_lookup = resolve_model_rules(target_model, options);
@@ -374,11 +394,12 @@ function scope_prefix(shot_index: number, shot_id: string): string {
   return shot_id === "" ? `镜头 #${shot_index}：` : `镜头 ${shot_id}：`;
 }
 
-type PromptIrReadResult =
+export type PromptIrReadResult =
   | { ok: true; value: unknown }
   | { ok: false; errors: PromptValidationError[] };
 
-function read_prompt_ir(file_path: string): PromptIrReadResult {
+/** 读取并解析 PromptIR 文件；文件缺失 / 不可读 / JSON 非法都转成结构化错误。 */
+export function read_prompt_ir_document(file_path: string): PromptIrReadResult {
   let text: string;
   try {
     text = readFileSync(file_path, "utf8");

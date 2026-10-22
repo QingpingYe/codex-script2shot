@@ -699,7 +699,7 @@ function render_warnings_markdown(run_id: string, warnings: RunWarning[]): strin
   const lines = [
     "# 警告汇总",
     "",
-    `- 运行：\`${run_id}\``,
+    `- 运行：\`${sanitize_markdown_text(run_id)}\``,
     `- 警告数：${warnings.length}`,
   ];
 
@@ -707,17 +707,44 @@ function render_warnings_markdown(run_id: string, warnings: RunWarning[]): strin
     lines.push("", "无警告。");
   } else {
     for (const [index, warning] of warnings.entries()) {
-      lines.push("", `## ${index + 1}. ${warning.code}`, "", warning.message);
+      lines.push(
+        "",
+        `## ${index + 1}. ${sanitize_markdown_text(warning.code)}`,
+        "",
+        sanitize_markdown_text(warning.message),
+      );
       if (warning.refs !== undefined && warning.refs.length > 0) {
         lines.push(
           "",
-          `引用：${warning.refs.map((ref) => `\`${ref}\``).join("、")}`,
+          `引用：${warning.refs
+            .map((ref) => `\`${sanitize_markdown_text(ref)}\``)
+            .join("、")}`,
         );
       }
     }
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+/**
+ * warning 的 code / message / refs 来自 `update_run_state` 与阶段产物，只受
+ * 非空字符串约束，原样插值可以改写 warnings.md 的结构（伪造小节、列表或分割线）。
+ * 渲染前做三件事：
+ * 1. CR/LF 归一为空格：结构性换行只由渲染层控制；
+ * 2. 转义反斜杠与反引号：避免转义前缀逃逸、行内代码提前闭合；
+ * 3. 转义行首块级前缀（`#` / `>` / 列表符号 / `N.`，`---` 这类分割线由行首 `-`
+ *    覆盖）：插入行不再被解析成标题、引用、列表或分隔线。
+ * 反斜杠转义在 Markdown 中仍渲染原字符，只有硬换行被替换为空格。
+ */
+function sanitize_markdown_text(value: string): string {
+  const flattened = value.replace(/\r\n|\r|\n/g, " ");
+  const escaped = flattened.replaceAll("\\", "\\\\").replaceAll("`", "\\`");
+  const prefix = /^(\s{0,3})(#{1,6}|\d{1,9}\.|[+\-*>])/.exec(escaped);
+  if (prefix === null) {
+    return escaped;
+  }
+  return `${prefix[1]}\\${escaped.slice(prefix[1].length)}`;
 }
 
 function invalid_artifact(

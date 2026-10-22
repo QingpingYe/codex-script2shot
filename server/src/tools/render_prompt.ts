@@ -2,10 +2,12 @@
  * PromptIR → Seedance 提示词文档渲染（架构 §11.4、§9.6；Task 4c-3）。
  *
  * 固定流程：
- * 1. 先调用 `validate_prompt`；结构或硬规则不通过时返回 `HARD_RULE_VIOLATION`
- *    （`{ ok: false, error: { code, message, details } }`），且不创建目录、不写文件。
- * 2. 通过后读取 PromptIR 与目标模型规则文件，按规则文件的 `render` 模板渲染。
- *    模板只承载人可见的中文标题、节标签与节顺序；字段到节内容的组装在渲染层。
+ * 1. 只读一次 PromptIR：解析后的同一份 document 先走 `validate_prompt_document`
+ *    （`validate_prompt` 的文档级入口）；结构或硬规则不通过时返回
+ *    `HARD_RULE_VIOLATION`（`{ ok: false, error: { code, message, details } }`），
+ *    且不创建目录、不写文件。避免「校验读一次、渲染再读一次」之间文件被替换。
+ * 2. 通过后按目标模型规则文件的 `render` 模板渲染同一份 document。模板只承载
+ *    人可见的中文标题、节标签与节顺序；字段到节内容的组装在渲染层。
  * 3. 输出为 Markdown：整篇标题 → 每个镜头一节（分节标题行 + 固定顺序的七条节内容）。
  *    正文不含时间戳 / run 元数据，行尾统一 `\n`，同输入逐字节一致。
  *
@@ -22,10 +24,14 @@
  * （当前规则文件取值为「无」），保证每个镜头都是同一套节骨架。
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { load_model_rules, type ModelRules, type ModelRulesRender } from "../rules.js";
-import { validate_prompt } from "./validate_prompt.js";
+import {
+  read_prompt_ir_document,
+  validate_prompt_document,
+  type PromptValidationError,
+} from "./validate_prompt.js";
 
 export interface RenderPromptInput {
   prompt_ir_path: string;
@@ -76,7 +82,7 @@ interface RenderTemplate {
  * `schemas/prompt_ir.schema.json` 的描述、`schemas/shot_plan.schema.json` 的
  * `camera_angle` 中文枚举按顺序一一对应。
  */
-const CAMERA_ANGLE_LABELS: Record<string, string> = {
+export const CAMERA_ANGLE_LABELS: Record<string, string> = {
   "eye-level": "平视",
   "low-angle": "仰视",
   "high-angle": "俯视",
@@ -97,7 +103,7 @@ const CAMERA_ANGLE_LABELS: Record<string, string> = {
  * `schemas/prompt_ir.schema.json` 的描述、`schemas/shot_plan.schema.json` 的
  * `camera_movement` 中文枚举按顺序一一对应。
  */
-const CAMERA_MOVEMENT_LABELS: Record<string, string> = {
+export const CAMERA_MOVEMENT_LABELS: Record<string, string> = {
   static: "固定",
   pan: "横摇",
   tilt: "竖摇",
@@ -117,35 +123,29 @@ const CAMERA_MOVEMENT_LABELS: Record<string, string> = {
 };
 
 export function render_prompt(input: RenderPromptInput): RenderPromptResult {
-  const validation = validate_prompt({ prompt_ir_path: input.prompt_ir_path });
+  // 单次读取：文件缺失 / 不可读 / JSON 非法与校验失败同样返回 HARD_RULE_VIOLATION。
+  const loaded = read_prompt_ir_document(input.prompt_ir_path);
+  if (!loaded.ok) {
+    return hard_rule_violation(input.prompt_ir_path, loaded.errors);
+  }
+
+  const validation = validate_prompt_document(loaded.value);
   if (!validation.ok) {
-    return {
-      ok: false,
-      error: {
-        code: "HARD_RULE_VIOLATION",
-        message:
-          `PromptIR 未通过校验（${validation.errors.length} 条错误），` +
-          "已停止渲染且未写入任何文件。",
-        details: {
-          prompt_ir_path: input.prompt_ir_path,
-          errors: validation.errors,
-        },
-      },
-    };
+    return hard_rule_violation(input.prompt_ir_path, validation.errors);
   }
 
   try {
-    const document = read_prompt_ir(input.prompt_ir_path);
-    const loaded = load_model_rules(document.target_model);
-    if (!loaded.ok) {
-      throw new Error(loaded.error.message);
+    const document = loaded.value as PromptIrDocument;
+    const rules = load_model_rules(document.target_model);
+    if (!rules.ok) {
+      throw new Error(rules.error.message);
     }
-    const content = render_document(document, loaded.rules);
+    const content = render_document(document, rules.rules);
     write_text(input.output_path, content);
     return { ok: true, output_path: input.output_path };
   } catch (error) {
-    // 校验通过后的失败只剩渲染 / 写盘问题：模板结构不符、文件在校验后被改动、
-    // 输出目录不可写等。统一返回结构化 RENDER_FAILED，不穿透 MCP 边界。
+    // 校验通过后的失败只剩渲染 / 写盘问题：模板结构不符、输出目录不可写等。
+    // 统一返回结构化 RENDER_FAILED，不穿透 MCP 边界。
     return {
       ok: false,
       error: {
@@ -158,6 +158,23 @@ export function render_prompt(input: RenderPromptInput): RenderPromptResult {
       },
     };
   }
+}
+
+/** 文件读取 / 解析失败与规则校验失败走同一条 HARD_RULE_VIOLATION 出口。 */
+function hard_rule_violation(
+  prompt_ir_path: string,
+  errors: PromptValidationError[],
+): RenderPromptFailure {
+  return {
+    ok: false,
+    error: {
+      code: "HARD_RULE_VIOLATION",
+      message:
+        `PromptIR 未通过校验（${errors.length} 条错误），` +
+        "已停止渲染且未写入任何文件。",
+      details: { prompt_ir_path, errors },
+    },
+  };
 }
 
 interface PromptIrShot {
@@ -291,11 +308,6 @@ function label_for(labels: Record<string, string>, value: string): string {
 function render_negative(entries: string[], empty_negative: string): string {
   const terms = entries.filter((entry) => entry.trim() !== "");
   return terms.length === 0 ? empty_negative : terms.join("、");
-}
-
-function read_prompt_ir(file_path: string): PromptIrDocument {
-  const text = readFileSync(file_path, "utf8");
-  return JSON.parse(text) as PromptIrDocument;
 }
 
 function write_text(output_path: string, content: string): void {
