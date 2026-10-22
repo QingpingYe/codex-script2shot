@@ -345,7 +345,8 @@ const TOOLS = [
     description:
       "按 PromptIR schema 与目标模型硬规则校验 prompts.ir.json，返回 { ok, errors[] }；" +
       "errors[] = { shot_id, field, code, message }，code 为 MISSING_FIELD / OUT_OF_RANGE / " +
-      "FORBIDDEN_TERM / MODEL_MISMATCH；文件缺失 / 不可读 / JSON 非法返回一条 " +
+      "FORBIDDEN_TERM / MODEL_MISMATCH（硬规则校验码）或 MODEL_RULES_UNAVAILABLE" +
+      "（目标模型规则文件缺失 / 损坏，安装问题）；文件缺失 / 不可读 / JSON 非法返回一条 " +
       "field=prompt_ir_path 的错误。",
     inputSchema: {
       type: "object",

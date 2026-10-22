@@ -26,8 +26,9 @@ Phase 3 注册的三个本地检索工具：
   `STAGE_ARTIFACT_INVALID_JSON`。
 - `validate_prompt`：按 PromptIR schema 与目标模型规则文件（`rules/models/*.json`）的
   硬规则校验 `prompts.ir.json`，返回 `{ ok, errors[] }`；`errors[]` 为
-  `{ shot_id, field, code, message }`，`code` 只取 `MISSING_FIELD` / `OUT_OF_RANGE` /
-  `FORBIDDEN_TERM` / `MODEL_MISMATCH`；顺序固定为镜头顺序 → 镜头内字段顺序；
+  `{ shot_id, field, code, message }`，硬规则校验码为 `MISSING_FIELD` / `OUT_OF_RANGE` /
+  `FORBIDDEN_TERM` / `MODEL_MISMATCH`；目标模型规则文件缺失 / 损坏（安装问题）返回
+  文档级 `MODEL_RULES_UNAVAILABLE`；顺序固定为镜头顺序 → 镜头内字段顺序；
   文件缺失 / 不可读 / JSON 非法返回单条 `field: "prompt_ir_path"` 的结构化错误。
 
 阶段运行工具（`init_run` 等）由后续阶段注册。

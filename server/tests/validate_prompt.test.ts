@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -169,5 +169,40 @@ describe("prompt hard rule validation", () => {
 
     expect(invalid_json.ok).toBe(false);
     expect(error_keys(invalid_json)).toEqual(["|prompt_ir_path|MISSING_FIELD"]);
+  });
+
+  test("validate reports unavailable model rules", () => {
+    const prompt_ir_path = path.join(fixturesDir, "prompts_ir.sample.json");
+
+    // 规则目录里没有规则文件：load_model_rules 抛错，必须转成结构化结果而不是穿透。
+    const missing_rules_dir = path.join(tempDir, "rules-missing");
+    const missing = validate_prompt({ prompt_ir_path }, { rules_dir: missing_rules_dir });
+
+    expect(missing.ok).toBe(false);
+    expect(error_keys(missing)).toEqual(["|target_model|MODEL_RULES_UNAVAILABLE"]);
+    expect(missing.errors[0]?.message).toContain("模型规则不可用");
+
+    // 规则文件 JSON 非法。
+    const corrupt_rules_dir = path.join(tempDir, "rules-corrupt");
+    mkdirSync(corrupt_rules_dir, { recursive: true });
+    writeFileSync(path.join(corrupt_rules_dir, "seedance-2.5.json"), "{", "utf8");
+    const corrupt = validate_prompt({ prompt_ir_path }, { rules_dir: corrupt_rules_dir });
+
+    expect(error_keys(corrupt)).toEqual(["|target_model|MODEL_RULES_UNAVAILABLE"]);
+
+    // 规则文件结构合法但文件内的 model 与请求的 model_id 不一致。
+    const mismatched_rules_dir = path.join(tempDir, "rules-mismatched");
+    mkdirSync(mismatched_rules_dir, { recursive: true });
+    const rules = JSON.parse(
+      readFileSync(path.join(repoRoot, "rules", "models", "seedance-2.5.json"), "utf8"),
+    ) as Record<string, unknown>;
+    writeFileSync(
+      path.join(mismatched_rules_dir, "seedance-2.5.json"),
+      JSON.stringify({ ...rules, model: "seedance-9.9" }),
+      "utf8",
+    );
+    const mismatched = validate_prompt({ prompt_ir_path }, { rules_dir: mismatched_rules_dir });
+
+    expect(error_keys(mismatched)).toEqual(["|target_model|MODEL_RULES_UNAVAILABLE"]);
   });
 });

@@ -7,10 +7,13 @@
  * 2. 硬规则层：`duration` 落在规则文件区间、`aspect_ratio` 在规则文件集合内、
  *    逐镜头 `target_model` 与顶层及规则文件一致、禁止项词表不得命中提示词正文字段。
  *
- * 输出固定为 `{ ok, errors[] }`，`errors[] = { shot_id, field, code, message }`，
- * `code` 只取 `MISSING_FIELD` / `OUT_OF_RANGE` / `FORBIDDEN_TERM` / `MODEL_MISMATCH`
- * （brief 冻结集合）。文件缺失 / 不可读 / JSON 非法返回单条结构化错误，用
- * `field: "prompt_ir_path"` 标记问题出在入参文件本身，不穿透 MCP 边界。
+ * 输出固定为 `{ ok, errors[] }`，`errors[] = { shot_id, field, code, message }`。
+ * 校验码是 brief 冻结的四个 —— `MISSING_FIELD` / `OUT_OF_RANGE` / `FORBIDDEN_TERM` /
+ * `MODEL_MISMATCH`；此外还有一类安装损坏码 `MODEL_RULES_UNAVAILABLE`
+ * （规则文件缺失 / JSON 非法 / 结构不符 / 文件内 model 不一致），与
+ * `validate_stage_artifact` 同一口径，属接口附注而非硬规则校验结果。
+ * 文件缺失 / 不可读 / JSON 非法返回单条结构化错误，用 `field: "prompt_ir_path"`
+ * 标记问题出在入参文件本身；两种情况都不穿透 MCP 边界。
  *
  * 顺序确定性：镜头顺序 → 镜头内 PromptIR 字段顺序（`SHOT_FIELD_ORDER`，与
  * `schemas/prompt_ir.schema.json` 的 shot 属性顺序一致）；同一字段内先
@@ -18,14 +21,19 @@
  */
 
 import { readFileSync } from "node:fs";
-import { load_model_rules, type ModelRules } from "../rules.js";
+import {
+  load_model_rules,
+  type LoadModelRulesOptions,
+  type ModelRules,
+} from "../rules.js";
 import { validate_prompt_ir, type SchemaValidationError } from "../schemas.js";
 
 export type PromptValidationCode =
   | "MISSING_FIELD"
   | "OUT_OF_RANGE"
   | "FORBIDDEN_TERM"
-  | "MODEL_MISMATCH";
+  | "MODEL_MISMATCH"
+  | "MODEL_RULES_UNAVAILABLE";
 
 export interface PromptValidationError {
   shot_id: string;
@@ -85,7 +93,10 @@ const CONTINUITY_TEXT_FIELDS = ["character_state", "environment_state"] as const
 /** 文件级问题的占位 `field`：问题出在入参路径本身，而不是某个 PromptIR 字段。 */
 const PROMPT_IR_PATH_FIELD = "prompt_ir_path";
 
-export function validate_prompt(input: ValidatePromptInput): ValidatePromptResult {
+export function validate_prompt(
+  input: ValidatePromptInput,
+  options: LoadModelRulesOptions = {},
+): ValidatePromptResult {
   const loaded = read_prompt_ir(input.prompt_ir_path);
   if (!loaded.ok) {
     return { ok: false, errors: loaded.errors };
@@ -99,26 +110,48 @@ export function validate_prompt(input: ValidatePromptInput): ValidatePromptResul
   const document = loaded.value as PromptIrDocument;
   const target_model = document.target_model;
 
-  const rules_result = load_model_rules(target_model);
-  if (!rules_result.ok) {
-    return {
-      ok: false,
-      errors: [
-        {
-          shot_id: "",
-          field: "target_model",
-          code: "MODEL_MISMATCH",
-          message:
-            `PromptIR 的目标模型 "${target_model}" 没有对应的模型规则文件：` +
-            `${rules_result.error.message}`,
-        },
-      ],
-    };
+  const rules_lookup = resolve_model_rules(target_model, options);
+  if (!rules_lookup.ok) {
+    return { ok: false, errors: rules_lookup.errors };
   }
-  const rules = rules_result.rules;
+  const rules = rules_lookup.rules;
 
   const errors = validate_hard_rules(document, rules);
   return { ok: errors.length === 0, errors };
+}
+
+type ModelRulesLookup =
+  | { ok: true; rules: ModelRules }
+  | { ok: false; errors: PromptValidationError[] };
+
+/**
+ * 规则文件缺失 / JSON 非法 / 结构不符 / 文件内的 model 与请求不一致属插件安装损坏，
+ * `load_model_rules` 对这类情况直接抛错（rules.ts 既有契约）。这里统一转成结构化
+ * `MODEL_RULES_UNAVAILABLE`，与 `validate_stage_artifact` 的同类处理保持一致，
+ * 不让异常穿透 MCP 边界。
+ */
+function resolve_model_rules(
+  model_id: string,
+  options: LoadModelRulesOptions,
+): ModelRulesLookup {
+  try {
+    const result = load_model_rules(model_id, options);
+    if (!result.ok) {
+      return { ok: false, errors: [model_rules_unavailable_error(result.error.message)] };
+    }
+    return { ok: true, rules: result.rules };
+  } catch (error) {
+    return { ok: false, errors: [model_rules_unavailable_error(describe_error(error))] };
+  }
+}
+
+function model_rules_unavailable_error(reason: string): PromptValidationError {
+  return {
+    shot_id: "",
+    field: "target_model",
+    code: "MODEL_RULES_UNAVAILABLE",
+    message: `目标模型规则不可用：${reason}`,
+  };
 }
 
 interface PromptIrDocument {
