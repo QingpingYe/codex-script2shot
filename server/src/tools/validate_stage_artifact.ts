@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
+import { load_model_rules, type ModelRules } from "../rules.js";
 
 export const STAGE_ARTIFACT_STAGE_VALUES = ["script_breakdown", "shot_planning"] as const;
 
@@ -70,13 +71,86 @@ export function validate_stage_artifact(
     return validator;
   }
 
-  if (validator.value(value)) {
-    return { ok: true, errors: [] };
+  if (!validator.value(value)) {
+    return {
+      ok: false,
+      errors: (validator.value.errors ?? []).map(to_validation_error),
+    };
   }
-  return {
-    ok: false,
-    errors: (validator.value.errors ?? []).map(to_validation_error),
-  };
+
+  if (input.stage === "shot_planning") {
+    const duration_errors = validate_shot_plan_durations(value);
+    if (duration_errors.length > 0) {
+      return { ok: false, errors: duration_errors };
+    }
+  }
+
+  return { ok: true, errors: [] };
+}
+
+interface ShotPlanArtifact {
+  target_model: string;
+  scenes: Array<{
+    shots: Array<{
+      duration_sec: number;
+    }>;
+  }>;
+}
+
+/** schema 已保证 target_model 合法；规则文件损坏时在这里转成结构化错误，不穿透 MCP 边界。 */
+function validate_shot_plan_durations(value: unknown): StageArtifactValidationError[] {
+  const artifact = value as ShotPlanArtifact;
+  const rules = load_shot_plan_rules(artifact.target_model);
+  if (!rules.ok) {
+    return [rules.error];
+  }
+
+  const { min_sec, max_sec } = rules.value.duration;
+  const errors: StageArtifactValidationError[] = [];
+  for (const [scene_index, scene] of artifact.scenes.entries()) {
+    for (const [shot_index, shot] of scene.shots.entries()) {
+      if (shot.duration_sec < min_sec || shot.duration_sec > max_sec) {
+        errors.push({
+          path: `/scenes/${scene_index}/shots/${shot_index}/duration_sec`,
+          message:
+            `镜头时长 ${shot.duration_sec} 秒超出模型 ${artifact.target_model} ` +
+            `允许的 ${min_sec}-${max_sec} 秒范围。`,
+          code: "OUT_OF_RANGE",
+        });
+      }
+    }
+  }
+  return errors;
+}
+
+type ShotPlanRulesLookup =
+  | { ok: true; value: ModelRules }
+  | { ok: false; error: StageArtifactValidationError };
+
+function load_shot_plan_rules(model_id: string): ShotPlanRulesLookup {
+  try {
+    const result = load_model_rules(model_id);
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: {
+          path: "",
+          message: `目标模型规则不可用：${result.error.message}`,
+          code: "MODEL_RULES_UNAVAILABLE",
+        },
+      };
+    }
+    return { ok: true, value: result.rules };
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        path: "",
+        message: `目标模型规则不可用：${describe_error(error)}`,
+        code: "MODEL_RULES_UNAVAILABLE",
+      },
+    };
+  }
 }
 
 type ValidatorLookup =

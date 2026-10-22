@@ -167,4 +167,114 @@ describe("stage artifact validation", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("valid shot plan fixture passes", () => {
+    const result = validate_stage_artifact({
+      stage: "shot_planning",
+      path: fixture_path("shot_plan.sample.json"),
+    });
+
+    expect(result).toEqual({ ok: true, errors: [] });
+  });
+
+  test("shot plan rejects missing duration", () => {
+    const result = validate_stage_artifact({
+      stage: "shot_planning",
+      path: fixture_path("shot_plan.invalid.missing_duration.json"),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toMatchObject([
+      {
+        path: "/scenes/0/shots/0/duration_sec",
+        keyword: "required",
+      },
+    ]);
+  });
+
+  test("shot plan rejects unknown shot size enum", () => {
+    const result = validate_stage_artifact({
+      stage: "shot_planning",
+      path: fixture_path("shot_plan.invalid.bad_shot_size.json"),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toMatchObject([
+      {
+        path: "/scenes/0/shots/0/shot_size",
+        keyword: "enum",
+      },
+    ]);
+  });
+
+  test("shot plan rejects shot without enter exit state", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-artifact-"));
+    try {
+      const edited = read_fixture("shot_plan.sample.json") as {
+        scenes: Array<{
+          shots: Array<{ continuity: Record<string, unknown> }>;
+        }>;
+      };
+      delete edited.scenes[0].shots[0].continuity.exit_state;
+      const editedPath = path.join(tempDir, "shot_plan.json");
+      writeFileSync(editedPath, JSON.stringify(edited), "utf8");
+
+      const result = validate_stage_artifact({
+        stage: "shot_planning",
+        path: editedPath,
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.errors).toMatchObject([
+        {
+          path: "/scenes/0/shots/0/continuity/exit_state",
+          keyword: "required",
+        },
+      ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("shot plan rejects duration outside model rules", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-artifact-"));
+    try {
+      const edited = read_fixture("shot_plan.sample.json") as {
+        scenes: Array<{ shots: Array<{ duration_sec: number }> }>;
+      };
+      const editedPath = path.join(tempDir, "shot_plan.json");
+
+      edited.scenes[0].shots[0].duration_sec = 3;
+      writeFileSync(editedPath, JSON.stringify(edited), "utf8");
+      const below = validate_stage_artifact({
+        stage: "shot_planning",
+        path: editedPath,
+      });
+
+      edited.scenes[0].shots[0].duration_sec = 31;
+      writeFileSync(editedPath, JSON.stringify(edited), "utf8");
+      const above = validate_stage_artifact({
+        stage: "shot_planning",
+        path: editedPath,
+      });
+
+      expect(below.ok).toBe(false);
+      expect(below.errors).toMatchObject([
+        {
+          path: "/scenes/0/shots/0/duration_sec",
+          code: "OUT_OF_RANGE",
+        },
+      ]);
+      expect(below.errors[0]?.message).toContain("seedance-2.5");
+      expect(above.ok).toBe(false);
+      expect(above.errors).toMatchObject([
+        {
+          path: "/scenes/0/shots/0/duration_sec",
+          code: "OUT_OF_RANGE",
+        },
+      ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -1,0 +1,41 @@
+{
+  "run_id": "run-20261020-120000",
+  "project_id": "demo",
+  "target_model": "seedance-2.5",
+  "scenes": [
+    {
+      "scene_id": "ep01-sc01",
+      "shots": [
+        {
+          "shot_id": "ep01-sc01-sh01",
+          "order": 1,
+          "duration_sec": 8,
+          "shot_size": "超大全景",
+          "camera_angle": "平视",
+          "camera_movement": "推近",
+          "transition": "切",
+          "continuity": {
+            "enter_state": "角色A站在旧公寓门口，手停在门把上",
+            "exit_state": "角色A推门进入旧公寓"
+          },
+          "source_shot_group_ids": ["ep01-sc01-g01"],
+          "notes": "建立角色与空间关系"
+        }
+      ]
+    }
+  ],
+  "knowledge_refs": [
+    {
+      "card_id": "src:doc-token:camera_lexicon:001",
+      "scene_id": "ep01-sc01",
+      "shot_id": "ep01-sc01-sh01",
+      "query": "旧公寓 夜 角色A 镜头语言",
+      "usage": "used",
+      "source_doc_token": "doc-token",
+      "source_path": "通用知识/镜头语言/景别词典",
+      "source_revision": 12,
+      "last_synced_at": "2026-10-20T12:00:00+08:00"
+    }
+  ],
+  "generated_at": "2026-10-20T12:05:00+08:00"
+}
