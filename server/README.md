@@ -1,9 +1,10 @@
 # script2shot 本地 MCP Server
 
-本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册 13 个工具：
+本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册 14 个工具：
 `health`、`write_config`、`init_knowledge_b`、`scan_knowledge_a`、`read_sync_state`、
 `build_sync_plan`、`fetch_knowledge_a_doc`、`replace_doc_cards`、`update_doc_sync_state`、
-`delete_doc_cards`、`refresh_local_index`、`search_knowledge`、`load_knowledge_pack`。
+`delete_doc_cards`、`refresh_local_index`、`search_knowledge`、`load_knowledge_pack`、
+`validate_stage_artifact`。
 
 文档中的「原始库 / AI 库」分别指飞书知识库（原始资料）和飞书知识库（AI）；
 工具名与配置键中的 `a/b` 标识保留兼容。
@@ -16,6 +17,13 @@ Phase 3 注册的三个本地检索工具：
   过滤后做三级关键词检索；索引不可用时按 priority 降序回退到本地缓存。
 - `load_knowledge_pack`：组装 general -> project -> seedance 三段知识包；
   Seedance 软知识按 target model 过滤；索引不可用时用本地缓存降级组装。
+
+阶段产物校验工具：
+
+- `validate_stage_artifact`：按 `stage` 选择 schema 校验阶段产物 JSON，返回
+  `{ ok, errors[] }`；schema 错误的 `path` 使用 JSON Pointer，文件缺失 / 不可读 /
+  JSON 非法分别返回 `STAGE_ARTIFACT_MISSING` / `STAGE_ARTIFACT_UNREADABLE` /
+  `STAGE_ARTIFACT_INVALID_JSON`。
 
 阶段运行工具（`init_run` 等）由后续阶段注册。
 
@@ -145,6 +153,6 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
 
 ## 已知限制
 
-- 已注册上列 13 个工具（健康检查、配置写入、AI 库初始化与知识库同步、
+- 已注册上列 14 个工具（健康检查、配置写入、AI 库初始化与知识库同步、
   本地检索）；阶段运行工具由后续阶段注册。
 - 启动依赖已构建的 `server/dist/server.mjs`，源码目录不直接运行。

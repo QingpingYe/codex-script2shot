@@ -37,6 +37,12 @@ import {
 } from "./tools/replace_doc_cards.js";
 import { scan_knowledge_a, type ScannedNode } from "./tools/scan_knowledge_a.js";
 import { update_doc_sync_state, type UpdateDocSyncStateInput } from "./tools/update_doc_sync_state.js";
+import {
+  STAGE_ARTIFACT_STAGE_VALUES,
+  validate_stage_artifact,
+  type StageArtifactStage,
+  type ValidateStageArtifactInput,
+} from "./tools/validate_stage_artifact.js";
 
 const server = new Server(
   { name: "script2shot", version: "0.1.0" },
@@ -311,6 +317,28 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "validate_stage_artifact",
+    description:
+      "按阶段 schema 校验阶段产物 JSON，返回 { ok, errors[] }；errors[].path 使用 JSON Pointer，" +
+      "文件缺失 / 不可读 / JSON 非法分别返回 STAGE_ARTIFACT_MISSING / UNREADABLE / INVALID_JSON。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        stage: {
+          type: "string",
+          enum: [...STAGE_ARTIFACT_STAGE_VALUES],
+          description: "阶段 key：script_breakdown 或 shot_planning。",
+        },
+        path: {
+          type: "string",
+          description: "阶段产物 JSON 文件路径。",
+        },
+      },
+      required: ["stage", "path"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -373,6 +401,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (name === "load_knowledge_pack") {
     const parsed = parse_load_knowledge_pack_arguments(request.params.arguments);
     return parsed.ok ? tool_json(load_knowledge_pack(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "validate_stage_artifact") {
+    const parsed = parse_validate_stage_artifact_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(validate_stage_artifact(parsed.value)) : tool_json(parsed);
   }
   throw new McpError(ErrorCode.MethodNotFound, `未知工具：${name}`);
 });
@@ -697,6 +729,35 @@ function parse_load_knowledge_pack_arguments(raw: unknown): Parsed<LoadKnowledge
     return unknown_key;
   }
   return { ok: true, value: parsed.value as LoadKnowledgePackInput };
+}
+
+function parse_validate_stage_artifact_arguments(
+  raw: unknown,
+): Parsed<ValidateStageArtifactInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, ["stage", "path"]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  const stage = parsed.value.stage;
+  if (typeof stage !== "string" || !is_stage_artifact_stage(stage)) {
+    return invalid_arguments(
+      `入参字段 "stage" 期望以下之一：${STAGE_ARTIFACT_STAGE_VALUES.join("、")}。`,
+      { field: "stage" },
+    );
+  }
+  const artifact_path = parsed.value.path;
+  if (typeof artifact_path !== "string" || artifact_path.trim() === "") {
+    return invalid_arguments('入参字段 "path" 期望非空字符串。', { field: "path" });
+  }
+  return { ok: true, value: { stage, path: artifact_path } };
+}
+
+function is_stage_artifact_stage(value: string): value is StageArtifactStage {
+  return (STAGE_ARTIFACT_STAGE_VALUES as readonly string[]).includes(value);
 }
 
 function is_record(value: unknown): value is Record<string, unknown> {

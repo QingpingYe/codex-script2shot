@@ -210,6 +210,62 @@ describe("mcp handshake", () => {
     }
   }, 30000);
 
+  test("tools/call validates stage artifacts and rejects malformed arguments", async () => {
+    const { client, errors } = await connect_server(server_env());
+
+    try {
+      const artifact_path = path.join(repoRoot, "tests", "fixtures", "script_analysis.sample.json");
+      const valid = parse_tool_json(
+        await client.callTool({
+          name: "validate_stage_artifact",
+          arguments: { stage: "script_breakdown", path: artifact_path },
+        }),
+      );
+      expect(valid).toEqual({ ok: true, errors: [] });
+
+      const unknownKey = parse_tool_json(
+        await client.callTool({
+          name: "validate_stage_artifact",
+          arguments: {
+            stage: "script_breakdown",
+            path: artifact_path,
+            unexpected: true,
+          },
+        }),
+      );
+      expect(unknownKey).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "unexpected" } },
+      });
+
+      const unknownStage = parse_tool_json(
+        await client.callTool({
+          name: "validate_stage_artifact",
+          arguments: { stage: "unknown_stage", path: artifact_path },
+        }),
+      );
+      expect(unknownStage).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "stage" } },
+      });
+
+      const emptyPath = parse_tool_json(
+        await client.callTool({
+          name: "validate_stage_artifact",
+          arguments: { stage: "script_breakdown", path: "   " },
+        }),
+      );
+      expect(emptyPath).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "path" } },
+      });
+
+      expect(errors.join(""), "server stderr should stay empty").toBe("");
+    } finally {
+      await client.close();
+    }
+  }, 30000);
+
   test("tools/call runs health with the configured fake CLI", async () => {
     const tempRoot = mkdtempSync(path.join(os.tmpdir(), "script2shot-tools-health-"));
     const home = path.join(tempRoot, "home");

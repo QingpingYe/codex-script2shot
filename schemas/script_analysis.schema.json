@@ -1,0 +1,340 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ScriptAnalysis",
+  "description": "script-breakdown 阶段产物 script_analysis.json 的冻结结构（docs/architecture.md §11.2、references/stage-conventions.md §1、§4）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "input_mode",
+    "project_id",
+    "target_model",
+    "episodes",
+    "continuity",
+    "missing_info",
+    "knowledge_refs",
+    "generated_at"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^run-\\d{8}-\\d{6}$"
+    },
+    "input_mode": {
+      "type": "string",
+      "enum": ["script_segment", "single_episode", "multiple_episodes"]
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "target_model": {
+      "type": "string",
+      "enum": ["seedance-2.0", "seedance-2.5"]
+    },
+    "episodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["episode_id", "title", "scenes"],
+        "properties": {
+          "episode_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "scenes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/scene"
+            }
+          }
+        }
+      }
+    },
+    "continuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["characters", "scenes", "style"],
+      "properties": {
+        "characters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/continuity_entry"
+          }
+        },
+        "scenes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/continuity_entry"
+          }
+        },
+        "style": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/continuity_entry"
+          }
+        }
+      }
+    },
+    "missing_info": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "scene_id"],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "scene_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/knowledge_ref"
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    }
+  },
+  "$defs": {
+    "string_list": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "beat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["beat_id", "description", "action_unit_ids"],
+      "properties": {
+        "beat_id": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "action_unit_ids": {
+          "$ref": "#/$defs/string_list"
+        }
+      }
+    },
+    "action_unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "characters", "location"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "characters": {
+          "$ref": "#/$defs/string_list"
+        },
+        "location": {
+          "type": "string"
+        }
+      }
+    },
+    "emotion_unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "characters", "tone"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "characters": {
+          "$ref": "#/$defs/string_list"
+        },
+        "tone": {
+          "type": "string"
+        }
+      }
+    },
+    "dialogue_unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "speaker", "text", "visual_action"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "speaker": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "visual_action": {
+          "type": "string"
+        }
+      }
+    },
+    "shot_group_suggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "purpose", "characters", "coverage_hint"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "characters": {
+          "$ref": "#/$defs/string_list"
+        },
+        "coverage_hint": {
+          "type": "string"
+        }
+      }
+    },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scene_id",
+        "heading",
+        "summary",
+        "location",
+        "time_of_day",
+        "characters",
+        "beats",
+        "action_units",
+        "emotion_units",
+        "dialogue_units",
+        "shot_group_suggestions"
+      ],
+      "properties": {
+        "scene_id": {
+          "type": "string"
+        },
+        "heading": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "time_of_day": {
+          "type": "string"
+        },
+        "characters": {
+          "$ref": "#/$defs/string_list"
+        },
+        "beats": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/beat"
+          }
+        },
+        "action_units": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/action_unit"
+          }
+        },
+        "emotion_units": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/emotion_unit"
+          }
+        },
+        "dialogue_units": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dialogue_unit"
+          }
+        },
+        "shot_group_suggestions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shot_group_suggestion"
+          }
+        }
+      }
+    },
+    "continuity_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "card_ids", "summary"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "card_ids": {
+          "$ref": "#/$defs/string_list"
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "knowledge_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "card_id",
+        "scene_id",
+        "shot_id",
+        "query",
+        "usage",
+        "source_doc_token",
+        "source_path",
+        "source_revision",
+        "last_synced_at"
+      ],
+      "properties": {
+        "card_id": {
+          "type": "string"
+        },
+        "scene_id": {
+          "type": "string"
+        },
+        "shot_id": {
+          "type": "null"
+        },
+        "query": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "string",
+          "enum": ["used", "dropped_by_budget"]
+        },
+        "source_doc_token": {
+          "type": "string"
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "source_revision": {
+          "type": "integer"
+        },
+        "last_synced_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "run_id": "run-20261020-120000",
+  "input_mode": "all_episodes",
+  "project_id": "demo",
+  "target_model": "seedance-2.5",
+  "episodes": [
+    {
+      "episode_id": "ep01",
+      "title": "第一集",
+      "scenes": []
+    }
+  ],
+  "continuity": {
+    "characters": [],
+    "scenes": [],
+    "style": []
+  },
+  "missing_info": [],
+  "knowledge_refs": [],
+  "generated_at": "2026-10-20T12:00:00+08:00"
+}

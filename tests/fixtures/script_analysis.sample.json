@@ -1,0 +1,105 @@
+{
+  "run_id": "run-20261020-120000",
+  "input_mode": "single_episode",
+  "project_id": "demo",
+  "target_model": "seedance-2.5",
+  "episodes": [
+    {
+      "episode_id": "ep01",
+      "title": "第一集",
+      "scenes": [
+        {
+          "scene_id": "ep01-sc01",
+          "heading": "内景 旧公寓 夜",
+          "summary": "一句话场景目标",
+          "location": "旧公寓",
+          "time_of_day": "night",
+          "characters": ["角色A"],
+          "beats": [
+            {
+              "beat_id": "ep01-sc01-b01",
+              "description": "节拍描述",
+              "action_unit_ids": ["ep01-sc01-a01"]
+            }
+          ],
+          "action_units": [
+            {
+              "id": "ep01-sc01-a01",
+              "description": "动作单元",
+              "characters": ["角色A"],
+              "location": "旧公寓"
+            }
+          ],
+          "emotion_units": [
+            {
+              "id": "ep01-sc01-e01",
+              "description": "情绪变化",
+              "characters": ["角色A"],
+              "tone": "紧张"
+            }
+          ],
+          "dialogue_units": [
+            {
+              "id": "ep01-sc01-d01",
+              "speaker": "角色A",
+              "text": "原文对白",
+              "visual_action": "对白转成的可见动作"
+            }
+          ],
+          "shot_group_suggestions": [
+            {
+              "id": "ep01-sc01-g01",
+              "purpose": "建立空间",
+              "characters": ["角色A"],
+              "coverage_hint": "全景 + 过肩"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "continuity": {
+    "characters": [
+      {
+        "name": "角色A",
+        "card_ids": ["src:doc-token:character_bible:001"],
+        "summary": "跨集稳定设定的摘要"
+      }
+    ],
+    "scenes": [
+      {
+        "name": "旧公寓",
+        "card_ids": ["src:doc-token:scene_description:001"],
+        "summary": "旧公寓的稳定空间设定"
+      }
+    ],
+    "style": [
+      {
+        "name": "雨夜风格",
+        "card_ids": ["src:doc-token:visual_style:001"],
+        "summary": "冷色低照度、湿润材质"
+      }
+    ]
+  },
+  "missing_info": [
+    {
+      "code": "SCENE_TIME_UNKNOWN",
+      "message": "场景时间未在原文交代",
+      "scene_id": "ep01-sc01"
+    }
+  ],
+  "knowledge_refs": [
+    {
+      "card_id": "src:doc-token:character_bible:001",
+      "scene_id": "ep01-sc01",
+      "shot_id": null,
+      "query": "角色A 外观 服装",
+      "usage": "used",
+      "source_doc_token": "doc-token",
+      "source_path": "项目知识/demo/角色圣经/角色A",
+      "source_revision": 12,
+      "last_synced_at": "2026-10-20T12:00:00+08:00"
+    }
+  ],
+  "generated_at": "2026-10-20T12:00:00+08:00"
+}
