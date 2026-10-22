@@ -182,18 +182,11 @@ async function list_record_ids_for_token(
     return listed;
   }
   const record_ids: string[] = [];
-  for (const [row, record] of listed.records.entries()) {
+  for (const record of listed.records) {
     if (record.fields.source_doc_token !== source_doc_token) {
       continue;
     }
-    const record_id = record.record_id;
-    if (!has_text(record_id)) {
-      return failure("INTERNAL", `AI 库第 ${row + 1} 行缺少 Base record_id，无法删除。`, {
-        row,
-        table_id,
-      });
-    }
-    record_ids.push(record_id.trim());
+    record_ids.push(record.record_id.trim());
   }
   return { record_ids };
 }

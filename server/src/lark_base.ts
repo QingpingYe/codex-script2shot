@@ -91,6 +91,11 @@ export interface BaseRecordUpdate {
   fields: BaseFieldMap;
 }
 
+/** `+record-list` 的返回记录：适配层已校验 record_id 非空，因此比 BaseRecord 更窄。 */
+export interface ListedRecord extends BaseRecord {
+  record_id: string;
+}
+
 export interface ListRecordsOptions {
   /** `--filter-json` 的过滤对象（shape 见 lark-cli 帮助），原样序列化传入。 */
   filter?: Record<string, unknown>;
@@ -108,7 +113,7 @@ export interface DeleteRecordsOptions {
 export type ListTablesResult = { ok: true; tables: LarkBaseTable[] } | LarkBaseFailure;
 export type CreateTableResult = { ok: true; table_id: string } | LarkBaseFailure;
 export type ListFieldsResult = { ok: true; fields: LarkBaseField[] } | LarkBaseFailure;
-export type ListRecordsResult = { ok: true; records: BaseRecord[] } | LarkBaseFailure;
+export type ListRecordsResult = { ok: true; records: ListedRecord[] } | LarkBaseFailure;
 export type BatchCreateRecordsResult = { ok: true; record_ids: string[] } | LarkBaseFailure;
 export type BatchUpdateRecordsResult = { ok: true } | LarkBaseFailure;
 export type DeleteRecordsResult =
@@ -122,7 +127,7 @@ interface CommandContext {
 }
 
 interface RecordPage {
-  records: BaseRecord[];
+  records: ListedRecord[];
   has_more: boolean;
   next_offset?: number;
 }
@@ -271,7 +276,7 @@ export async function list_records(
     return internal_error("filter 无法序列化成 JSON。", { field: "filter" });
   }
 
-  const records: BaseRecord[] = [];
+  const records: ListedRecord[] = [];
   let offset = 0;
   for (;;) {
     const args = ["base", "+record-list", "--base-token", base.base_token, "--table-id", table_id];
@@ -573,7 +578,7 @@ function parse_record_page(payload: unknown, table_id: string): RecordPage | Lar
     });
   }
 
-  const records: BaseRecord[] = [];
+  const records: ListedRecord[] = [];
   for (const [row_index, row] of rows.entries()) {
     if (!Array.isArray(row) || row.length > names.length) {
       return internal_error("base +record-list 的数据行与字段数不一致。", {

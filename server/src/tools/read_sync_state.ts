@@ -13,8 +13,8 @@ import { resolve_lark_cli, type LarkCliErrorCode } from "../lark_cli.js";
  * - 只读：`base +record-list --format json`（经 `lark_base.list_records` 自动翻页）。
  * - 每行按 Task 1 的 Base 映射还原成逻辑 `SyncState`，并带上 Base `record_id`
  *   （后续更新/删除 SyncState 需要记录 ID）。
- * - `BaseRecord.record_id` 在类型上仍是可选，这里在消费处显式守卫：缺失或空字符串
- *   视为 `SYNC_STATE_INVALID`，不把 undefined 传给下游。
+ * - `list_records` 的 `ListedRecord` 已保证非空 `record_id`，这里直接收紧到
+ *   `SyncStateRecord`。
  * - 返回值一律是结果对象，不抛异常。
  */
 
@@ -108,15 +108,6 @@ export async function read_sync_state(
 
   const records: SyncStateRecord[] = [];
   for (const [row, record] of listed.records.entries()) {
-    const record_id = record.record_id;
-    // 守卫（承接 Task 2 Minor #2）：list_records 实际总会填 record_id，但类型仍是可选。
-    if (typeof record_id !== "string" || record_id.trim() === "") {
-      return failure(
-        "SYNC_STATE_INVALID",
-        `SyncState 第 ${row + 1} 行缺少 Base record_id，无法用于后续更新或删除。`,
-        { row, table_id },
-      );
-    }
     if (!("obj_edit_time" in record.fields)) {
       return failure(
         "SYNC_STATE_INVALID",
@@ -136,7 +127,7 @@ export async function read_sync_state(
         { row, table_id },
       );
     }
-    records.push({ ...state, record_id: record_id.trim() });
+    records.push({ ...state, record_id: record.record_id.trim() });
   }
 
   return { records };

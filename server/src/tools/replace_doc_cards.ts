@@ -2,7 +2,6 @@ import path from "node:path";
 import {
   to_base_fields,
   type BaseFieldMap,
-  type BaseRecord,
   type KnowledgeCard,
   type KnowledgeScope,
 } from "../base_mapping.js";
@@ -14,6 +13,7 @@ import {
   list_records,
   type LarkBaseContext,
   type LarkBaseFailure,
+  type ListedRecord,
 } from "../lark_base.js";
 import { resolve_lark_cli, type LarkCliErrorCode } from "../lark_cli.js";
 import { validate_knowledge_card } from "../schemas.js";
@@ -180,7 +180,6 @@ export async function replace_doc_cards(
   const collected = collect_existing_record_ids(
     listed.records,
     source_doc_token,
-    table_id,
     warnings,
   );
   if ("error" in collected) {
@@ -440,29 +439,21 @@ function parse_metadata_patch_mode(
 }
 
 function collect_existing_record_ids(
-  records: readonly BaseRecord[],
+  records: readonly ListedRecord[],
   source_doc_token: string,
-  table_id: string,
   warnings: ReplaceDocCardsWarning[],
 ): { record_ids: string[] } | ReplaceDocCardsFailure {
   const record_ids: string[] = [];
   const unattributed: string[] = [];
-  for (const [row, record] of records.entries()) {
+  for (const record of records) {
     const record_id = record.record_id;
     const token_value = record.fields.source_doc_token;
     if (token_value === source_doc_token) {
-      if (typeof record_id !== "string" || record_id.trim() === "") {
-        return failure(
-          "INTERNAL",
-          `AI 库第 ${row + 1} 行缺少 Base record_id，无法安全执行替换。`,
-          { row, table_id },
-        );
-      }
       record_ids.push(record_id.trim());
       continue;
     }
     if (!has_text(token_value)) {
-      unattributed.push(typeof record_id === "string" ? record_id : `(第 ${row + 1} 行)`);
+      unattributed.push(record_id);
     }
   }
   if (unattributed.length > 0) {

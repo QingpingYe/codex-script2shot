@@ -1,11 +1,12 @@
 import path from "node:path";
-import { to_base_fields, type BaseRecord, type SyncState } from "../base_mapping.js";
+import { to_base_fields, type SyncState } from "../base_mapping.js";
 import { CONFIG_FILE_NAME, load_config, resolve_home } from "../config.js";
 import {
   batch_create_records,
   batch_update_records,
   list_records,
   type LarkBaseContext,
+  type ListedRecord,
 } from "../lark_base.js";
 import { resolve_lark_cli, type LarkCliErrorCode } from "../lark_cli.js";
 import { validate_sync_state } from "../schemas.js";
@@ -141,11 +142,6 @@ export async function update_doc_sync_state(
   const fields = to_base_fields(state);
   if (matched.length === 1) {
     const existing_record_id = matched[0].record_id;
-    if (!has_text(existing_record_id)) {
-      return failure("INTERNAL", "命中的 SyncState 记录缺少 Base record_id，无法更新。", {
-        table_id,
-      });
-    }
     const updated = await batch_update_records(base, table_id, [
       { record_id: existing_record_id, fields },
     ]);
@@ -167,9 +163,9 @@ export async function update_doc_sync_state(
 }
 
 function find_records_by_token(
-  records: readonly BaseRecord[],
+  records: readonly ListedRecord[],
   source_doc_token: string,
-): BaseRecord[] {
+): ListedRecord[] {
   return records.filter((record) => record.fields.source_doc_token === source_doc_token);
 }
 
