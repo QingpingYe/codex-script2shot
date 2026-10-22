@@ -68,8 +68,15 @@
           "enum": ["pending", "running", "done", "failed"]
         },
         "artifact": {
-          "type": ["string", "null"],
-          "minLength": 1
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "updated_at": {
           "type": ["string", "null"],

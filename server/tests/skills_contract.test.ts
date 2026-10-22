@@ -148,6 +148,47 @@ describe("knowledge-sync mcp tools contract", () => {
     }
   }, 30000);
 
+  test("update_run_state advertises warning details and the non-empty artifact constraint", async () => {
+    const { client, errors } = await connect_server();
+    try {
+      const result = await client.listTools();
+      const tool = result.tools.find((entry) => entry.name === "update_run_state");
+      expect(tool, "tools/list 应包含 update_run_state").toBeDefined();
+
+      // R22：run.json 的 warning.details（如 RUN_STATE_RECONCILED.conflicts[]）已受
+      // run.schema 支持，广告 schema 必须同步，否则调用方按广告 schema 组包会被误导。
+      const schema = tool?.inputSchema as {
+        properties?: Record<string, unknown>;
+      };
+      const warnings = schema.properties?.warnings as
+        | {
+            items?: {
+              additionalProperties?: unknown;
+              properties?: Record<string, unknown>;
+              required?: string[];
+            };
+          }
+        | undefined;
+      expect(
+        warnings?.items?.additionalProperties,
+        "warnings 条目应继续拒绝未知字段",
+      ).toBe(false);
+      expect(warnings?.items?.properties?.details).toMatchObject({ type: "object" });
+      expect(warnings?.items?.required ?? []).not.toContain("details");
+
+      // 空字符串 artifact 由工具层拒绝；广告 schema 与 run.schema 一样用 anyOf 表达。
+      const artifact = schema.properties?.artifact as Record<string, unknown> | undefined;
+      expect(artifact?.anyOf).toEqual([
+        { type: "string", minLength: 1 },
+        { type: "null" },
+      ]);
+
+      expect(errors.join(""), "server stderr should stay empty").toBe("");
+    } finally {
+      await client.close();
+    }
+  }, 30000);
+
   test("build_sync_plan round-trips through stdio and rejects malformed arguments", async () => {
     const { client, errors } = await connect_server();
     try {

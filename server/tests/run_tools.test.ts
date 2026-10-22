@@ -162,6 +162,33 @@ describe("run directory tools", () => {
     expect(existsSync(path.join(workspaceRoot, ".script2shot", "outputs"))).toBe(false);
   });
 
+  test("run schema rejects an empty artifact string", () => {
+    const created = successInit(
+      init_run({
+        workspace_root: workspaceRoot,
+        input_mode: "single_episode",
+        project_id: "demo",
+        target_model: "seedance-2.5",
+      }),
+    );
+
+    const document = readJson(created.run_json_path);
+    const schema = readJson(runSchemaPath);
+    const validate = new Ajv2020({ allErrors: true }).compile(schema);
+    expect(validate(document), JSON.stringify(validate.errors)).toBe(true);
+
+    // 工具层已拒绝空字符串 artifact；schema 层也必须 fail-closed，
+    // 否则手工编辑 / 外部写入的 run.json 可以带空产物名通过校验。
+    const stages = document.stages as Record<string, Record<string, unknown>>;
+    stages.script_breakdown.artifact = "";
+    expect(validate(document)).toBe(false);
+    expect(
+      (validate.errors ?? []).some(
+        (error) => error.instancePath === "/stages/script_breakdown/artifact",
+      ),
+    ).toBe(true);
+  });
+
   test("init run records optional aspect ratio", () => {
     const created = successInit(
       init_run({

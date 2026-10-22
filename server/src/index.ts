@@ -430,8 +430,7 @@ const TOOLS = [
           description: "阶段状态。",
         },
         artifact: {
-          type: ["string", "null"],
-          minLength: 1,
+          anyOf: [{ type: "string", minLength: 1 }, { type: "null" }],
           description: "可选阶段产物文件名；null 表示清空。",
         },
         warnings: {
@@ -443,6 +442,10 @@ const TOOLS = [
               code: { type: "string", minLength: 1 },
               message: { type: "string", minLength: 1 },
               refs: { type: "array", items: { type: "string" } },
+              details: {
+                type: "object",
+                description: "结构化明细，例如 RUN_STATE_RECONCILED 的 conflicts[]。",
+              },
             },
             required: ["code", "message"],
             additionalProperties: false,
