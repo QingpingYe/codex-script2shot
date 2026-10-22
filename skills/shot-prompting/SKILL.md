@@ -91,8 +91,9 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
    - `duration` 取上游 `duration_sec` 的整数秒；`shot_size` 取自上游 `shot_size`
      枚举，`camera_angle`、`camera_movement` 同样取自上游对应枚举，三者都按「输出」
      的冻结映射表把中文枚举译成英文枚举；`subject`、`action`、`setting`、`time`
-     取材于 `script_analysis.json` 的对应场景与原文单元；`lighting`、`color`、
-     `style` 取材于上游信息与检索卡片。
+     取材于 `script_analysis.json` 的对应场景与原文单元，`action` 的组织与长镜头
+     阶段化按「事件脚本化」小节写；`lighting`、`color`、`style` 取材于上游信息与
+     检索卡片。
    - `emotion` 取材上游 `emotion_units.tone` 与 `emotion_units.description`，并可引用
      同镜头已有 `action_units` 的动作线索（例如视线、停顿、手部动作）；只有这些来源
      已支持可观察表现时才填写，否则写空字符串。禁止由抽象情绪反推未发生的身体动作。
@@ -139,6 +140,45 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
    - 返回 `RENDER_FAILED` ⇒ 保留 `prompts.ir.json`，报告工具错误并停止。
    - 本阶段不更新 `run.json` 的阶段状态；阶段状态由入口在产物通过校验后写入
      （stage-conventions §2）。
+
+## 事件脚本化
+
+每个镜头的 `action` 是一段连续画面，不是动作清单的堆叠。按时间顺序把这段画面写成
+可拍摄的过程，不跳步、不倒序；只重组上游 `action_units` 与同镜头
+`emotion_units` / `dialogue_units` 已有线索，不写抽象概括或心理活动。
+
+**单镜头组织：开始时 → 随后 → 结束时**
+
+- 开始时：镜头进入时主体处于什么状态、在做什么。
+- 随后：画面里可观察的变化过程。
+- 结束时：镜头结束瞬间主体与画面的可观察状态。
+
+**长镜头阶段化**
+
+先读目标模型规则文件的 `prompt_guidance.long_shot_staging_threshold_sec`；镜头时长
+超过该阈值的，`action` 必须按阶段组织：
+
+- 每阶段只写一个主要状态变化，阶段划分跟随上游动作单元的先后顺序，不套固定模板。
+- 每阶段写明本阶段结束时的可观察状态，作为下一阶段的衔接依据；阶段之间是同一连续
+  镜头的先后关系，不拆成多个镜头。
+- 阶段化不新增内容：不为填满时长新增动作、台词或事件。这条边界由模型规则的
+  `shot_split.multi_action_rule` 在镜头规划阶段管，本阶段只负责写法。
+
+**数字时间段**
+
+带数字的时间段（例如「开始三秒」）只在原文或用户已给出时使用；没有给出时用「开始时 /
+随后 / 结束时」这类顺序词组织，不自己切分时间轴、不写时间戳。
+
+**阶段化正例**（`action` 字段取值，不含具体秒数阈值）
+
+```text
+阶段一：开始时，她站在灶台前搅动锅里的汤；结束时，汤面冒出第一串气泡。
+阶段二：随后，她伸手去够高处的碗；结束时，碗已经端在手中。
+阶段三：随后，她转身把碗放到桌上；结束时，桌上的碗轻轻晃了一下，热气升起。
+```
+
+阶段化只改 `action` 的组织方式；镜头数量、时长、景别、机位与运镜仍以
+`shot_plan.json` 为准，需要调整时回到 `shot-planning`。
 
 ## 知识检索配方
 

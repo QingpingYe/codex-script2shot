@@ -57,6 +57,21 @@ describe("skills contract", () => {
   );
 });
 
+describe("shot-prompting skill content contract", () => {
+  // B4：事件脚本化与长镜头阶段化是 shot-prompting 的写作规则。阶段化阈值只以规则
+  // 文件字段名引用，具体数值留在 rules/models/<model>.json 的 prompt_guidance 里，
+  // Skill 全文不允许出现写死的秒数阈值。
+  const skillPath = path.join(skillsRoot, "shot-prompting", "SKILL.md");
+
+  test("shot prompting skill documents staged event scripting without hardcoded thresholds", () => {
+    const markdown = readFileSync(skillPath, "utf8");
+
+    expect(markdown).toContain("## 事件脚本化");
+    expect(markdown).toContain("prompt_guidance.long_shot_staging_threshold_sec");
+    expect(markdown).not.toMatch(/15\s*秒|30\s*秒/);
+  });
+});
+
 function launcherCommand(scriptPath: string): { command: string; args: string[] } {
   if (isWindows) {
     return { command: "cmd.exe", args: ["/d", "/c", scriptPath] };

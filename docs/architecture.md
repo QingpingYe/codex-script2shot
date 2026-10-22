@@ -889,6 +889,8 @@ $script2shot 只执行 shot-prompting，run_id 是 <run_id>
   阶段化判定的参考阈值。该字段**只指导写作，不参与 `validate_prompt` 判定**，
   硬规则数值仍由 `validate_prompt` 按规则文件判定。此处明确选择**本地文件读取**，
   不新增 MCP 工具。
+- 长镜头按目标模型 `prompt_guidance.long_shot_staging_threshold_sec` 阶段化，
+  Skill 不写数值；`shot_split.multi_action_rule` 管边界，Skill 管写法。
 - 依赖提示词技巧、Seedance 2.0 和 2.5 软知识和模型规则文件。
 
 职责边界：不修改镜头计划。需要改镜头时回到 `shot-planning`。除只读目标模型规则
