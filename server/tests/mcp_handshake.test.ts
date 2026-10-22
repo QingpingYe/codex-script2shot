@@ -156,6 +156,8 @@ describe("mcp handshake", () => {
       expect(toolNames).toContain("update_run_state");
       expect(toolNames).toContain("validate_prompt");
       expect(toolNames).toContain("render_prompt");
+      expect(toolNames).toContain("aggregate_knowledge_refs");
+      expect(toolNames).toContain("write_warnings");
       for (const tool of result.tools) {
         expect(typeof tool.name).toBe("string");
         expect(tool.name.length).toBeGreaterThan(0);
@@ -508,6 +510,131 @@ describe("mcp handshake", () => {
       expect(nonStringPromptIr).toMatchObject({
         ok: false,
         error: { code: "CONFIG_INVALID", details: { field: "prompt_ir_path" } },
+      });
+
+      expect(errors.join(""), "server stderr should stay empty").toBe("");
+    } finally {
+      await client.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  test("tools/call aggregates refs and warnings and rejects malformed arguments", async () => {
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), "script2shot-tools-aggregate-"));
+    const runDir = path.join(tempRoot, "run");
+    mkdirSync(runDir, { recursive: true });
+    const runId = "run-20261020-120000";
+    const runPath = path.join(runDir, "run.json");
+    const scriptAnalysisPath = path.join(runDir, "script_analysis.json");
+    const shotPlanPath = path.join(runDir, "shot_plan.json");
+    const promptIrPath = path.join(runDir, "prompts.ir.json");
+    const knowledgeRefsPath = path.join(runDir, "knowledge_refs.json");
+    const warningsPath = path.join(runDir, "warnings.md");
+
+    writeFileSync(
+      runPath,
+      `${JSON.stringify(
+        {
+          run_id: runId,
+          input_mode: "single_episode",
+          project_id: "demo",
+          target_model: "seedance-2.5",
+          warnings: [],
+          stages: {
+            script_breakdown: { status: "done", artifact: "script_analysis.json", updated_at: null },
+            shot_planning: { status: "done", artifact: "shot_plan.json", updated_at: null },
+            shot_prompting: { status: "done", artifact: "prompts.ir.json", updated_at: null },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    cpSync(
+      path.join(repoRoot, "tests", "fixtures", "script_analysis.sample.json"),
+      scriptAnalysisPath,
+    );
+    cpSync(path.join(repoRoot, "tests", "fixtures", "shot_plan.sample.json"), shotPlanPath);
+    cpSync(
+      path.join(repoRoot, "tests", "fixtures", "prompts_ir.sample.json"),
+      promptIrPath,
+    );
+
+    const { client, errors } = await connect_server(server_env());
+    try {
+      const aggregated = parse_tool_json(
+        await client.callTool({
+          name: "aggregate_knowledge_refs",
+          arguments: {
+            run_id: runId,
+            script_analysis_path: scriptAnalysisPath,
+            shot_plan_path: shotPlanPath,
+            prompt_ir_path: promptIrPath,
+            output_path: knowledgeRefsPath,
+          },
+        }),
+      );
+      expect(aggregated).toEqual({
+        output_path: knowledgeRefsPath,
+        counts: {
+          script_breakdown: 1,
+          shot_planning: 1,
+          shot_prompting: 1,
+        },
+      });
+      expect(existsSync(knowledgeRefsPath)).toBe(true);
+
+      const warnings = parse_tool_json(
+        await client.callTool({
+          name: "write_warnings",
+          arguments: {
+            run_id: runId,
+            run_path: runPath,
+            script_analysis_path: scriptAnalysisPath,
+            shot_plan_path: shotPlanPath,
+            prompt_ir_path: promptIrPath,
+            output_path: warningsPath,
+          },
+        }),
+      );
+      expect(warnings).toEqual({ output_path: warningsPath, count: 1 });
+      expect(readFileSync(warningsPath, "utf8")).toContain("SCENE_TIME_UNKNOWN");
+
+      const aggregateUnknown = parse_tool_json(
+        await client.callTool({
+          name: "aggregate_knowledge_refs",
+          arguments: {
+            run_id: runId,
+            script_analysis_path: scriptAnalysisPath,
+            shot_plan_path: shotPlanPath,
+            prompt_ir_path: promptIrPath,
+            output_path: knowledgeRefsPath,
+            unexpected: true,
+          },
+        }),
+      );
+      expect(aggregateUnknown).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "unexpected" } },
+      });
+
+      const warningsBlankRunPath = parse_tool_json(
+        await client.callTool({
+          name: "write_warnings",
+          arguments: {
+            run_id: runId,
+            run_path: "   ",
+            script_analysis_path: scriptAnalysisPath,
+            shot_plan_path: shotPlanPath,
+            prompt_ir_path: promptIrPath,
+            output_path: warningsPath,
+          },
+        }),
+      );
+      expect(warningsBlankRunPath).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "run_path" } },
       });
 
       expect(errors.join(""), "server stderr should stay empty").toBe("");

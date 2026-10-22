@@ -102,6 +102,7 @@ describe("knowledge-sync mcp tools contract", () => {
    * `validate_stage_artifact` 是阶段产物校验入口，
    * `validate_prompt` 是 PromptIR 硬规则校验入口，
    * `render_prompt` 是提示词渲染入口，
+   * `aggregate_knowledge_refs` / `write_warnings` 是运行产物聚合入口，
    * 一并纳入额外回归覆盖。
    */
   const requiredToolNames = [
@@ -121,6 +122,8 @@ describe("knowledge-sync mcp tools contract", () => {
     "validate_stage_artifact",
     "validate_prompt",
     "render_prompt",
+    "aggregate_knowledge_refs",
+    "write_warnings",
   ];
 
   test("tools/list exposes the tools consumed by knowledge-sync plus the setup tools", async () => {
@@ -183,6 +186,50 @@ describe("knowledge-sync mcp tools contract", () => {
       expect(invalid).toMatchObject({
         ok: false,
         error: { code: "CONFIG_INVALID", details: { field: "nodes" } },
+      });
+      expect(errors.join(""), "server stderr should stay empty").toBe("");
+    } finally {
+      await client.close();
+    }
+  }, 30000);
+
+  test("aggregation tools reject malformed arguments during dispatch", async () => {
+    const { client, errors } = await connect_server();
+    try {
+      const aggregateUnknown = parse_tool_json(
+        await client.callTool({
+          name: "aggregate_knowledge_refs",
+          arguments: {
+            run_id: "run-20261020-120000",
+            script_analysis_path: "script_analysis.json",
+            shot_plan_path: "shot_plan.json",
+            prompt_ir_path: "prompts.ir.json",
+            output_path: "knowledge_refs.json",
+            unexpected: true,
+          },
+        }),
+      );
+      expect(aggregateUnknown).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "unexpected" } },
+      });
+
+      const warningsBlankPath = parse_tool_json(
+        await client.callTool({
+          name: "write_warnings",
+          arguments: {
+            run_id: "run-20261020-120000",
+            run_path: "   ",
+            script_analysis_path: "script_analysis.json",
+            shot_plan_path: "shot_plan.json",
+            prompt_ir_path: "prompts.ir.json",
+            output_path: "warnings.md",
+          },
+        }),
+      );
+      expect(warningsBlankPath).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "run_path" } },
       });
       expect(errors.join(""), "server stderr should stay empty").toBe("");
     } finally {

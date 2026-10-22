@@ -1,11 +1,11 @@
 # script2shot 本地 MCP Server
 
-本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册 19 个工具：
+本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册 21 个工具：
 `health`、`write_config`、`init_knowledge_b`、`scan_knowledge_a`、`read_sync_state`、
 `build_sync_plan`、`fetch_knowledge_a_doc`、`replace_doc_cards`、`update_doc_sync_state`、
 `delete_doc_cards`、`refresh_local_index`、`search_knowledge`、`load_knowledge_pack`、
 `init_run`、`read_run`、`update_run_state`、`validate_stage_artifact`、`validate_prompt`、
-`render_prompt`。
+`render_prompt`、`aggregate_knowledge_refs`、`write_warnings`。
 
 文档中的「原始库 / AI 库」分别指飞书知识库（原始资料）和飞书知识库（AI）；
 工具名与配置键中的 `a/b` 标识保留兼容。
@@ -36,6 +36,16 @@ Phase 3 注册的三个本地检索工具：
   且不写文件；通过后按目标模型规则文件的 `render` 模板渲染中文 Markdown
   （按镜头分节，节顺序固定，不含时间戳，行尾统一 `\n`）写入 `output_path`，
   返回 `{ ok, output_path }`；校验通过后的渲染 / 写盘失败返回 `RENDER_FAILED`。
+
+运行产物聚合工具：
+
+- `aggregate_knowledge_refs`：读取 `script_analysis.json`、`shot_plan.json` 和
+  `prompts.ir.json` 的 `knowledge_refs`，生成 `{ run_id, stages }` 结构的
+  `knowledge_refs.json`；PromptIR 的逐镜头引用按镜头顺序展平，阶段重跑时整体替换
+  对应阶段数组；返回 `{ output_path, counts }`。
+- `write_warnings`：读取 run.json warnings 与三个阶段产物的 `missing_info`，按
+  code + message 去重并保持首次出现顺序，写出中文 `warnings.md`；返回
+  `{ output_path, count }`。
 
 阶段运行工具都要求显式传入 `workspace_root`：MCP Server 运行在插件根目录，
 仅凭 `run_id` 无法定位用户工作区中的运行目录。
@@ -175,6 +185,6 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
 
 ## 已知限制
 
-- 已注册上列 19 个工具（健康检查、配置写入、AI 库初始化与知识库同步、
-  本地检索、阶段运行目录状态、阶段产物校验与提示词渲染）。
+- 已注册上列 21 个工具（健康检查、配置写入、AI 库初始化与知识库同步、
+  本地检索、阶段运行目录状态、阶段产物校验、提示词渲染与运行产物聚合）。
 - 启动依赖已构建的 `server/dist/server.mjs`，源码目录不直接运行。

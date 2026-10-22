@@ -56,6 +56,12 @@ import {
 } from "./tools/init_run.js";
 import { read_run, type ReadRunInput } from "./tools/read_run.js";
 import { update_run_state, type UpdateRunStateInput } from "./tools/update_run_state.js";
+import {
+  aggregate_knowledge_refs,
+  write_warnings,
+  type AggregateKnowledgeRefsInput,
+  type WriteWarningsInput,
+} from "./aggregate.js";
 
 const server = new Server(
   { name: "script2shot", version: "0.1.0" },
@@ -508,6 +514,101 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "aggregate_knowledge_refs",
+    description:
+      "读取 script_analysis.json、shot_plan.json 和 prompts.ir.json 的知识引用，" +
+      "生成 knowledge_refs.json；PromptIR 的逐镜头引用按镜头顺序展平，" +
+      "阶段重跑时整体替换对应阶段数组。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        run_id: {
+          type: "string",
+          pattern: "^run-\\d{8}-\\d{6}$",
+          description: "运行目录名。",
+        },
+        script_analysis_path: {
+          type: "string",
+          minLength: 1,
+          description: "script_analysis.json 路径。",
+        },
+        shot_plan_path: {
+          type: "string",
+          minLength: 1,
+          description: "shot_plan.json 路径。",
+        },
+        prompt_ir_path: {
+          type: "string",
+          minLength: 1,
+          description: "prompts.ir.json 路径。",
+        },
+        output_path: {
+          type: "string",
+          minLength: 1,
+          description: "knowledge_refs.json 输出路径。",
+        },
+      },
+      required: [
+        "run_id",
+        "script_analysis_path",
+        "shot_plan_path",
+        "prompt_ir_path",
+        "output_path",
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "write_warnings",
+    description:
+      "读取 run.json warnings 与三个阶段产物的 missing_info，按 code + message " +
+      "去重并生成中文 Markdown 警告汇总，返回 { output_path, count }。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        run_id: {
+          type: "string",
+          pattern: "^run-\\d{8}-\\d{6}$",
+          description: "运行目录名。",
+        },
+        run_path: {
+          type: "string",
+          minLength: 1,
+          description: "run.json 路径。",
+        },
+        script_analysis_path: {
+          type: "string",
+          minLength: 1,
+          description: "script_analysis.json 路径。",
+        },
+        shot_plan_path: {
+          type: "string",
+          minLength: 1,
+          description: "shot_plan.json 路径。",
+        },
+        prompt_ir_path: {
+          type: "string",
+          minLength: 1,
+          description: "prompts.ir.json 路径。",
+        },
+        output_path: {
+          type: "string",
+          minLength: 1,
+          description: "warnings.md 输出路径。",
+        },
+      },
+      required: [
+        "run_id",
+        "run_path",
+        "script_analysis_path",
+        "shot_plan_path",
+        "prompt_ir_path",
+        "output_path",
+      ],
+      additionalProperties: false,
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -594,6 +695,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (name === "render_prompt") {
     const parsed = parse_render_prompt_arguments(request.params.arguments);
     return parsed.ok ? tool_json(render_prompt(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "aggregate_knowledge_refs") {
+    const parsed = parse_aggregate_knowledge_refs_arguments(request.params.arguments);
+    return parsed.ok
+      ? tool_json(aggregate_knowledge_refs(parsed.value))
+      : tool_json(parsed);
+  }
+  if (name === "write_warnings") {
+    const parsed = parse_write_warnings_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(write_warnings(parsed.value)) : tool_json(parsed);
   }
   throw new McpError(ErrorCode.MethodNotFound, `未知工具：${name}`);
 });
@@ -1165,6 +1276,101 @@ function parse_render_prompt_arguments(raw: unknown): Parsed<RenderPromptInput> 
     });
   }
   return { ok: true, value: { prompt_ir_path, output_path } };
+}
+
+function parse_aggregate_knowledge_refs_arguments(
+  raw: unknown,
+): Parsed<AggregateKnowledgeRefsInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const fields = [
+    "run_id",
+    "script_analysis_path",
+    "shot_plan_path",
+    "prompt_ir_path",
+    "output_path",
+  ] as const;
+  const unknown_key = reject_unknown_keys(parsed.value, fields);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  const required = require_non_empty_string_fields(parsed.value, fields);
+  if (!required.ok) {
+    return required;
+  }
+  const run_id = required.value.run_id;
+  if (!/^run-\d{8}-\d{6}$/.test(run_id)) {
+    return invalid_arguments('入参字段 "run_id" 期望格式 run-YYYYMMDD-HHMMSS。', {
+      field: "run_id",
+    });
+  }
+  return {
+    ok: true,
+    value: {
+      run_id,
+      script_analysis_path: required.value.script_analysis_path,
+      shot_plan_path: required.value.shot_plan_path,
+      prompt_ir_path: required.value.prompt_ir_path,
+      output_path: required.value.output_path,
+    },
+  };
+}
+
+function parse_write_warnings_arguments(raw: unknown): Parsed<WriteWarningsInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const fields = [
+    "run_id",
+    "run_path",
+    "script_analysis_path",
+    "shot_plan_path",
+    "prompt_ir_path",
+    "output_path",
+  ] as const;
+  const unknown_key = reject_unknown_keys(parsed.value, fields);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  const required = require_non_empty_string_fields(parsed.value, fields);
+  if (!required.ok) {
+    return required;
+  }
+  const run_id = required.value.run_id;
+  if (!/^run-\d{8}-\d{6}$/.test(run_id)) {
+    return invalid_arguments('入参字段 "run_id" 期望格式 run-YYYYMMDD-HHMMSS。', {
+      field: "run_id",
+    });
+  }
+  return {
+    ok: true,
+    value: {
+      run_id,
+      run_path: required.value.run_path,
+      script_analysis_path: required.value.script_analysis_path,
+      shot_plan_path: required.value.shot_plan_path,
+      prompt_ir_path: required.value.prompt_ir_path,
+      output_path: required.value.output_path,
+    },
+  };
+}
+
+function require_non_empty_string_fields(
+  record: Record<string, unknown>,
+  fields: readonly string[],
+): Parsed<Record<string, string>> {
+  const value: Record<string, string> = {};
+  for (const field of fields) {
+    const entry = record[field];
+    if (typeof entry !== "string" || entry.trim() === "") {
+      return invalid_arguments(`入参字段 "${field}" 期望非空字符串。`, { field });
+    }
+    value[field] = entry;
+  }
+  return { ok: true, value };
 }
 
 function is_record(value: unknown): value is Record<string, unknown> {
