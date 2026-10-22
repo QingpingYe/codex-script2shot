@@ -135,10 +135,11 @@ AI 库缓存 `cards.json`（只读）中已同步的知识卡正文，卡片正�
   `validate_stage_artifact` 执行。
 - `forbidden` 匹配口径由 `server/src/tools/validate_prompt.ts` 定义：大小写不敏感的
   子串匹配（中文提示词没有词边界）；扫描范围是**由 Agent 撰写、可改写的提示词正文
-  字段**，即 `subject` / `action` / `setting` / `time` / `camera_angle` /
-  `camera_movement` / `lighting` / `color` / `style`、`continuity.character_state` /
-  `continuity.environment_state`、以及 `negative_prompt[]` 条目。`dialogue` 是原文
-  保真豁免区（台词必须逐字保留，见 §2.3.2），`knowledge_refs` 是知识溯源元数据，
+  字段**，即 `subject` / `action` / `emotion` / `setting` / `time` /
+  `camera_angle` / `camera_movement` / `lighting` / `color` / `style`、
+  `continuity.character_state` / `continuity.environment_state`、以及
+  `negative_prompt[]` 条目。`dialogue` 是原文保真豁免区（台词必须逐字保留，
+  见 §2.3.2），`knowledge_refs` 是知识溯源元数据，
   两者都不参与扫描。改扫描范围需在同一改动内同步代码与本文件。
 
 ## 4. 提示词渲染模板（Task 4c-3，插件设计决策，无外部来源）

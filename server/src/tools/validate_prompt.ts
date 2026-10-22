@@ -82,9 +82,9 @@ const SHOT_FIELD_ORDER = [
 
 /**
  * 禁止项扫描范围：**由 Agent 撰写、可改写的提示词正文字段**（画面 / 动作 / 场景 /
- * 时间 / 机位 / 运镜 / 光影 / 色调 / 风格），另加 `continuity` 的两个状态字段与
- * `negative_prompt[]` 条目。`dialogue` 是原文保真豁免区：台词逐字取上游原文，不得
- * 为通过校验改写、删词或屏蔽，因此不参与扫描（Task A3 裁决，见
+ * 情绪 / 时间 / 机位 / 运镜 / 光影 / 色调 / 风格），另加 `continuity` 的两个状态
+ * 字段与 `negative_prompt[]` 条目。`dialogue` 是原文保真豁免区：台词逐字取上游原文，
+ * 不得为通过校验改写、删词或屏蔽，因此不参与扫描（Task A3 裁决，见
  * `docs/model-rules-notes.md` §2.3.2 / §3）。`knowledge_refs` 是知识溯源元数据，
  * 不渲染进正文，不扫描。`shot_size` / `aspect_ratio` 同属冻结枚举且渲染成固定中文
  * 标签，文本里不可能夹带禁止项，因此不入扫描范围。
@@ -92,6 +92,7 @@ const SHOT_FIELD_ORDER = [
 const FORBIDDEN_SCAN_FIELDS = [
   "subject",
   "action",
+  "emotion",
   "setting",
   "time",
   "camera_angle",

@@ -19,6 +19,7 @@ interface PromptIrShot {
   aspect_ratio: string;
   subject: string;
   action: string;
+  emotion: string;
   dialogue: DialogueEntry[];
   setting: string;
   time: string;
@@ -172,6 +173,26 @@ describe("prompt hard rule validation", () => {
     const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
 
     expect(error_keys(result)).toEqual(["ep01-sc01-sh01|subject|FORBIDDEN_TERM"]);
+    expect(result.errors[0]?.message).toContain(forbidden_term);
+  });
+
+  test("validate rejects forbidden term in emotion", () => {
+    const rules = load_model_rules("seedance-2.5");
+    expect(rules.ok).toBe(true);
+    if (!rules.ok) {
+      throw new Error("expected seedance-2.5 rules to load");
+    }
+    // 非空转：断言命中项确实在规则文件词表里，而不是测试自造的词。
+    const forbidden_term = "fps";
+    expect(rules.rules.forbidden).toContain(forbidden_term);
+
+    // 裁决：emotion 是「由 Agent 撰写、可改写」的自由文本，参与禁止项扫描；
+    // 只有 dialogue 是原文保真豁免区。
+    const ir = read_prompt_ir("prompts_ir.sample.json");
+    ir.shots[0].emotion = `呼吸急促，像 ${forbidden_term} 一样越数越快`;
+    const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
+
+    expect(error_keys(result)).toEqual(["ep01-sc01-sh01|emotion|FORBIDDEN_TERM"]);
     expect(result.errors[0]?.message).toContain(forbidden_term);
   });
 
