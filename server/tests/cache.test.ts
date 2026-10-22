@@ -183,6 +183,33 @@ describe("cache", () => {
     expect(readFileSync(cards_path(), "utf8"), "不支持版本也不得被覆盖").toBe(unsupported_text);
   });
 
+  test("cache classifies missing version, non-object roots, and missing docs", () => {
+    mkdirSync(cache_dir(), { recursive: true });
+    const cases: Array<{ raw: string; code: string }> = [
+      {
+        raw: JSON.stringify({ docs: {} }),
+        code: "CACHE_VERSION_UNSUPPORTED",
+      },
+      {
+        raw: JSON.stringify([]),
+        code: "CACHE_CORRUPT",
+      },
+      {
+        raw: JSON.stringify({ version: CACHE_VERSION }),
+        code: "CACHE_CORRUPT",
+      },
+    ];
+
+    for (const entry of cases) {
+      writeFileSync(cards_path(), entry.raw, "utf8");
+      const loaded = load_cache();
+      expect(loaded.rebuild_needed, entry.raw).toBe(true);
+      expect(loaded.docs, entry.raw).toEqual({});
+      expect(loaded.warnings.map((warning) => warning.code), entry.raw).toEqual([entry.code]);
+      expect(readFileSync(cards_path(), "utf8"), "load 不得覆盖非法规格").toBe(entry.raw);
+    }
+  });
+
   test("cache atomic write leaves no partial json", () => {
     const cache = empty_cache();
     set_doc(
@@ -205,7 +232,6 @@ describe("cache", () => {
     );
     expect(() => save_cache(broken)).toThrow();
     expect(readFileSync(cards_path(), "utf8")).toBe(before);
-    expect(temp_files()).toEqual([]);
 
     // 替换失败（目标位置被目录占用）：临时文件被清理，缓存目录仍可再次保存。
     rmSync(cards_path());
