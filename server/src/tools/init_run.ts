@@ -64,6 +64,8 @@ export interface RunWarning {
   code: string;
   message: string;
   refs?: string[];
+  /** 结构化明细（例如 `RUN_STATE_RECONCILED` 的 `conflicts[]`），写入 `run.json` 后原样保留。 */
+  details?: Record<string, unknown>;
 }
 
 export interface RunDocument {

@@ -34,6 +34,13 @@ function copyFixture(fixtureName: string, outputPath: string): void {
   writeFileSync(outputPath, readFileSync(path.join(fixturesDir, fixtureName), "utf8"), "utf8");
 }
 
+/** 把 fixture 的 `run_id` 对齐到本次 run：产物属于该 run 时身份对账才不应报冲突。 */
+function copyFixtureForRun(fixtureName: string, outputPath: string, runId: string): void {
+  const document = readJson(path.join(fixturesDir, fixtureName));
+  document.run_id = runId;
+  writeJson(outputPath, document);
+}
+
 function successInit(result: ReturnType<typeof init_run>): { run_id: string; run_json_path: string } {
   if (!("run_id" in result)) {
     throw new Error(`expected init_run success: ${JSON.stringify(result)}`);
@@ -44,7 +51,12 @@ function successInit(result: ReturnType<typeof init_run>): { run_id: string; run
 function successRead(result: ReturnType<typeof read_run>): {
   run: RunDocument;
   artifacts: RunArtifacts;
-  warnings: Array<{ code: string; message: string; refs?: string[] }>;
+  warnings: Array<{
+    code: string;
+    message: string;
+    refs?: string[];
+    details?: Record<string, unknown>;
+  }>;
 } {
   if (!("run" in result)) {
     throw new Error(`expected read_run success: ${JSON.stringify(result)}`);
@@ -70,6 +82,25 @@ describe("run directory tools", () => {
     vi.useRealTimers();
     rmSync(workspaceRoot, { recursive: true, force: true });
   });
+
+  function markAllStagesDone(runId: string): void {
+    const artifacts = {
+      script_breakdown: "script_analysis.json",
+      shot_planning: "shot_plan.json",
+      shot_prompting: "prompts.ir.json",
+    } as const;
+    for (const stage of ["script_breakdown", "shot_planning", "shot_prompting"] as const) {
+      successUpdate(
+        update_run_state({
+          workspace_root: workspaceRoot,
+          run_id: runId,
+          stage,
+          status: "done",
+          artifact: artifacts[stage],
+        }),
+      );
+    }
+  }
 
   test("init run creates directory and schema valid run json", () => {
     const created = successInit(
@@ -187,7 +218,13 @@ describe("run directory tools", () => {
         run_id: created.run_id,
         stage: "script_breakdown",
         status: "running",
-        warnings: [{ code: "INDEX_UNAVAILABLE", message: "使用缓存" }],
+        warnings: [
+          {
+            code: "INDEX_UNAVAILABLE",
+            message: "使用缓存",
+            details: { index_state: "corrupt" },
+          },
+        ],
       }),
     );
     const runningState = running.run.stages.script_breakdown;
@@ -195,7 +232,11 @@ describe("run directory tools", () => {
     expect(runningState.updated_at).toEqual(expect.any(String));
     expect(Number.isNaN(Date.parse(runningState.updated_at ?? ""))).toBe(false);
     expect(running.run.warnings).toEqual([
-      { code: "INDEX_UNAVAILABLE", message: "使用缓存" },
+      {
+        code: "INDEX_UNAVAILABLE",
+        message: "使用缓存",
+        details: { index_state: "corrupt" },
+      },
     ]);
 
     const done = successUpdate(
@@ -270,7 +311,11 @@ describe("run directory tools", () => {
       }),
     );
     const runDir = path.dirname(created.run_json_path);
-    copyFixture("script_analysis.sample.json", path.join(runDir, "script_analysis.json"));
+    copyFixtureForRun(
+      "script_analysis.sample.json",
+      path.join(runDir, "script_analysis.json"),
+      created.run_id,
+    );
     successUpdate(
       update_run_state({
         workspace_root: workspaceRoot,
@@ -317,26 +362,22 @@ describe("run directory tools", () => {
       }),
     );
     const runDir = path.dirname(created.run_json_path);
-    copyFixture("script_analysis.sample.json", path.join(runDir, "script_analysis.json"));
-    copyFixture("shot_plan.sample.json", path.join(runDir, "shot_plan.json"));
-    copyFixture("prompts_ir.sample.json", path.join(runDir, "prompts.ir.json"));
-
-    for (const stage of ["script_breakdown", "shot_planning", "shot_prompting"] as const) {
-      const artifact = {
-        script_breakdown: "script_analysis.json",
-        shot_planning: "shot_plan.json",
-        shot_prompting: "prompts.ir.json",
-      }[stage];
-      successUpdate(
-        update_run_state({
-          workspace_root: workspaceRoot,
-          run_id: created.run_id,
-          stage,
-          status: "done",
-          artifact,
-        }),
-      );
-    }
+    copyFixtureForRun(
+      "script_analysis.sample.json",
+      path.join(runDir, "script_analysis.json"),
+      created.run_id,
+    );
+    copyFixtureForRun(
+      "shot_plan.sample.json",
+      path.join(runDir, "shot_plan.json"),
+      created.run_id,
+    );
+    copyFixtureForRun(
+      "prompts_ir.sample.json",
+      path.join(runDir, "prompts.ir.json"),
+      created.run_id,
+    );
+    markAllStagesDone(created.run_id);
 
     const read = successRead(
       read_run({ workspace_root: workspaceRoot, run_id: created.run_id }),
@@ -352,6 +393,147 @@ describe("run directory tools", () => {
       shot_prompting: { status: "done" },
     });
     expect(read.warnings).toEqual([]);
+  });
+
+  test("read run fails stages whose artifact identity conflicts with run json", () => {
+    const created = successInit(
+      init_run({
+        workspace_root: workspaceRoot,
+        input_mode: "single_episode",
+        project_id: "demo",
+        target_model: "seedance-2.5",
+      }),
+    );
+    const runDir = path.dirname(created.run_json_path);
+    copyFixtureForRun(
+      "script_analysis.sample.json",
+      path.join(runDir, "script_analysis.json"),
+      created.run_id,
+    );
+    copyFixtureForRun(
+      "shot_plan.sample.json",
+      path.join(runDir, "shot_plan.json"),
+      created.run_id,
+    );
+    copyFixtureForRun(
+      "prompts_ir.sample.json",
+      path.join(runDir, "prompts.ir.json"),
+      created.run_id,
+    );
+    markAllStagesDone(created.run_id);
+
+    // 手工改成另一个 schema 合法的目标模型：身份是运行上下文，冲突时必须 fail-closed。
+    const edited = readJson(created.run_json_path);
+    edited.target_model = "seedance-2.0";
+    writeJson(created.run_json_path, edited);
+
+    const read = successRead(
+      read_run({ workspace_root: workspaceRoot, run_id: created.run_id }),
+    );
+    expect(read.run.stages).toMatchObject({
+      script_breakdown: { status: "failed", artifact: "script_analysis.json" },
+      shot_planning: { status: "failed", artifact: "shot_plan.json" },
+      shot_prompting: { status: "failed", artifact: "prompts.ir.json" },
+    });
+    expect(read.warnings).toEqual([
+      expect.objectContaining({
+        code: "RUN_STATE_RECONCILED",
+        refs: ["script_breakdown", "shot_planning", "shot_prompting"],
+        details: {
+          conflicts: [
+            {
+              artifact: "script_analysis.json",
+              field: "target_model",
+              run_value: "seedance-2.0",
+              artifact_value: "seedance-2.5",
+            },
+            {
+              artifact: "shot_plan.json",
+              field: "target_model",
+              run_value: "seedance-2.0",
+              artifact_value: "seedance-2.5",
+            },
+            {
+              artifact: "prompts.ir.json",
+              field: "target_model",
+              run_value: "seedance-2.0",
+              artifact_value: "seedance-2.5",
+            },
+          ],
+        },
+      }),
+    ]);
+
+    // 冲突阶段写回 failed，但 run.json 的身份字段不被静默改写。
+    const persisted = readRunJson(created.run_json_path);
+    expect(persisted.target_model).toBe("seedance-2.0");
+    expect(persisted.stages).toMatchObject({
+      script_breakdown: { status: "failed" },
+      shot_planning: { status: "failed" },
+      shot_prompting: { status: "failed" },
+    });
+  });
+
+  test("read run fails a stale artifact whose identity disagrees with its siblings", () => {
+    const created = successInit(
+      init_run({
+        workspace_root: workspaceRoot,
+        input_mode: "single_episode",
+        project_id: "demo",
+        target_model: "seedance-2.5",
+      }),
+    );
+    const runDir = path.dirname(created.run_json_path);
+    copyFixtureForRun(
+      "script_analysis.sample.json",
+      path.join(runDir, "script_analysis.json"),
+      created.run_id,
+    );
+    copyFixtureForRun(
+      "shot_plan.sample.json",
+      path.join(runDir, "shot_plan.json"),
+      created.run_id,
+    );
+    // prompts.ir.json 停留在另一次 run 的 run_id：与 run.json 和两个上游产物都不一致。
+    copyFixture("prompts_ir.sample.json", path.join(runDir, "prompts.ir.json"));
+    const stale_run_id = readJson(
+      path.join(fixturesDir, "prompts_ir.sample.json"),
+    ).run_id as string;
+    expect(stale_run_id).not.toBe(created.run_id);
+    markAllStagesDone(created.run_id);
+
+    const read = successRead(
+      read_run({ workspace_root: workspaceRoot, run_id: created.run_id }),
+    );
+    expect(read.run.stages).toMatchObject({
+      script_breakdown: { status: "done" },
+      shot_planning: { status: "done" },
+      shot_prompting: { status: "failed", artifact: "prompts.ir.json" },
+    });
+    expect(read.warnings).toEqual([
+      expect.objectContaining({
+        code: "RUN_STATE_RECONCILED",
+        refs: ["shot_prompting"],
+        details: {
+          conflicts: [
+            {
+              artifact: "prompts.ir.json",
+              field: "run_id",
+              run_value: created.run_id,
+              artifact_value: stale_run_id,
+            },
+            {
+              artifact: "prompts.ir.json",
+              field: "run_id",
+              run_value: created.run_id,
+              artifact_value: stale_run_id,
+              reference_artifact: "script_analysis.json",
+              reference_value: created.run_id,
+            },
+          ],
+        },
+      }),
+    ]);
   });
 
   test("read run marks an invalid artifact as failed", () => {

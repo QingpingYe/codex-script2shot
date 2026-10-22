@@ -65,6 +65,24 @@ const ENTRY_SKILL_SECTIONS = [
   "## 边界",
 ] as const;
 
+/** 入口 Skill 在「新 run 流程」里冻结的阶段 Skill 引用，出现顺序即执行顺序。 */
+const ENTRY_SKILL_STAGE_FILES = [
+  "skills/script-breakdown/SKILL.md",
+  "skills/shot-planning/SKILL.md",
+  "skills/shot-prompting/SKILL.md",
+] as const;
+
+/** 入口 Skill 输出清单必须出现的七个固定文件名（架构 §11.5）。 */
+const ENTRY_SKILL_PRODUCT_NAMES = [
+  "run.json",
+  "script_analysis.json",
+  "shot_plan.json",
+  "prompts.ir.json",
+  "prompts.<target_model>.md",
+  "knowledge_refs.json",
+  "warnings.md",
+] as const;
+
 /** 多集输入由入口写进首个阶段状态的 warning（架构 §11.1）。 */
 const MULTIPLE_EPISODES_WARNING = {
   code: "MULTIPLE_EPISODES",
@@ -118,6 +136,16 @@ function card_ids(entries: Array<Record<string, unknown>>): string[] {
   return entries.map((entry) => entry.card_id as string);
 }
 
+/** 取入口 Skill 指定 `## ` 小节的正文（到下一个 `## ` 标题为止），供结构级断言使用。 */
+function entry_skill_section(text: string, heading: string): string {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const start = normalized.indexOf(heading);
+  expect(start, `入口 Skill 应包含小节 ${heading}`).toBeGreaterThanOrEqual(0);
+  const rest = normalized.slice(start + heading.length);
+  const next = rest.search(/^## /m);
+  return next === -1 ? rest : rest.slice(0, next);
+}
+
 /**
  * 模拟入口的第一步：读入口 Skill 本身，确认它仍然描述本轮验收的编排契约。
  */
@@ -129,6 +157,47 @@ function expect_entry_skill_contract(): void {
   expect(/^name:\s*script2shot\s*$/m.test(frontmatter?.[1] ?? "")).toBe(true);
   for (const section of ENTRY_SKILL_SECTIONS) {
     expect(text, `入口 Skill 应包含小节 ${section}`).toContain(section);
+  }
+
+  // 阶段执行顺序：三个阶段 Skill 的引用顺序即 script_breakdown → shot_planning → shot_prompting。
+  const new_run_flow = entry_skill_section(text, "## 新 run 流程");
+  const stage_offsets = ENTRY_SKILL_STAGE_FILES.map((file) =>
+    new_run_flow.indexOf(file),
+  );
+  for (const [index, file] of ENTRY_SKILL_STAGE_FILES.entries()) {
+    expect(
+      stage_offsets[index],
+      `新 run 流程应按顺序执行 ${file}`,
+    ).toBeGreaterThan(-1);
+  }
+  expect(stage_offsets[0]).toBeLessThan(stage_offsets[1]);
+  expect(stage_offsets[1]).toBeLessThan(stage_offsets[2]);
+
+  // 阶段结束后先用 update_run_state 持久化阶段 warning，再调用两个聚合工具。
+  const after_stages = new_run_flow.slice(stage_offsets[2]);
+  const update_offset = after_stages.indexOf("update_run_state");
+  const aggregate_offset = after_stages.indexOf("aggregate_knowledge_refs");
+  const warnings_offset = after_stages.indexOf("write_warnings");
+  expect(
+    update_offset,
+    "阶段结束后应先用 update_run_state 持久化阶段 warning",
+  ).toBeGreaterThan(-1);
+  expect(aggregate_offset, "阶段结束后应调用 aggregate_knowledge_refs").toBeGreaterThan(-1);
+  expect(warnings_offset, "阶段结束后应调用 write_warnings").toBeGreaterThan(-1);
+  expect(update_offset).toBeLessThan(aggregate_offset);
+  expect(update_offset).toBeLessThan(warnings_offset);
+  expect(after_stages.slice(0, aggregate_offset)).toContain("warnings");
+
+  // 续跑：先用 read_run 读回 run 状态，再按 from / only 执行。
+  const rerun_flow = entry_skill_section(text, "## 续跑（from/only）");
+  expect(rerun_flow).toContain("read_run");
+  expect(rerun_flow).toContain("from <stage>");
+  expect(rerun_flow).toContain("only <stage>");
+
+  // 输出清单：七个固定产物文件名一个不少。
+  const outputs = entry_skill_section(text, "## 输出清单");
+  for (const product of ENTRY_SKILL_PRODUCT_NAMES) {
+    expect(outputs, `输出清单应包含固定产物 ${product}`).toContain(product);
   }
 }
 

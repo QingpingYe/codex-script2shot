@@ -95,6 +95,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "details": {
+          "type": "object",
+          "description": "结构化明细，例如 RUN_STATE_RECONCILED 的 conflicts[]。"
         }
       }
     }

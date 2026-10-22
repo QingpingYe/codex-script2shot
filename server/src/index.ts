@@ -378,7 +378,10 @@ const TOOLS = [
     name: "read_run",
     description:
       "读取工作区 .script2shot/outputs/<run_id>/run.json 与三阶段产物校验结果；" +
-      "产物存在且通过校验时以产物为准修正 run.json，并用 warning RUN_STATE_RECONCILED 报告。" +
+      "产物存在且通过校验时以产物为准修正 run.json，并用 warning RUN_STATE_RECONCILED 报告；" +
+      "同时核对产物身份字段（run_id / input_mode / project_id / target_model）与 run.json " +
+      "及产物之间是否一致，冲突时把冲突产物所属阶段置 failed，在 warning 的 " +
+      "details.conflicts[] 中报告，且不重写身份字段。" +
       "workspace_root 必填，用于定位用户工作区中的运行目录。",
     inputSchema: {
       type: "object",

@@ -100,6 +100,7 @@ interface RunWarning {
   code: string;
   message: string;
   refs?: string[];
+  details?: Record<string, unknown>;
 }
 
 interface StringInputResult {
@@ -599,10 +600,19 @@ function read_run_warnings(value: unknown, file_path: string): WarningsResult {
         field: `warnings[${index}].refs`,
       });
     }
+    if (entry.details !== undefined && !is_record(entry.details)) {
+      return failure("RUN_SCHEMA_INVALID", `run.json warnings[${index}].details 期望对象。`, {
+        path: file_path,
+        field: `warnings[${index}].details`,
+      });
+    }
     warnings.push({
       code: entry.code,
       message: entry.message,
       ...(entry.refs === undefined ? {} : { refs: [...(entry.refs as string[])] }),
+      ...(entry.details === undefined
+        ? {}
+        : { details: { ...(entry.details as Record<string, unknown>) } }),
     });
   }
   return { ok: true, value: warnings };

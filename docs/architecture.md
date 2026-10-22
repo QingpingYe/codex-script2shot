@@ -728,11 +728,17 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 | `search_knowledge` | 执行过滤、关键词检索和 priority 排序 |
 | `load_knowledge_pack` | 加载通用知识、项目知识和 Seedance 规则 |
 | `init_run` | 在显式 `workspace_root` 下创建运行目录和 `run.json`，记录输入模式、项目 ID、目标模型和可选画幅 |
-| `read_run` | 在显式 `workspace_root` 下读取 `run.json` 和阶段状态，用于续跑和聚合输出 |
+| `read_run` | 在显式 `workspace_root` 下读取 `run.json` 和阶段状态，用于续跑和聚合输出；同时核对产物身份字段与 `run.json` 及产物之间是否一致，冲突时写 `RUN_STATE_RECONCILED` warning（`details.conflicts[]`）并把冲突产物所属阶段置 `failed`，不重写身份字段 |
 | `update_run_state` | 在显式 `workspace_root` 下更新阶段状态、产物路径和警告 |
-| `validate_stage_artifact` | 按 schema 校验 `script_analysis.json` 和 `shot_plan.json` |
-| `validate_prompt` | 校验 PromptIR 和 Seedance 硬规则 |
+| `validate_stage_artifact` | 按 schema 校验 `script_analysis.json` 和 `shot_plan.json`；模型规则文件缺失、损坏或与请求的模型不一致（安装损坏）时返回文档级 `MODEL_RULES_UNAVAILABLE` |
+| `validate_prompt` | 校验 PromptIR 和 Seedance 硬规则；同类安装损坏同样返回文档级 `MODEL_RULES_UNAVAILABLE` |
 | `render_prompt` | 渲染 Seedance 2.0 或 Seedance 2.5 提示词 |
+| `aggregate_knowledge_refs` | 入参 `run_id`、三个阶段产物路径与 `output_path`；按阶段固定顺序聚合三个阶段引用写出 `knowledge_refs.json`，PromptIR 的逐镜头引用按镜头顺序展平，成功返回 `{ output_path, counts }` |
+| `write_warnings` | 入参 `run_id`、`run.json` 路径、三个阶段产物路径与 `output_path`；汇总 `run.json` 的运行级 warnings 与阶段产物 `missing_info`（按 `code` + `message` 去重）写出中文 `warnings.md`，成功返回 `{ output_path, count }`；没有 `warnings` 入参，工具 warning 必须先用 `update_run_state` 持久化 |
+
+`aggregate_knowledge_refs` 与 `write_warnings` 成功时只带 `output_path` 等字段，**不带
+`ok: true`**；只有失败才返回 `{ ok: false, error }`，调用方按 `error` / `output_path`
+是否存在分支，不要用 `ok` 的真值判断。
 
 写操作默认先 dry-run。批量同步先生成整批影响清单，用户确认后执行整批；
 不逐文档反复确认。
@@ -1137,7 +1143,7 @@ Base 权限，而不是依赖 `project_id` 过滤承担访问控制。
 | 本地索引卡片归属不一致 | 索引写入在事务开始前拒绝并保持索引原样；工具层同时给出文档与行号上下文 |
 | 阶段产物缺失或 schema 校验失败 | 停止该阶段，提示缺少的上游产物或字段，不进入下一阶段 |
 | 阶段产物被人工修改 | 重新校验通过后，从该阶段之后继续运行 |
-| `run.json` 与产物不一致 | 以产物为准重新校验，并修正 `run.json` 的阶段状态 |
+| `run.json` 与产物不一致 | 阶段状态以产物为准重新校验并修正；身份字段（`run_id`、`input_mode`、`project_id`、`target_model`）与产物冲突时 fail-closed：冲突产物所属阶段置 `failed`，写 `RUN_STATE_RECONCILED` warning（`details.conflicts[]` 逐条记录 `artifact` / `field` / 两侧取值），不重写 `run.json` 的身份字段 |
 | 目标模型未知 | 只支持 `seedance-2.0` 和 `seedance-2.5` |
 | 硬规则校验失败 | 返回结构化错误并重新生成 |
 

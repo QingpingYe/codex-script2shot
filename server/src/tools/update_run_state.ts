@@ -189,7 +189,7 @@ function validate_warnings(
         field: `warnings[${index}]`,
       });
     }
-    const unknown_key = first_unknown_key(entry, ["code", "message", "refs"]);
+    const unknown_key = first_unknown_key(entry, ["code", "message", "refs", "details"]);
     if (unknown_key !== undefined) {
       return run_failure(
         "CONFIG_INVALID",
@@ -214,10 +214,16 @@ function validate_warnings(
         });
       }
     }
+    if (entry.details !== undefined && !is_record(entry.details)) {
+      return run_failure("CONFIG_INVALID", `warning[${index}].details 期望对象。`, {
+        field: `warnings[${index}].details`,
+      });
+    }
     warnings.push({
       code: entry.code,
       message: entry.message,
       ...(entry.refs === undefined ? {} : { refs: [...entry.refs] as string[] }),
+      ...(entry.details === undefined ? {} : { details: { ...entry.details } }),
     });
   }
 
