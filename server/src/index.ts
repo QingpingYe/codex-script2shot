@@ -45,6 +45,17 @@ import {
 } from "./tools/validate_stage_artifact.js";
 import { validate_prompt, type ValidatePromptInput } from "./tools/validate_prompt.js";
 import { render_prompt, type RenderPromptInput } from "./tools/render_prompt.js";
+import {
+  RUN_ASPECT_RATIO_VALUES,
+  RUN_INPUT_MODE_VALUES,
+  RUN_STAGE_STATUS_VALUES,
+  RUN_STAGE_VALUES,
+  RUN_TARGET_MODEL_VALUES,
+  init_run,
+  type InitRunInput,
+} from "./tools/init_run.js";
+import { read_run, type ReadRunInput } from "./tools/read_run.js";
+import { update_run_state, type UpdateRunStateInput } from "./tools/update_run_state.js";
 
 const server = new Server(
   { name: "script2shot", version: "0.1.0" },
@@ -320,6 +331,120 @@ const TOOLS = [
     },
   },
   {
+    name: "init_run",
+    description:
+      "在工作区创建 .script2shot/outputs/<run-YYYYMMDD-HHMMSS>/ 与 run.json（三阶段初始 pending）。" +
+      "workspace_root 必填：MCP Server 位于插件根目录，仅凭 run_id 无法定位用户工作区的运行目录。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspace_root: {
+          type: "string",
+          minLength: 1,
+          description: "用户工作区根目录；运行产物写入其 .script2shot/outputs 下。",
+        },
+        input_mode: {
+          type: "string",
+          enum: [...RUN_INPUT_MODE_VALUES],
+          description: "剧本文本粒度：片段、单集或多集。",
+        },
+        project_id: {
+          type: "string",
+          minLength: 1,
+          description: "项目 ID，用于项目知识检索。",
+        },
+        target_model: {
+          type: "string",
+          enum: [...RUN_TARGET_MODEL_VALUES],
+          description: "本次运行唯一的目标视频模型。",
+        },
+        aspect_ratio: {
+          type: "string",
+          enum: [...RUN_ASPECT_RATIO_VALUES],
+          description: "可选运行级画幅比例；shot-prompting 可从中恢复。",
+        },
+      },
+      required: ["workspace_root", "input_mode", "project_id", "target_model"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "read_run",
+    description:
+      "读取工作区 .script2shot/outputs/<run_id>/run.json 与三阶段产物校验结果；" +
+      "产物存在且通过校验时以产物为准修正 run.json，并用 warning RUN_STATE_RECONCILED 报告。" +
+      "workspace_root 必填，用于定位用户工作区中的运行目录。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspace_root: {
+          type: "string",
+          minLength: 1,
+          description: "用户工作区根目录。",
+        },
+        run_id: {
+          type: "string",
+          pattern: "^run-\\d{8}-\\d{6}$",
+          description: "运行目录名。",
+        },
+      },
+      required: ["workspace_root", "run_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "update_run_state",
+    description:
+      "更新工作区 .script2shot/outputs/<run_id>/run.json 中一个阶段的状态、产物名和运行级警告，" +
+      "并写入 updated_at；workspace_root 必填，用于定位用户工作区中的运行目录。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspace_root: {
+          type: "string",
+          minLength: 1,
+          description: "用户工作区根目录。",
+        },
+        run_id: {
+          type: "string",
+          pattern: "^run-\\d{8}-\\d{6}$",
+          description: "运行目录名。",
+        },
+        stage: {
+          type: "string",
+          enum: [...RUN_STAGE_VALUES],
+          description: "要更新的阶段 key。",
+        },
+        status: {
+          type: "string",
+          enum: [...RUN_STAGE_STATUS_VALUES],
+          description: "阶段状态。",
+        },
+        artifact: {
+          type: ["string", "null"],
+          minLength: 1,
+          description: "可选阶段产物文件名；null 表示清空。",
+        },
+        warnings: {
+          type: "array",
+          description: "可选运行级 warning；只追加，不改既有条目。",
+          items: {
+            type: "object",
+            properties: {
+              code: { type: "string", minLength: 1 },
+              message: { type: "string", minLength: 1 },
+              refs: { type: "array", items: { type: "string" } },
+            },
+            required: ["code", "message"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["workspace_root", "run_id", "stage", "status"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "validate_stage_artifact",
     description:
       "按阶段 schema 校验阶段产物 JSON，返回 { ok, errors[] }；errors[].path 使用 JSON Pointer，" +
@@ -445,6 +570,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (name === "load_knowledge_pack") {
     const parsed = parse_load_knowledge_pack_arguments(request.params.arguments);
     return parsed.ok ? tool_json(load_knowledge_pack(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "init_run") {
+    const parsed = parse_init_run_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(init_run(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "read_run") {
+    const parsed = parse_read_run_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(read_run(parsed.value)) : tool_json(parsed);
+  }
+  if (name === "update_run_state") {
+    const parsed = parse_update_run_state_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(update_run_state(parsed.value)) : tool_json(parsed);
   }
   if (name === "validate_stage_artifact") {
     const parsed = parse_validate_stage_artifact_arguments(request.params.arguments);
@@ -781,6 +918,182 @@ function parse_load_knowledge_pack_arguments(raw: unknown): Parsed<LoadKnowledge
     return unknown_key;
   }
   return { ok: true, value: parsed.value as LoadKnowledgePackInput };
+}
+
+function parse_init_run_arguments(raw: unknown): Parsed<InitRunInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, [
+    "workspace_root",
+    "input_mode",
+    "project_id",
+    "target_model",
+    "aspect_ratio",
+  ]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+
+  const workspace_root = parsed.value.workspace_root;
+  if (typeof workspace_root !== "string" || workspace_root.trim() === "") {
+    return invalid_arguments('入参字段 "workspace_root" 期望非空字符串。', {
+      field: "workspace_root",
+    });
+  }
+  const input_mode = parsed.value.input_mode;
+  if (
+    typeof input_mode !== "string" ||
+    !(RUN_INPUT_MODE_VALUES as readonly string[]).includes(input_mode)
+  ) {
+    return invalid_arguments(
+      `入参字段 "input_mode" 期望以下之一：${RUN_INPUT_MODE_VALUES.join("、")}。`,
+      { field: "input_mode" },
+    );
+  }
+  const project_id = parsed.value.project_id;
+  if (typeof project_id !== "string" || project_id.trim() === "") {
+    return invalid_arguments('入参字段 "project_id" 期望非空字符串。', {
+      field: "project_id",
+    });
+  }
+  const target_model = parsed.value.target_model;
+  if (
+    typeof target_model !== "string" ||
+    !(RUN_TARGET_MODEL_VALUES as readonly string[]).includes(target_model)
+  ) {
+    return invalid_arguments(
+      `入参字段 "target_model" 期望以下之一：${RUN_TARGET_MODEL_VALUES.join("、")}。`,
+      { field: "target_model" },
+    );
+  }
+  const aspect_ratio = parsed.value.aspect_ratio;
+  if (
+    aspect_ratio !== undefined &&
+    (typeof aspect_ratio !== "string" ||
+      !(RUN_ASPECT_RATIO_VALUES as readonly string[]).includes(aspect_ratio))
+  ) {
+    return invalid_arguments(
+      `入参字段 "aspect_ratio" 期望以下之一：${RUN_ASPECT_RATIO_VALUES.join("、")}。`,
+      { field: "aspect_ratio" },
+    );
+  }
+
+  return {
+    ok: true,
+    value: {
+      workspace_root,
+      input_mode: input_mode as InitRunInput["input_mode"],
+      project_id,
+      target_model: target_model as InitRunInput["target_model"],
+      ...(aspect_ratio === undefined
+        ? {}
+        : { aspect_ratio: aspect_ratio as InitRunInput["aspect_ratio"] }),
+    },
+  };
+}
+
+function parse_read_run_arguments(raw: unknown): Parsed<ReadRunInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, ["workspace_root", "run_id"]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+
+  const workspace_root = parsed.value.workspace_root;
+  if (typeof workspace_root !== "string" || workspace_root.trim() === "") {
+    return invalid_arguments('入参字段 "workspace_root" 期望非空字符串。', {
+      field: "workspace_root",
+    });
+  }
+  const run_id = parsed.value.run_id;
+  if (typeof run_id !== "string" || !/^run-\d{8}-\d{6}$/.test(run_id)) {
+    return invalid_arguments('入参字段 "run_id" 期望格式 run-YYYYMMDD-HHMMSS。', {
+      field: "run_id",
+    });
+  }
+
+  return { ok: true, value: { workspace_root, run_id } };
+}
+
+function parse_update_run_state_arguments(
+  raw: unknown,
+): Parsed<UpdateRunStateInput> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, [
+    "workspace_root",
+    "run_id",
+    "stage",
+    "status",
+    "artifact",
+    "warnings",
+  ]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+
+  const workspace_root = parsed.value.workspace_root;
+  if (typeof workspace_root !== "string" || workspace_root.trim() === "") {
+    return invalid_arguments('入参字段 "workspace_root" 期望非空字符串。', {
+      field: "workspace_root",
+    });
+  }
+  const run_id = parsed.value.run_id;
+  if (typeof run_id !== "string" || !/^run-\d{8}-\d{6}$/.test(run_id)) {
+    return invalid_arguments('入参字段 "run_id" 期望格式 run-YYYYMMDD-HHMMSS。', {
+      field: "run_id",
+    });
+  }
+  const stage = parsed.value.stage;
+  if (typeof stage !== "string" || !(RUN_STAGE_VALUES as readonly string[]).includes(stage)) {
+    return invalid_arguments(
+      `入参字段 "stage" 期望以下之一：${RUN_STAGE_VALUES.join("、")}。`,
+      { field: "stage" },
+    );
+  }
+  const status = parsed.value.status;
+  if (
+    typeof status !== "string" ||
+    !(RUN_STAGE_STATUS_VALUES as readonly string[]).includes(status)
+  ) {
+    return invalid_arguments(
+      `入参字段 "status" 期望以下之一：${RUN_STAGE_STATUS_VALUES.join("、")}。`,
+      { field: "status" },
+    );
+  }
+  const artifact = parsed.value.artifact;
+  if (
+    artifact !== undefined &&
+    artifact !== null &&
+    (typeof artifact !== "string" || artifact.trim() === "")
+  ) {
+    return invalid_arguments('入参字段 "artifact" 期望非空字符串或 null。', {
+      field: "artifact",
+    });
+  }
+  const warnings = parsed.value.warnings;
+  if (warnings !== undefined && !Array.isArray(warnings)) {
+    return invalid_arguments('入参字段 "warnings" 期望数组。', { field: "warnings" });
+  }
+
+  return {
+    ok: true,
+    value: {
+      workspace_root,
+      run_id,
+      stage: stage as UpdateRunStateInput["stage"],
+      status: status as UpdateRunStateInput["status"],
+      ...(artifact === undefined ? {} : { artifact: artifact as string | null }),
+      ...(warnings === undefined ? {} : { warnings: warnings as UpdateRunStateInput["warnings"] }),
+    },
+  };
 }
 
 function parse_validate_stage_artifact_arguments(

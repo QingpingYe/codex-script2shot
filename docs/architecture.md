@@ -727,9 +727,9 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 | `refresh_local_index` | 只刷新发生变化的文档对应的本地索引 |
 | `search_knowledge` | 执行过滤、关键词检索和 priority 排序 |
 | `load_knowledge_pack` | 加载通用知识、项目知识和 Seedance 规则 |
-| `init_run` | 创建运行目录和 `run.json`，记录输入模式、项目 ID 和目标模型 |
-| `read_run` | 读取 `run.json` 和阶段状态，用于续跑和聚合输出 |
-| `update_run_state` | 更新阶段状态、产物路径和警告 |
+| `init_run` | 在显式 `workspace_root` 下创建运行目录和 `run.json`，记录输入模式、项目 ID、目标模型和可选画幅 |
+| `read_run` | 在显式 `workspace_root` 下读取 `run.json` 和阶段状态，用于续跑和聚合输出 |
+| `update_run_state` | 在显式 `workspace_root` 下更新阶段状态、产物路径和警告 |
 | `validate_stage_artifact` | 按 schema 校验 `script_analysis.json` 和 `shot_plan.json` |
 | `validate_prompt` | 校验 PromptIR 和 Seedance 硬规则 |
 | `render_prompt` | 渲染 Seedance 2.0 或 Seedance 2.5 提示词 |
@@ -791,7 +791,7 @@ $knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
 负责：
 
 - 接收一段剧本、一集剧本或多集剧本。
-- 要求用户提供 `project_id` 和单一 `target_model`，并识别输入模式。
+- 要求用户提供 `project_id`、单一 `target_model` 和可选 `aspect_ratio`，并识别输入模式。
 - 读取 AI 库的按文档 SyncState。
 - 只刷新发生变化文档对应的本地索引。
 - 创建运行目录和 `run.json`。
@@ -973,8 +973,8 @@ general / project 块重复归类。
   -> shot-prompting   -> prompts.ir.json -> prompts.<model>.md
 ```
 
-1. 入口读取剧本文本，识别输入模式，要求用户提供 `project_id` 和单一
-   `target_model`。
+1. 入口读取剧本文本，识别输入模式，要求用户提供 `project_id`、单一
+   `target_model` 和可选 `aspect_ratio`。
 2. 入口读取 AI 库的 `SyncState`，只刷新发生变化文档对应的本地索引。
 3. 入口创建运行目录和 `run.json`。
 4. `script-breakdown` 输出 `script_analysis.json`，入口调用 `validate_stage_artifact` 校验。
@@ -989,7 +989,8 @@ general / project 块重复归类。
 
 三个阶段只通过文件产物交接，不依赖会话上下文。
 
-`run.json` 记录一次运行的上下文和阶段状态：
+`run.json` 记录一次运行的上下文和阶段状态；`aspect_ratio` 是可选运行级参数，
+取值为 `16:9`、`4:3`、`1:1`、`3:4`、`9:16`、`21:9`，缺失时由调用方在提示词阶段补充：
 
 ```json
 {
@@ -997,6 +998,7 @@ general / project 块重复归类。
   "input_mode": "single_episode",
   "project_id": "demo",
   "target_model": "seedance-2.5",
+  "aspect_ratio": "16:9",
   "stages": {
     "script_breakdown": {
       "status": "done",
@@ -1088,7 +1090,7 @@ PromptIR 的结构化枚举和字段标识使用英文；最终渲染的 Seedanc
   warnings.md
 ```
 
-`run.json` 记录本次运行的输入模式、项目、目标模型和各阶段状态，用于续跑和排查。
+`run.json` 记录本次运行的输入模式、项目、目标模型、可选画幅和各阶段状态，用于续跑和排查。
 
 `knowledge_refs.json` 由入口根据三个阶段产物中的引用记录生成，只包含
 `used` 和 `dropped_by_budget`。

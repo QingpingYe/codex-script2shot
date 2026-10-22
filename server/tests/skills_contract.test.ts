@@ -97,8 +97,10 @@ describe("knowledge-sync mcp tools contract", () => {
   /**
    * tools/list 回归清单：名单里的 `health` 与七个同步工具
    * （scan/read/plan/fetch/replace/update/delete）是 knowledge-sync 直接消费的；
-   * `write_config` 与 `init_knowledge_b` 属于 setup 流程，`validate_stage_artifact`
-   * 是阶段产物校验入口，`validate_prompt` 是 PromptIR 硬规则校验入口，
+   * `write_config` 与 `init_knowledge_b` 属于 setup 流程，
+   * `init_run` / `read_run` / `update_run_state` 是入口运行目录状态入口，
+   * `validate_stage_artifact` 是阶段产物校验入口，
+   * `validate_prompt` 是 PromptIR 硬规则校验入口，
    * `render_prompt` 是提示词渲染入口，
    * 一并纳入额外回归覆盖。
    */
@@ -113,6 +115,9 @@ describe("knowledge-sync mcp tools contract", () => {
     "replace_doc_cards",
     "update_doc_sync_state",
     "delete_doc_cards",
+    "init_run",
+    "read_run",
+    "update_run_state",
     "validate_stage_artifact",
     "validate_prompt",
     "render_prompt",

@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RunState",
+  "description": "script2shot 运行上下文与三阶段状态（docs/architecture.md §11.2）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "input_mode",
+    "project_id",
+    "target_model",
+    "stages"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^run-\\d{8}-\\d{6}$"
+    },
+    "input_mode": {
+      "type": "string",
+      "enum": ["script_segment", "single_episode", "multiple_episodes"]
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_model": {
+      "type": "string",
+      "enum": ["seedance-2.0", "seedance-2.5"]
+    },
+    "aspect_ratio": {
+      "type": "string",
+      "description": "可选的运行级画幅比例；缺失时由调用方在提示词阶段补充。",
+      "enum": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"]
+    },
+    "warnings": {
+      "type": "array",
+      "description": "运行级警告；警告只增不改，由入口最终汇总到 warnings.md。",
+      "items": {
+        "$ref": "#/$defs/warning"
+      }
+    },
+    "stages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["script_breakdown", "shot_planning", "shot_prompting"],
+      "properties": {
+        "script_breakdown": {
+          "$ref": "#/$defs/stage_state"
+        },
+        "shot_planning": {
+          "$ref": "#/$defs/stage_state"
+        },
+        "shot_prompting": {
+          "$ref": "#/$defs/stage_state"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stage_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "artifact", "updated_at"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pending", "running", "done", "failed"]
+        },
+        "artifact": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "updated_at": {
+          "type": ["string", "null"],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+        }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

@@ -151,6 +151,9 @@ describe("mcp handshake", () => {
       const toolNames = result.tools.map((tool) => tool.name);
       expect(toolNames).toContain("health");
       expect(toolNames).toContain("write_config");
+      expect(toolNames).toContain("init_run");
+      expect(toolNames).toContain("read_run");
+      expect(toolNames).toContain("update_run_state");
       expect(toolNames).toContain("validate_prompt");
       expect(toolNames).toContain("render_prompt");
       for (const tool of result.tools) {
@@ -274,6 +277,132 @@ describe("mcp handshake", () => {
       expect(errors.join(""), "server stderr should stay empty").toBe("");
     } finally {
       await client.close();
+    }
+  }, 30000);
+
+  test("tools/call runs run-directory tools and rejects malformed arguments", async () => {
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), "script2shot-tools-run-"));
+    const { client, errors } = await connect_server(server_env());
+
+    try {
+      const initialized = parse_tool_json(
+        await client.callTool({
+          name: "init_run",
+          arguments: {
+            workspace_root: tempRoot,
+            input_mode: "single_episode",
+            project_id: "demo",
+            target_model: "seedance-2.5",
+            aspect_ratio: "9:16",
+          },
+        }),
+      );
+      const run_id = initialized.run_id as string;
+      expect(run_id).toMatch(/^run-\d{8}-\d{6}$/);
+      expect(initialized.run_json_path).toBe(
+        path.join(tempRoot, ".script2shot", "outputs", run_id, "run.json"),
+      );
+
+      const read = parse_tool_json(
+        await client.callTool({
+          name: "read_run",
+          arguments: { workspace_root: tempRoot, run_id },
+        }),
+      );
+      expect(read).toMatchObject({
+        run: { run_id, aspect_ratio: "9:16" },
+        artifacts: {
+          script_breakdown: { exists: false, valid: false },
+          shot_planning: { exists: false, valid: false },
+          shot_prompting: { exists: false, valid: false },
+        },
+        warnings: [],
+      });
+
+      const updated = parse_tool_json(
+        await client.callTool({
+          name: "update_run_state",
+          arguments: {
+            workspace_root: tempRoot,
+            run_id,
+            stage: "script_breakdown",
+            status: "running",
+          },
+        }),
+      );
+      expect(updated).toMatchObject({
+        run: {
+          run_id,
+          aspect_ratio: "9:16",
+          stages: { script_breakdown: { status: "running" } },
+        },
+      });
+
+      const unknownKey = parse_tool_json(
+        await client.callTool({
+          name: "init_run",
+          arguments: {
+            workspace_root: tempRoot,
+            input_mode: "single_episode",
+            project_id: "demo",
+            target_model: "seedance-2.5",
+            unexpected: true,
+          },
+        }),
+      );
+      expect(unknownKey).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "unexpected" } },
+      });
+
+      const invalidAspectRatio = parse_tool_json(
+        await client.callTool({
+          name: "init_run",
+          arguments: {
+            workspace_root: tempRoot,
+            input_mode: "single_episode",
+            project_id: "demo",
+            target_model: "seedance-2.5",
+            aspect_ratio: "2:1",
+          },
+        }),
+      );
+      expect(invalidAspectRatio).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "aspect_ratio" } },
+      });
+
+      const missingWorkspaceRoot = parse_tool_json(
+        await client.callTool({
+          name: "read_run",
+          arguments: { run_id },
+        }),
+      );
+      expect(missingWorkspaceRoot).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "workspace_root" } },
+      });
+
+      const invalidStatus = parse_tool_json(
+        await client.callTool({
+          name: "update_run_state",
+          arguments: {
+            workspace_root: tempRoot,
+            run_id,
+            stage: "script_breakdown",
+            status: "complete",
+          },
+        }),
+      );
+      expect(invalidStatus).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "status" } },
+      });
+
+      expect(errors.join(""), "server stderr should stay empty").toBe("");
+    } finally {
+      await client.close();
+      rmSync(tempRoot, { recursive: true, force: true });
     }
   }, 30000);
 
