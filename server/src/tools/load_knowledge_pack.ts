@@ -22,10 +22,10 @@ import { TARGET_MODEL_VALUES } from "./search_knowledge.js";
  *   `category != "seedance_rule"` 的卡片。
  *
  * 只读本地索引：`index_status()` 探测 + `readOnly` 打开 sqlite，绝不创建或修复
- * 索引文件。索引缺失、损坏或读取失败时按 §13 降级：用本地缓存（`load_cache()`）
- * 的卡片走同一套来源块与 target_model 规则组装知识包，返回 `degraded: true` +
- * warning `INDEX_UNAVAILABLE`；缓存也不可用（损坏、版本不支持或没有卡片）时才
- * 返回 `INDEX_UNAVAILABLE` 错误。
+ * 索引文件。索引缺失、损坏、暂时不可读或 ready 后读取失败时按 §13 降级：用本地
+ * 缓存（`load_cache()`）的卡片走同一套来源块与 target_model 规则组装知识包，
+ * 返回 `degraded: true` + warning `INDEX_UNAVAILABLE`；缓存也不可用（损坏、版本
+ * 不支持或没有卡片）时才返回 `INDEX_UNAVAILABLE` 错误。
  *
  * `explain` 是 Phase 5 的诊断输出（§10.4）：本期接受参数、不改变行为，
  * 传 `true` 时返回 warning `EXPLAIN_NOT_AVAILABLE`。
@@ -63,6 +63,7 @@ export interface PackStats {
 export interface PackWarning {
   code: string;
   message: string;
+  details?: Record<string, unknown>;
 }
 
 export interface LoadKnowledgePackSuccess {
@@ -158,14 +159,15 @@ export function load_knowledge_pack(
   if (rows !== undefined) {
     return build_pack(rows, options, false);
   }
+  const index_read_failed = status.state === "ready" && rows === undefined;
 
   // §13：索引缺失、损坏，或状态为 ready 但读取失败（并发重建、文件被占用等）
   // 时一律降级到本地缓存；缓存也不可用时才返回 INDEX_UNAVAILABLE 错误。
   const cached_rows = read_cache_rows();
   if (cached_rows === undefined) {
-    return index_unavailable(index_path, status.state, status.state === "ready");
+    return index_unavailable(index_path, status.state, index_read_failed);
   }
-  return build_pack(cached_rows, options, true);
+  return build_pack(cached_rows, options, true, status.state, index_read_failed);
 }
 
 function parse_input(
@@ -216,6 +218,8 @@ function build_pack(
   rows: readonly PackRow[],
   options: PackOptions,
   degraded: boolean,
+  index_state?: IndexState,
+  index_read_failed = false,
 ): LoadKnowledgePackSuccess {
   const general: PackRow[] = [];
   const project: PackRow[] = [];
@@ -268,6 +272,8 @@ function build_pack(
     degraded,
     warnings: collect_warnings({
       index_unavailable: degraded,
+      index_state,
+      index_read_failed,
       general_empty: general.length === 0,
       project_empty: project.length === 0,
       explain: options.explain,
@@ -390,6 +396,8 @@ function from_index_row(row: Record<string, unknown>): PackRow {
  */
 function collect_warnings(flags: {
   index_unavailable?: boolean;
+  index_state?: IndexState;
+  index_read_failed?: boolean;
   general_empty?: boolean;
   project_empty?: boolean;
   explain?: boolean;
@@ -398,9 +406,14 @@ function collect_warnings(flags: {
   if (flags.index_unavailable === true) {
     warnings.push({
       code: "INDEX_UNAVAILABLE",
-      message:
-        "本地关键词索引不可用（缺失或损坏），已按本地缓存组装知识包；" +
-        "缓存卡片仍按来源块与 target_model 规则过滤。",
+      message: index_unavailable_warning_message(
+        flags.index_state,
+        flags.index_read_failed === true,
+      ),
+      details: {
+        index_state: flags.index_state ?? "unknown",
+        index_read_failed: flags.index_read_failed === true,
+      },
     });
   }
   if (flags.general_empty === true) {
@@ -439,9 +452,52 @@ function index_unavailable(
   }
   return failure(
     "INDEX_UNAVAILABLE",
-    "本地关键词索引不可用（缺失或损坏），且没有可用的本地缓存；" +
-      "请先运行 refresh_local_index 重建本地索引。",
+    index_unavailable_error_message(index_state, read_failed),
     details,
+  );
+}
+
+function index_unavailable_warning_message(
+  index_state: IndexState | undefined,
+  read_failed: boolean,
+): string {
+  if (index_state === "unreadable") {
+    return (
+      "本地关键词索引暂时不可读（可能是权限、文件占用或 IO 失败），" +
+      "已按本地缓存组装知识包；缓存卡片仍按来源块与 target_model 规则过滤。"
+    );
+  }
+  if (read_failed) {
+    return (
+      "本地关键词索引读取失败（可能由并发重建或文件占用引起），" +
+      "已按本地缓存组装知识包；缓存卡片仍按来源块与 target_model 规则过滤。"
+    );
+  }
+  return (
+    "本地关键词索引不可用（缺失或损坏），已按本地缓存组装知识包；" +
+    "缓存卡片仍按来源块与 target_model 规则过滤。"
+  );
+}
+
+function index_unavailable_error_message(
+  index_state: IndexState,
+  read_failed: boolean,
+): string {
+  if (index_state === "unreadable") {
+    return (
+      "本地关键词索引暂时无法读取（可能是权限、文件占用或 IO 失败），" +
+      "且没有可用的本地缓存；请检查索引文件后重试。"
+    );
+  }
+  if (read_failed) {
+    return (
+      "本地关键词索引读取失败（可能由并发重建或文件占用引起），" +
+      "且没有可用的本地缓存；请稍后重试。"
+    );
+  }
+  return (
+    "本地关键词索引不可用，且没有可用的本地缓存；" +
+    "请先运行 refresh_local_index 重建本地索引。"
   );
 }
 

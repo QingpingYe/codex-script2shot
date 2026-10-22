@@ -374,6 +374,20 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
       },
       "INDEX_NOT_BUILT",
     );
+  } else if (index.state === "unreadable") {
+    push_check(
+      checks,
+      warnings,
+      {
+        id: "index",
+        status: "warn",
+        message:
+          "本地索引暂时无法读取（可能是权限、文件占用或 IO 失败），" +
+          "请检查索引文件后重试；检索会先回退到缓存。",
+        detail: { state: "unreadable", card_count: 0, path: index_path },
+      },
+      "INDEX_UNREADABLE",
+    );
   } else {
     push_check(
       checks,

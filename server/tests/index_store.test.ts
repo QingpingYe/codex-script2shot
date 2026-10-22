@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -261,6 +262,31 @@ describe("index_store", () => {
     expect(index_status(file_path)).toEqual({ state: "corrupt", card_count: 0 });
   });
 
+  test("index reports an exclusively locked database as unreadable without touching it", () => {
+    const db = open_index();
+    try {
+      replace_doc_rows(db, "doccn-a", [make_card("card-a-1", "doccn-a")], {
+        source_revision: 3,
+        last_synced_at: "2026-10-21T10:00:00+08:00",
+      });
+    } finally {
+      db.close();
+    }
+
+    const file_path = index_file_path();
+    const bytes_before = readFileSync(file_path);
+
+    const lock = new DatabaseSync(file_path);
+    try {
+      lock.exec("BEGIN EXCLUSIVE");
+      expect(index_status(file_path)).toEqual({ state: "unreadable", card_count: 0 });
+      expect(readFileSync(file_path).equals(bytes_before), "探测不得修改被锁索引").toBe(true);
+    } finally {
+      lock.exec("ROLLBACK");
+      lock.close();
+    }
+  });
+
   test("index status is a read-only probe for empty and schema-less files", () => {
     const file_path = index_file_path();
     mkdirSync(path.dirname(file_path), { recursive: true });
@@ -367,6 +393,56 @@ describe("index_store", () => {
           source_doc_token: "doccn-b",
           source_revision: 4,
           last_synced_at: "2026-10-21T11:00:00+08:00",
+        },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("replace doc rows rejects a card owned by another token before mutating the index", () => {
+    const db = open_index();
+    try {
+      replace_doc_rows(db, "doccn-a", [make_card("card-a-1", "doccn-a")], {
+        source_revision: 3,
+        last_synced_at: "2026-10-21T10:00:00+08:00",
+      });
+
+      let thrown: unknown;
+      try {
+        replace_doc_rows(
+          db,
+          "doccn-a",
+          [
+            make_card("card-a-2", "doccn-a"),
+            make_card("card-b-2", "doccn-b"),
+          ],
+          { source_revision: 4, last_synced_at: "2026-10-21T11:00:00+08:00" },
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toMatchObject({
+        code: "INDEX_CARD_OWNERSHIP_MISMATCH",
+        details: {
+          source_doc_token: "doccn-a",
+          row: 1,
+          card_source_doc_token: "doccn-b",
+        },
+      });
+      expect(
+        query_values(
+          db,
+          "SELECT card_id FROM cards WHERE source_doc_token = ? ORDER BY card_id",
+          "doccn-a",
+        ),
+      ).toEqual(["card-a-1"]);
+      expect(list_doc_markers(db)).toEqual([
+        {
+          source_doc_token: "doccn-a",
+          source_revision: 3,
+          last_synced_at: "2026-10-21T10:00:00+08:00",
         },
       ]);
     } finally {

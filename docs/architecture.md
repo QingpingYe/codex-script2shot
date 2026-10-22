@@ -678,6 +678,7 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
   -> 比较 source_revision 和 last_synced_at
   -> 未变化的文档不刷新
   -> 只拉取变化文档对应的知识卡
+  -> 逐卡校验卡片的 source_revision 与 SyncState.source_revision 一致
   -> 只更新这些文档在本地关键词索引中的数据
 ```
 
@@ -690,6 +691,22 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 （`CACHE_CORRUPT` / `CACHE_VERSION_UNSUPPORTED` / `CACHE_UNREADABLE`），并把
 `docs` 视为空；它绝不自动覆盖缓存文件，是否重建（重新拉取全部文档）由
 `refresh_local_index` 决定。
+
+本地关键词索引固定为 `<home>/index/knowledge.sqlite`，是 AI 库的派生临时数据。
+`index_status()` 只按路径做只读探测，不创建或修复文件、不执行 DDL、不抛异常，
+并返回以下状态：
+
+| 状态 | 判定 | 消费方式 |
+| --- | --- | --- |
+| `missing` | 索引文件不存在 | 检索与知识包回退到本地缓存；写路径按派生数据重建 |
+| `ready` | 文件可读且 `cards` 表存在 | 读取索引；若随后的实际查询失败，按索引临时不可用处理 |
+| `corrupt` | 路径不是普通文件、0 字节、SQLite 结构损坏或缺少 `cards` 表 | 检索与知识包回退到本地缓存；写路径可删除旧文件后重建 |
+| `unreadable` | `stat`、只读打开或验证查询遇到权限、占用、IO 等临时失败 | 检索与知识包回退到本地缓存；写路径 fail-closed，不删除索引文件 |
+
+写路径在索引为 `unreadable`，或探测为 `ready` 但 `doc_state` 读取失败时返回
+`INDEX_UNAVAILABLE`，并在 `details` 中保留 `index_state` / `index_read_failed`，
+绝不删除仍可能恢复的索引文件。`replace_doc_rows` 还会在事务开始前校验每张
+卡片的 `source_doc_token` 与目标 token 一致；不一致时拒绝整次替换并保持索引原样。
 
 ## 8. MCP Tool
 
@@ -1104,11 +1121,15 @@ Base 权限，而不是依赖 `project_id` 过滤承担访问控制。
 | 未登录飞书 | 引导用户执行 `lark-cli auth login` |
 | AI 库不存在 SyncState | 提示先运行 `knowledge-sync` |
 | AI 库不可达 | 有本地缓存时继续运行并写 warning；无缓存时停止 |
+| SyncState 全表为空但本地有文档 | 删除行为不变；产生删除前写 `SYNC_STATE_EMPTY` warning，提示可能是 SyncState 表为空或 `lark.sync_state_table_id` 指向空表 |
+| 卡片 `source_revision` 与 SyncState 不一致 | fail-closed 返回 `KB_READ_FAILED`，`details` 记录文档、行号与两侧 revision；不写本地缓存或索引 |
 | 原始库元数据读取失败 | 停止扫描并提示失败原因 |
 | 单个文档正文读取失败 | 跳过该文档，其他文档继续同步 |
 | 单个文档知识卡写入失败 | 不更新该文档 SyncState，下次只重试该文档 |
 | 本地缓存过期 | 只刷新发生变化文档对应的索引数据 |
-| 关键词索引不可用 | 回退到本地缓存并写 `INDEX_UNAVAILABLE` warning：`search_knowledge` 按 `priority` 降序返回缓存候选，`load_knowledge_pack` 用缓存卡片按同一套来源块 / target model 规则组装知识包；缓存也不可用时才报错 |
+| 关键词索引 missing / corrupt / unreadable | 回退到本地缓存并写 `INDEX_UNAVAILABLE` warning：`search_knowledge` 按 `priority` 降序返回缓存候选，`load_knowledge_pack` 用缓存卡片按同一套来源块 / target model 规则组装知识包；warning 与错误 `details` 保留 `index_state` / `index_read_failed`；缓存也不可用时才报错 |
+| 关键词索引 ready 后读取失败 | 与索引 missing / corrupt / unreadable 一样回退缓存并写 `INDEX_UNAVAILABLE`；warning 说明并发重建或占用可能；`refresh_local_index` 写路径 fail-closed，保留索引文件 |
+| 本地索引卡片归属不一致 | 索引写入在事务开始前拒绝并保持索引原样；工具层同时给出文档与行号上下文 |
 | 阶段产物缺失或 schema 校验失败 | 停止该阶段，提示缺少的上游产物或字段，不进入下一阶段 |
 | 阶段产物被人工修改 | 重新校验通过后，从该阶段之后继续运行 |
 | `run.json` 与产物不一致 | 以产物为准重新校验，并修正 `run.json` 的阶段状态 |

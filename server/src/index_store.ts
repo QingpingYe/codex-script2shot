@@ -69,12 +69,31 @@ ON CONFLICT(source_doc_token) DO UPDATE SET
   last_synced_at = excluded.last_synced_at
 `;
 
-export type IndexState = "ready" | "missing" | "corrupt";
+export type IndexState = "ready" | "missing" | "corrupt" | "unreadable";
 
-/** `index_status()` 的返回值；missing/corrupt 时 `card_count` 固定为 0。 */
+/** `index_status()` 的返回值；非 ready 时 `card_count` 固定为 0。 */
 export interface IndexStatus {
   state: IndexState;
   card_count: number;
+}
+
+export interface IndexCardOwnershipDetails {
+  source_doc_token: string;
+  row: number;
+  card_source_doc_token: string;
+}
+
+/** 索引写入前的归属守卫错误；调用方可用 `code` 做结构化处理。 */
+export class IndexCardOwnershipError extends Error {
+  readonly code = "INDEX_CARD_OWNERSHIP_MISMATCH";
+
+  constructor(readonly details: IndexCardOwnershipDetails) {
+    super(
+      `索引更新被拒绝：第 ${details.row + 1} 张卡片属于 ${details.card_source_doc_token}，` +
+        `不能写入 ${details.source_doc_token}。`,
+    );
+    this.name = "IndexCardOwnershipError";
+  }
 }
 
 /** `list_doc_markers()` 的条目：doc_state 行 + 主键 token。 */
@@ -121,7 +140,8 @@ function ensure_private_file(file_path: string): void {
 /**
  * 按文档整体替换索引行：单事务内删除该 token 的旧行、插入新行、upsert
  * `doc_state`。任何一步失败整次回滚，旧索引与旧标记保持原样。
- * `cards[].source_doc_token` 不参与写入，行的归属统一取 `source_doc_token` 参数。
+ * `cards[].source_doc_token` 必须与 `source_doc_token` 参数一致；归属守卫在事务
+ * 开始前执行，任一不一致都拒绝整次替换并保持索引原样。
  */
 export function replace_doc_rows(
   db: DatabaseSync,
@@ -129,6 +149,16 @@ export function replace_doc_rows(
   cards: readonly KnowledgeCard[],
   marker: DocMarker,
 ): void {
+  for (const [row, card] of cards.entries()) {
+    if (card.source_doc_token !== source_doc_token) {
+      throw new IndexCardOwnershipError({
+        source_doc_token,
+        row,
+        card_source_doc_token: card.source_doc_token,
+      });
+    }
+  }
+
   const delete_cards = db.prepare("DELETE FROM cards WHERE source_doc_token = ?");
   const insert_card = db.prepare(INSERT_CARD_SQL);
   const upsert_state = db.prepare(UPSERT_DOC_STATE_SQL);
@@ -174,26 +204,26 @@ export function delete_doc_rows(db: DatabaseSync, source_doc_token: string): voi
  * 按路径只读探测索引状态，不抛异常、不凭空创建文件、不写任何字节：
  *
  * - 路径不存在 -> `missing`（不落盘）；
- * - 存在但不是普通文件、大小为 0、无法以只读方式打开、或缺少 `cards` 表 ->
+ * - 存在但不是普通文件、大小为 0、SQLite 结构损坏、或缺少 `cards` 表 ->
  *   `corrupt`（0 字节文件不再当空库处理：这里绝不执行 DDL）；
+ * - stat / 只读打开 / 查询遇到权限、占用、IO 等临时失败 -> `unreadable`；
  * - 其余 -> `ready` 并返回 `cards` 行数。
  *
  * 调用方（health、`refresh_local_index` 的 dry run 与重建判断）据此决定重建或
  * 降级；真正建表只发生在写路径的 `open_index()` 里。
  */
 export function index_status(file_path: string = index_file_path()): IndexStatus {
-  if (!existsSync(file_path)) {
-    return { state: "missing", card_count: 0 };
-  }
-
   let size = 0;
   let is_file = false;
   try {
     const stats = statSync(file_path);
     size = stats.size;
     is_file = stats.isFile();
-  } catch {
-    return { state: "corrupt", card_count: 0 };
+  } catch (error) {
+    if (is_missing_path_error(error)) {
+      return { state: "missing", card_count: 0 };
+    }
+    return { state: "unreadable", card_count: 0 };
   }
   if (!is_file || size === 0) {
     return { state: "corrupt", card_count: 0 };
@@ -205,13 +235,54 @@ export function index_status(file_path: string = index_file_path()): IndexStatus
     const row = db.prepare("SELECT COUNT(*) AS card_count FROM cards").get();
     const card_count = row?.card_count;
     return { state: "ready", card_count: typeof card_count === "number" ? card_count : 0 };
-  } catch {
-    return { state: "corrupt", card_count: 0 };
+  } catch (error) {
+    return { state: index_probe_error_state(error), card_count: 0 };
   } finally {
     if (db !== undefined) {
       close_quietly(db);
     }
   }
+}
+
+const SQLITE_SQL_LOGIC_ERROR = 1;
+const SQLITE_CORRUPT = 11;
+const SQLITE_NOTADB = 26;
+
+/**
+ * 探测查询失败时只把已知的结构问题归为 `corrupt`；其余错误（含未知 SQLite
+ * 错误，以及 BUSY/LOCKED/IOERR/PERM/CANTOPEN/READONLY）一律归为
+ * `unreadable`，避免写路径误删仍可能恢复的索引文件。
+ */
+function index_probe_error_state(error: unknown): "corrupt" | "unreadable" {
+  const errcode = sqlite_errcode(error);
+  if (errcode === undefined) {
+    return "unreadable";
+  }
+  const primary = errcode & 0xff;
+  if (
+    primary === SQLITE_SQL_LOGIC_ERROR ||
+    primary === SQLITE_CORRUPT ||
+    primary === SQLITE_NOTADB
+  ) {
+    return "corrupt";
+  }
+  return "unreadable";
+}
+
+function sqlite_errcode(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) {
+    return undefined;
+  }
+  const errcode = (error as { errcode?: unknown }).errcode;
+  return typeof errcode === "number" && Number.isInteger(errcode) ? errcode : undefined;
+}
+
+function is_missing_path_error(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }
 
 /** 列出本地索引中的全部文档标记，按 `source_doc_token` 升序保证可复现。 */

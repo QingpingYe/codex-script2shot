@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -129,6 +130,25 @@ function seed_cache(cards: KnowledgeCard[], marker: DocMarker = DEFAULT_MARKER):
     docs: { [DOC_A]: { ...marker, cards: [...cards] } },
   };
   save_cache(cache);
+}
+
+function seed_cards_only_index(): void {
+  const index_path = index_file_path();
+  mkdirSync(path.dirname(index_path), { recursive: true });
+  const db = new DatabaseSync(index_path);
+  try {
+    db.exec("CREATE TABLE cards (card_id TEXT)");
+  } finally {
+    db.close();
+  }
+}
+
+function index_warning_details(
+  result: SearchKnowledgeSuccess,
+  code: string,
+): Record<string, unknown> | undefined {
+  const warning = result.warnings.find((entry) => entry.code === code);
+  return (warning as { details?: Record<string, unknown> } | undefined)?.details;
 }
 
 /** 四个过滤条件共用一份 fixture：同一分类两张命中/不命中的卡。 */
@@ -445,6 +465,65 @@ describe("search_knowledge", () => {
     rmSync(cache_file_path(), { force: true });
     const failed = search_knowledge({ query: "夜景" });
     expect(failed).toMatchObject({ ok: false, error: { code: "INDEX_UNAVAILABLE" } });
+  });
+
+  test("search attributes an unreadable index and preserves probe details", () => {
+    seed_index([make_card("card-index", { title: "索引卡" })]);
+    seed_cache([make_card("card-cache", { title: "缓存卡", priority: 9 })]);
+
+    const lock = new DatabaseSync(index_file_path());
+    try {
+      lock.exec("BEGIN EXCLUSIVE");
+      const result = expect_success(search_knowledge({ query: "缓存" }));
+
+      expect(result.degraded).toBe(true);
+      expect(candidate_ids(result)).toEqual(["card-cache"]);
+      const warning = result.warnings.find((entry) => entry.code === "INDEX_UNAVAILABLE");
+      expect(warning?.message).toContain("暂时不可读");
+      expect(index_warning_details(result, "INDEX_UNAVAILABLE")).toEqual({
+        index_state: "unreadable",
+        index_read_failed: false,
+      });
+    } finally {
+      lock.exec("ROLLBACK");
+      lock.close();
+    }
+  });
+
+  test("search attributes a ready index read failure to concurrent rebuild or locking", () => {
+    seed_cards_only_index();
+    seed_cache([make_card("card-cache", { title: "缓存卡" })]);
+
+    const result = expect_success(search_knowledge({ query: "缓存" }));
+
+    expect(result.degraded).toBe(true);
+    expect(candidate_ids(result)).toEqual(["card-cache"]);
+    const warning = result.warnings.find((entry) => entry.code === "INDEX_UNAVAILABLE");
+    expect(warning?.message).toContain("并发重建");
+    expect(warning?.message).toContain("占用");
+    expect(index_warning_details(result, "INDEX_UNAVAILABLE")).toEqual({
+      index_state: "ready",
+      index_read_failed: true,
+    });
+  });
+
+  test("search error details preserve ready-state read failure when cache is absent", () => {
+    seed_cards_only_index();
+
+    const result = search_knowledge({ query: "缓存" });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "INDEX_UNAVAILABLE",
+        details: {
+          index_path: index_file_path(),
+          index_state: "ready",
+          index_read_failed: true,
+          cache_path: cache_file_path(),
+        },
+      },
+    });
   });
 
   test("search never creates an index file when the index is absent", () => {

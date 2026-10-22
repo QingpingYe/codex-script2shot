@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { KnowledgeCategory, KnowledgeScope, TargetModel } from "../base_mapping.js";
 import { cache_file_path, load_cache, type CacheLoadResult } from "../cache.js";
 import { load_config } from "../config.js";
-import { index_file_path, index_status } from "../index_store.js";
+import { index_file_path, index_status, type IndexState } from "../index_store.js";
 import { normalize_text } from "../normalize.js";
 import {
   assemble_context,
@@ -29,10 +29,11 @@ import { SETUP_DEFAULTS } from "../setup_defaults.js";
  * - 空/全空白查询 ⇒ 空候选 + warning `EMPTY_QUERY`，在任何索引/缓存状态下都
  *   短路（不探测索引、不读缓存、`degraded: false`）：没有查询就没有关键词结果，
  *   用不上回退候选集。
- * - 索引不可用（`index_status` 为 missing / corrupt，或读取中途失败）⇒ 回退到
- *   Task 1 缓存：仍应用同样的四个过滤条件，按 `priority` 降序取候选，
- *   `degraded: true` + warning `INDEX_UNAVAILABLE`，`match_level` 一律为 `null`
- *   （回退路径不重跑关键词匹配）。缓存缺失、损坏或为空 ⇒ `INDEX_UNAVAILABLE` 错误。
+ * - 索引不可用（`index_status` 为 missing / corrupt / unreadable，或 ready 后
+ *   读取中途失败）⇒ 回退到 Task 1 缓存：仍应用同样的四个过滤条件，按 `priority`
+ *   降序取候选，`degraded: true` + warning `INDEX_UNAVAILABLE`，`match_level`
+ *   一律为 `null`（回退路径不重跑关键词匹配）。缓存缺失、损坏或为空 ⇒
+ *   `INDEX_UNAVAILABLE` 错误。
  * - `explain` 是 Phase 5 的诊断输出（§10.4）：本期接受参数、不改变行为，
  *   传 `true` 时返回 warning `EXPLAIN_NOT_AVAILABLE`。
  *
@@ -70,6 +71,7 @@ export interface SearchCandidate {
 export interface SearchWarning {
   code: string;
   message: string;
+  details?: Record<string, unknown>;
 }
 
 export interface SearchKnowledgeSuccess {
@@ -191,6 +193,7 @@ export function search_knowledge(input: SearchKnowledgeInput = {}): SearchKnowle
 
   const index_path = index_file_path();
   const status = index_status(index_path);
+  let index_read_failed = false;
   if (status.state === "ready") {
     const indexed = read_index_cards(index_path, options.filters);
     if (indexed !== undefined) {
@@ -208,17 +211,18 @@ export function search_knowledge(input: SearchKnowledgeInput = {}): SearchKnowle
     }
     // 索引状态为 ready 但读取失败（并发重建、文件被占用等）：与 missing/corrupt
     // 同样按「索引不可用」处理，走缓存回退，不把内部异常抛给调用方。
+    index_read_failed = true;
   }
 
   const cached = read_cache_cards();
   if (cached === undefined) {
     return failure(
       "INDEX_UNAVAILABLE",
-      "本地关键词索引不可用，且没有可用的本地缓存；请先运行 refresh_local_index 重建本地索引。",
+      index_unavailable_error_message(status.state, index_read_failed),
       {
         index_path,
         index_state: status.state,
-        index_read_failed: status.state === "ready",
+        index_read_failed,
         cache_path: cache_file_path(),
       },
     );
@@ -232,7 +236,12 @@ export function search_knowledge(input: SearchKnowledgeInput = {}): SearchKnowle
     ordered,
     options,
     true,
-    collect_warnings({ index_unavailable: true, explain: options.explain }),
+    collect_warnings({
+      index_unavailable: true,
+      index_state: status.state,
+      index_read_failed,
+      explain: options.explain,
+    }),
   );
 }
 
@@ -546,6 +555,8 @@ function to_candidate(entry: OrderedCard): SearchCandidate {
 /** warning 顺序固定：INDEX_UNAVAILABLE -> EMPTY_QUERY -> EXPLAIN_NOT_AVAILABLE。 */
 function collect_warnings(flags: {
   index_unavailable?: boolean;
+  index_state?: IndexState;
+  index_read_failed?: boolean;
   empty_query?: boolean;
   explain?: boolean;
 }): SearchWarning[] {
@@ -553,9 +564,14 @@ function collect_warnings(flags: {
   if (flags.index_unavailable === true) {
     warnings.push({
       code: "INDEX_UNAVAILABLE",
-      message:
-        "本地关键词索引不可用（缺失或损坏），已按 priority 降序回退到本地缓存；" +
-        "本次结果不含关键词命中级别。",
+      message: index_unavailable_warning_message(
+        flags.index_state,
+        flags.index_read_failed === true,
+      ),
+      details: {
+        index_state: flags.index_state ?? "unknown",
+        index_read_failed: flags.index_read_failed === true,
+      },
     });
   }
   if (flags.empty_query === true) {
@@ -571,6 +587,50 @@ function collect_warnings(flags: {
     });
   }
   return warnings;
+}
+
+function index_unavailable_warning_message(
+  index_state: IndexState | undefined,
+  read_failed: boolean,
+): string {
+  if (index_state === "unreadable") {
+    return (
+      "本地关键词索引暂时不可读（可能是权限、文件占用或 IO 失败），" +
+      "已按 priority 降序回退到本地缓存；本次结果不含关键词命中级别。"
+    );
+  }
+  if (read_failed) {
+    return (
+      "本地关键词索引读取失败（可能由并发重建或文件占用引起），" +
+      "已按 priority 降序回退到本地缓存；本次结果不含关键词命中级别。"
+    );
+  }
+  return (
+    "本地关键词索引不可用（缺失或损坏），已按 priority 降序回退到本地缓存；" +
+    "本次结果不含关键词命中级别。"
+  );
+}
+
+function index_unavailable_error_message(
+  index_state: IndexState,
+  read_failed: boolean,
+): string {
+  if (index_state === "unreadable") {
+    return (
+      "本地关键词索引暂时无法读取（可能是权限、文件占用或 IO 失败），" +
+      "且没有可用的本地缓存；请检查索引文件后重试。"
+    );
+  }
+  if (read_failed) {
+    return (
+      "本地关键词索引读取失败（可能由并发重建或文件占用引起），" +
+      "且没有可用的本地缓存；请稍后重试。"
+    );
+  }
+  return (
+    "本地关键词索引不可用，且没有可用的本地缓存；" +
+    "请先运行 refresh_local_index 重建本地索引。"
+  );
 }
 
 function invalid(field: string, message: string): SearchKnowledgeFailure {

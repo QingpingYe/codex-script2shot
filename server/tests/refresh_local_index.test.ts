@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -921,6 +922,163 @@ describe("refresh_local_index", () => {
     });
     expect(cards_fetch_filters(), "未变化文档直接从缓存重建索引").toEqual([]);
     expect(read_index_rows().cards.map((row) => row.card_id)).toEqual(["card-a1", "card-b1"]);
+  });
+
+  test("refresh fails closed when the index is unreadable without deleting it", async () => {
+    const state_a = make_state(DOC_A, {
+      source_revision: 2,
+      last_synced_at: SYNCED_AT_LATER,
+      card_count: 1,
+    });
+    write_base_state({
+      state: [state_row("rec_state_a", state_a)],
+      cards: [card_row("rec_card_a1", make_card("card-a1", DOC_A, { source_revision: 2 }))],
+    });
+    const docs: SeededDoc[] = [
+      {
+        token: DOC_A,
+        marker: { source_revision: 1, last_synced_at: SYNCED_AT },
+        cards: [make_card("card-a-stale", DOC_A)],
+      },
+    ];
+    seed_cache(docs);
+    seed_index(docs);
+    const index_path = index_file_path();
+    const lock = new DatabaseSync(index_path);
+    try {
+      lock.exec("BEGIN EXCLUSIVE");
+
+      const result = await run_refresh({ dry_run: false });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "INDEX_UNAVAILABLE",
+          details: {
+            path: index_path,
+            index_state: "unreadable",
+            index_read_failed: false,
+          },
+        },
+      });
+      expect(cards_fetch_filters(), "索引不可读时不得开始拉取卡片").toEqual([]);
+    } finally {
+      lock.exec("ROLLBACK");
+      lock.close();
+    }
+
+    expect(read_index_rows()).toMatchObject({
+      markers: [
+        { source_doc_token: DOC_A, source_revision: 1, last_synced_at: SYNCED_AT },
+      ],
+      cards: [{ card_id: "card-a-stale", source_doc_token: DOC_A, source_revision: 1 }],
+    });
+  });
+
+  test("refresh fails closed when a ready index cannot read doc_state", async () => {
+    const state_a = make_state(DOC_A);
+    write_base_state({ state: [state_row("rec_state_a", state_a)], cards: [] });
+    seed_index([
+      {
+        token: DOC_A,
+        marker: marker_of(state_a),
+        cards: [make_card("card-a1", DOC_A)],
+      },
+    ]);
+
+    const index_path = index_file_path();
+    const db = new DatabaseSync(index_path);
+    try {
+      db.exec("DROP TABLE doc_state");
+    } finally {
+      db.close();
+    }
+    const bytes_before = readFileSync(index_path);
+    expect(index_status(index_path)).toEqual({ state: "ready", card_count: 1 });
+
+    const result = await run_refresh({ dry_run: false });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "INDEX_UNAVAILABLE",
+        details: {
+          path: index_path,
+          index_state: "ready",
+          index_read_failed: true,
+        },
+      },
+    });
+    expect(readFileSync(index_path).equals(bytes_before), "不得删除或重建未读通的索引").toBe(
+      true,
+    );
+  });
+
+  test("refresh rejects a card whose source revision differs from SyncState", async () => {
+    const state_a = make_state(DOC_A, {
+      source_revision: 2,
+      last_synced_at: SYNCED_AT_LATER,
+    });
+    write_base_state({
+      state: [state_row("rec_state_a", state_a)],
+      cards: [card_row("rec_card_a1", make_card("card-a1", DOC_A, { source_revision: 1 }))],
+    });
+    const docs: SeededDoc[] = [
+      {
+        token: DOC_A,
+        marker: { source_revision: 1, last_synced_at: SYNCED_AT },
+        cards: [make_card("card-a-stale", DOC_A)],
+      },
+    ];
+    seed_cache(docs);
+    seed_index(docs);
+    const frozen = freeze_cache_mtime();
+
+    const result = await run_refresh({ dry_run: false });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "KB_READ_FAILED",
+        details: {
+          source_doc_token: DOC_A,
+          row: 0,
+          card_source_revision: 1,
+          sync_state_source_revision: 2,
+        },
+      },
+    });
+    expect(statSync(cache_file_path()).mtimeMs, "交叉校验失败不得写缓存").toBe(frozen);
+    expect(load_cache().docs[DOC_A]?.source_revision).toBe(1);
+    expect(read_index_rows()).toMatchObject({
+      markers: [
+        { source_doc_token: DOC_A, source_revision: 1, last_synced_at: SYNCED_AT },
+      ],
+      cards: [{ card_id: "card-a-stale", source_doc_token: DOC_A, source_revision: 1 }],
+    });
+  });
+
+  test("refresh warns SYNC_STATE_EMPTY before deleting docs when the authority table is empty", async () => {
+    write_base_state({ state: [], cards: [] });
+    const docs: SeededDoc[] = [
+      {
+        token: DOC_A,
+        marker: { source_revision: 1, last_synced_at: SYNCED_AT },
+        cards: [make_card("card-a1", DOC_A)],
+      },
+    ];
+    seed_cache(docs);
+    seed_index(docs);
+
+    const result = expect_success(await run_refresh({ dry_run: false }));
+
+    expect(result.removed_docs).toEqual([DOC_A]);
+    const warning = result.warnings.find((entry) => entry.code === "SYNC_STATE_EMPTY");
+    expect(warning, "空 SyncState 删除本地文档前应给出可归因 warning").toBeDefined();
+    expect(warning?.message).toContain("SyncState 表为空");
+    expect(warning?.message).toContain("table_id");
+    expect(Object.keys(load_cache().docs)).toEqual([]);
+    expect(read_index_rows()).toEqual({ markers: [], cards: [] });
   });
 
   test("refresh propagates a card fetch failure without writing", async () => {

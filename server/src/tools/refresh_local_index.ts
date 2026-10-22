@@ -44,6 +44,8 @@ import {
  * 4. 缓存损坏（`rebuild_needed`）时把本地状态视为空：所有 AI 库文档都按新增处理；
  *    索引缺失或损坏时也整体重建。索引是 AI 库的派生临时数据（§7.4），重建前直接删除
  *    旧索引文件：既避免残留旧行，也绕开 Windows 上无法用 rename 覆盖损坏文件的问题。
+ *    索引暂时不可读（`unreadable`），或探测为 `ready` 但 `doc_state` 读取失败时，
+ *    写路径返回 `INDEX_UNAVAILABLE`，绝不删除仍可能恢复的索引文件。
  *
  * `dry_run` 缺省 true（写操作先 dry-run 的全局约定）：只读 AI 库并算出同样的清单，
  * 不写缓存、不打开/创建索引、不建目录。AI 库不可达（`KB_B_UNREACHABLE` /
@@ -166,6 +168,21 @@ export async function refresh_local_index(
   const index_tokens =
     index_before.state === "ready" ? read_index_doc_tokens(index_path) : undefined;
   const index_read_failed = index_before.state === "ready" && index_tokens === undefined;
+  if (!dry_run && (index_before.state === "unreadable" || index_read_failed)) {
+    return failure(
+      "INDEX_UNAVAILABLE",
+      index_before.state === "unreadable"
+        ? "本地索引暂时无法以只读方式验证（可能是权限、文件占用或 IO 失败），" +
+          "已放弃本次写入且不会删除索引文件。"
+        : "本地索引状态为 ready，但 doc_state 读取失败（可能由并发重建、文件占用或结构不一致引起），" +
+          "已放弃本次写入且不会删除索引文件。",
+      {
+        path: index_path,
+        index_state: index_before.state,
+        index_read_failed,
+      },
+    );
+  }
 
   const sync = await read_sync_state({ env: input.env, home_dir: input.home_dir });
   if (!("records" in sync)) {
@@ -251,6 +268,15 @@ export async function refresh_local_index(
       removed.push(token);
     }
   }
+  if (state_by_token.size === 0 && local_tokens.size > 0 && removed.length > 0) {
+    warnings.push({
+      code: "SYNC_STATE_EMPTY",
+      message:
+        `AI 库 SyncState 全表为空，本次刷新将删除本地缓存与索引中的 ${removed.length} 个文档。` +
+        "可能原因是 SyncState 表为空，或 lark.sync_state_table_id 指向了空表；" +
+        "请先核对 AI 库的 SyncState 表配置。",
+    });
+  }
 
   // 先取全部变化文档的卡片；任何一次失败都在写盘之前返回，本地状态保持不变。
   const fetched: Array<{
@@ -290,6 +316,19 @@ export async function refresh_local_index(
           "KB_READ_FAILED",
           `文档 ${entry.token} 的知识卡返回了其它 source_doc_token，已停止以免写错归属。`,
           { source_doc_token: entry.token, row, card_source_doc_token: card.source_doc_token },
+        );
+      }
+      if (card.source_revision !== entry.record.source_revision) {
+        return failure(
+          "KB_READ_FAILED",
+          `文档 ${entry.token} 的第 ${row + 1} 条知识卡 source_revision 与 SyncState 不一致，` +
+            "已停止以免写入过期卡片。",
+          {
+            source_doc_token: entry.token,
+            row,
+            card_source_revision: card.source_revision,
+            sync_state_source_revision: entry.record.source_revision,
+          },
         );
       }
       cards.push(card);

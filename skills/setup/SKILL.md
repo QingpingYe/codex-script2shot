@@ -65,10 +65,12 @@ description: 安装后的一次性引导：确认 lark-cli 与登录状态，收
 9. **可选首次同步**：提示用户可以在需要时运行 `$knowledge-sync` 做首次整批同步；
    不在 setup 内自动执行，也不代用户确认该 Skill 的整批清单。
 10. **复查**：重新调用 `health`，逐项报告结果。`index` 的 `detail.state` 取值
-    `missing` / `ready` / `corrupt`，对应 warning `INDEX_NOT_BUILT` / 无 /
-    `INDEX_CORRUPT`：首次 `$knowledge-sync` 或索引刷新前 `missing` 属预期状态；
-    `corrupt` 需提示用户运行 `refresh_local_index` 重建（检索与知识包会先回退到
-    本地缓存）。
+    `missing` / `ready` / `corrupt` / `unreadable`，对应 warning
+    `INDEX_NOT_BUILT` / 无 / `INDEX_CORRUPT` / `INDEX_UNREADABLE`：首次
+    `$knowledge-sync` 或索引刷新前 `missing` 属预期状态；`corrupt` 需提示用户运行
+    `refresh_local_index` 重建；`unreadable` 需先检查索引文件权限、占用与 IO
+    状态后重试，不要直接删除或重建。检索与知识包在任一非 ready 状态下都会先回退到
+    本地缓存。
 
 ## 默认知识库
 
@@ -133,12 +135,14 @@ write_config 的缺省语义：`lark.profile`、`lark.space_a`、`lark.base_b`�
 得到用户整批确认后，才允许调用 `dry_run: false`。
 
 `CONFIG_FIELD_MISSING`、`TABLE_ID_NOT_CONFIGURED`、`LOCAL_DIRS_MISSING`、
-`INDEX_NOT_BUILT`、`INDEX_CORRUPT` 等 warning：`LOCAL_DIRS_MISSING` 由
+`INDEX_NOT_BUILT`、`INDEX_CORRUPT`、`INDEX_UNREADABLE` 等 warning：`LOCAL_DIRS_MISSING` 由
 write_config 的写入步骤顺带创建；`TABLE_ID_NOT_CONFIGURED` 由
 `init_knowledge_b` 的执行路径回填解决；`INDEX_NOT_BUILT`
 （`index.detail.state = "missing"`）在首次 `$knowledge-sync` 或索引刷新前属
 预期状态；`INDEX_CORRUPT`（`index.detail.state = "corrupt"`）需运行
-`refresh_local_index` 重建索引，在此之前检索与知识包按本地缓存降级。
+`refresh_local_index` 重建索引；`INDEX_UNREADABLE`
+（`index.detail.state = "unreadable"`）可能是权限、文件占用或 IO 问题，应先检查后
+重试，不直接删除索引。两类状态下的检索与知识包都按本地缓存降级。
 
 ## 安全约定
 

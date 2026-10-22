@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { KnowledgeCard } from "../src/base_mapping.js";
@@ -564,5 +565,40 @@ describe("health", () => {
     expect(result.warnings).toContainEqual({ code: "INDEX_CORRUPT", message: index.message });
     expect(statSync(index_path).size, "health 探测不得给 0 字节索引补建 schema").toBe(0);
     expect(readFileSync(index_path).length).toBe(0);
+  });
+
+  test("health distinguishes an unreadable index from corruption", async () => {
+    create_local_dirs();
+    write_config();
+    const db = open_index();
+    try {
+      replace_doc_rows(db, "doc-index-1", [make_index_card("card-1")], {
+        source_revision: 1,
+        last_synced_at: "2026-10-21T10:00:00+08:00",
+      });
+    } finally {
+      db.close();
+    }
+
+    const lock = new DatabaseSync(index_file_path());
+    try {
+      lock.exec("BEGIN EXCLUSIVE");
+      const result = await run_health("ok");
+
+      const index = check(result, "index");
+      expect(index).toMatchObject({
+        status: "warn",
+        detail: { state: "unreadable", card_count: 0 },
+      });
+      expect(index.message).not.toContain("损坏");
+      expect(result.warnings).toContainEqual({
+        code: "INDEX_UNREADABLE",
+        message: index.message,
+      });
+      expect(result.warnings.some((warning) => warning.code === "INDEX_CORRUPT")).toBe(false);
+    } finally {
+      lock.exec("ROLLBACK");
+      lock.close();
+    }
   });
 });
