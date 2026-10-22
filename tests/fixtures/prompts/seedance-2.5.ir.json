@@ -10,6 +10,7 @@
       "shot_size": "medium-shot",
       "subject": "角色A",
       "action": "在雨夜穿过旧城区巷道",
+      "emotion": "握伞的手收紧，视线扫过巷道暗处",
       "dialogue": [
         {
           "speaker": "角色A",
@@ -45,6 +46,7 @@
       "shot_size": "medium-close-up",
       "subject": "角色A",
       "action": "抬头迎向巷道尽头的灯牌",
+      "emotion": "",
       "dialogue": [],
       "setting": "巷道尽头的灯牌墙，积水地面",
       "time": "",

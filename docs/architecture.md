@@ -875,6 +875,10 @@ $script2shot 只执行 shot-prompting，run_id 是 <run_id>
 - `dialogue[].language` 只在台词文本为非中文且语种可由文字直接判定时填写；
   `dialogue[].delivery` 只在原文或检索卡片有依据时填写。两者都用中文短词，
   没有依据就省略对应片段。
+- 情绪只取材 `script_analysis.json` 的 `emotion_units.tone` /
+  `emotion_units.description` 与同镜头已有的 `action_units` 动作线索；无来源支撑时
+  `emotion` 留空，禁止由抽象情绪反推未发生的身体动作。写作可参考检索到的
+  「情绪具象外化」类卡片。
 - 调用 `validate_prompt` 校验硬规则，失败时按结构化错误重新生成。
 - 调用 `render_prompt` 渲染目标模型提示词。
 - 依赖提示词技巧、Seedance 2.0 和 2.5 软知识和模型规则文件。
@@ -1051,6 +1055,7 @@ general / project 块重复归类。
   "shot_size": "medium-shot",
   "subject": "角色A",
   "action": "在雨夜穿过旧城区巷道",
+  "emotion": "握伞的手收紧，视线扫过巷道暗处",
   "dialogue": [
     {
       "speaker": "角色A",
@@ -1078,6 +1083,16 @@ general / project 块重复归类。
 
 - 结构性枚举（`aspect_ratio`、`shot_size`、`camera_angle`、`camera_movement`）
   使用英文标识，取值集合冻结在 `schemas/prompt_ir.schema.json`。
+- `emotion` 是必填字符串，允许空字符串；位置口径为 `action` 之后、`dialogue` 之前，
+  schema 的 `properties` / `required` 与 `validate_prompt.ts` 的 `SHOT_FIELD_ORDER`
+  三处一致。只取材上游 `emotion_units.tone` 与 `emotion_units.description`，并可引用
+  同镜头已有 `action_units` 的动作线索（例如视线、停顿、手部动作）；只有这些来源已
+  支持可观察表现时才填写，否则留空。禁止由抽象情绪反推未发生的身体动作。渲染时在
+  「主体与动作」节追加子标签「情绪：…」，空值省略该子标签（沿用渲染层 `field()` 的
+  空值省略语义，动作文本原样输出）。写作可参考「情绪具象外化」类卡片，例如
+  `src:RpJHdwWB5onT8qx5fWqcw6Qnn9c:prompt_technique:007`「情绪具象外化：可直接写入
+  提示词的身体细节」（来源 `https://docs.volcengine.com/docs/ark/seedance-2-0-prompt-guide?lang=zh`，
+  检索日期 2026-10-22）。
 - `dialogue` 是必填数组（可为空），条目为
   `{ speaker: 非空字符串, text: 非空字符串, language?: 字符串, delivery?: 字符串 }`，
   `additionalProperties: false`。渲染节标签为「对白」，条目按

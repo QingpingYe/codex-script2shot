@@ -10,6 +10,7 @@
       "shot_size": "full-shot",
       "subject": "角色A",
       "action": "推开铁门走进废弃剧院前厅",
+      "emotion": "推门的手停了一下，目光扫过空荡的前厅",
       "dialogue": [
         {
           "speaker": "角色A",
@@ -38,6 +39,7 @@
       "shot_size": "medium-full-shot",
       "subject": "角色B",
       "action": "从舞台后方走到追光里",
+      "emotion": "",
       "dialogue": [],
       "setting": "剧院舞台区，幕布半垂",
       "time": "dawn",

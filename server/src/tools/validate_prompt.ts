@@ -66,6 +66,7 @@ const SHOT_FIELD_ORDER = [
   "shot_size",
   "subject",
   "action",
+  "emotion",
   "dialogue",
   "setting",
   "time",

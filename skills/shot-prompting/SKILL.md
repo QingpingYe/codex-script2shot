@@ -40,7 +40,7 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 - `script_analysis.json`：同一 run 的上一阶段产物，用于取回镜头对应的场景与原文单元
   （`location`、`time_of_day`、`characters`、`action_units`、`emotion_units`、
   `dialogue_units`、`shot_group_suggestions` 与 `continuity`），作为 PromptIR 的
-  `subject`、`action`、`dialogue`、`setting`、`time` 的取材来源。只读；本阶段的
+  `subject`、`action`、`emotion`、`dialogue`、`setting`、`time` 的取材来源。只读；本阶段的
   `knowledge_refs` 只来自本阶段自己的检索，不继承也不改写该文件。使用前必须确认
   它在本 run 内已通过
   `validate_stage_artifact({ stage: "script_breakdown", path })`。
@@ -90,6 +90,13 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
      的冻结映射表把中文枚举译成英文枚举；`subject`、`action`、`setting`、`time`
      取材于 `script_analysis.json` 的对应场景与原文单元；`lighting`、`color`、
      `style` 取材于上游信息与检索卡片。
+   - `emotion` 取材上游 `emotion_units.tone` 与 `emotion_units.description`，并可引用
+     同镜头已有 `action_units` 的动作线索（例如视线、停顿、手部动作）；只有这些来源
+     已支持可观察表现时才填写，否则写空字符串。禁止由抽象情绪反推未发生的身体动作。
+     写作可参考检索到的「情绪具象外化」类卡片，例如
+     `src:RpJHdwWB5onT8qx5fWqcw6Qnn9c:prompt_technique:007`「情绪具象外化：可直接
+     写入提示词的身体细节」。渲染层在「主体与动作」节按「主体：…；动作：…；情绪：…」
+     拼接，空值省略「情绪」子标签，不改写动作文本。
    - `dialogue` 逐句对应上游 `dialogue_units`：`speaker` 取原文说话人，`text` 只取
      `dialogue_units.text` 原文——不扩写、不改写、不翻译、不补旁白；原文只有意图
      没有台词时不编造台词，改为可观察的口型、停顿与反应。`language` 只在台词文本
@@ -211,6 +218,7 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 | `shot_size` | string | 英文枚举，取自上游 `shot_size`，映射见下表 |
 | `subject` | string | 取自上游场景与角色信息 |
 | `action` | string | 取自上游动作单元与镜头计划 |
+| `emotion` | string | 必填、允许空字符串；情绪的可观察外化短句，取材与省略规则见「流程」第 3 步 |
 | `dialogue` | array | 台词条目数组，必填、可为空：`{ speaker, text, language?, delivery? }`；`speaker` / `text` 为非空字符串，`text` 只取上游 `dialogue_units.text` 原文；无对白镜头写 `[]` |
 | `setting` | string | 取自上游场景地点与检索到的场景说明 |
 | `time` | string | 英文时间术语（例如 `night`、`day`、`dawn`、`dusk`） |

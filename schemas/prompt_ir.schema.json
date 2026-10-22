@@ -89,6 +89,7 @@
         "shot_size",
         "subject",
         "action",
+        "emotion",
         "dialogue",
         "setting",
         "time",
@@ -138,6 +139,10 @@
         },
         "action": {
           "type": "string"
+        },
+        "emotion": {
+          "type": "string",
+          "description": "情绪的可观察外化短句。只取材上游 emotion_units.tone / emotion_units.description 与同镜头已有 action_units 的动作线索（例如视线、停顿、手部动作）；没有这些来源支撑时留空字符串，禁止由抽象情绪反推未发生的身体动作。渲染时在「主体与动作」节追加子标签「情绪：…」，空值省略该子标签。"
         },
         "dialogue": {
           "type": "array",

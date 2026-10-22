@@ -28,6 +28,11 @@
  * 输出占位（当前取值为「无对白；人物自然闭口，无旁白」）。`dialogue` 是原文保真
  * 豁免区：`text` 逐字渲染进 `{}`（Seedance 台词记号，来源见
  * `docs/model-rules-notes.md` §2.4），渲染层不翻译、不删改，也不做禁止项改写。
+ *
+ * `emotion`（Task B1）取值是上游 `emotion_units.tone` / `emotion_units.description`
+ * 与同镜头动作线索的可观察外化（取材规则见架构 §9.6、§11.3），渲染层只做拼接：
+ * 「主体与动作」节在 `emotion` 非空时追加子标签「情绪：…」，空值沿用 `field()` 的
+ * 空值省略语义不输出该子标签，也不补写情绪文本或改写动作文本。
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -225,6 +230,7 @@ interface PromptIrShot {
   shot_size: string;
   subject: string;
   action: string;
+  emotion: string;
   dialogue: DialogueEntry[];
   setting: string;
   time: string;
@@ -318,7 +324,11 @@ function render_section(
 ): string {
   switch (key) {
     case "subject_action":
-      return join_parts([field("主体", shot.subject), field("动作", shot.action)]);
+      return join_parts([
+        field("主体", shot.subject),
+        field("动作", shot.action),
+        field("情绪", shot.emotion),
+      ]);
     case "dialogue":
       return render_dialogue(shot.dialogue, template.empty_dialogue);
     case "setting_time":

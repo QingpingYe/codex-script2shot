@@ -284,6 +284,41 @@ describe("prompt rendering", () => {
     expect(dialogue_line).toBe(`- 对白：角色A说：{${verbatim}}`);
   });
 
+  test("render shows emotion when present", () => {
+    const { result, output_path } = render_fixture(
+      "seedance-2.5.ir.json",
+      "prompts.seedance-2.5.emotion.md",
+    );
+
+    expect(result).toEqual({ ok: true, output_path });
+
+    // 情绪非空：「主体与动作」节按「主体：…；动作：…；情绪：…」追加子标签，
+    // 动作文本原样保留，不因追加情绪而改写。
+    const subject_action_lines = readFileSync(output_path, "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("- 主体与动作："));
+    expect(subject_action_lines[0]).toBe(
+      "- 主体与动作：主体：角色A；动作：在雨夜穿过旧城区巷道；情绪：握伞的手收紧，视线扫过巷道暗处",
+    );
+  });
+
+  test("render omits emotion when empty", () => {
+    const { result, output_path } = render_fixture(
+      "seedance-2.5.ir.json",
+      "prompts.seedance-2.5.empty-emotion.md",
+    );
+
+    expect(result).toEqual({ ok: true, output_path });
+
+    // 空情绪沿用 field() 的空值省略语义：不生成「情绪」子标签，也不输出空冒号。
+    const subject_action_lines = readFileSync(output_path, "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("- 主体与动作："));
+    expect(subject_action_lines[1]).toBe(
+      "- 主体与动作：主体：角色A；动作：抬头迎向巷道尽头的灯牌",
+    );
+  });
+
   test("render reports failure when output directory cannot be created", () => {
     // 把 output_path 的父路径做成普通文件：mkdirSync 会失败，写盘未发生。
     const blocked_parent = path.join(tempDir, "blocked-parent");
