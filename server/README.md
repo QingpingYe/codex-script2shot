@@ -104,6 +104,29 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
   `"args": ["/d", "/s", "/c", "call", "./scripts/launch_codex_app_tools_mcp.cmd", "./server.mjs"]`。
   两者都是 Codex 兼容布局，并在同目录提供对应的 `.cmd` 启动脚本。
 
+## fetch_knowledge_a_doc 的引用展开（2026-10-22）
+
+知识库 A 的 Wiki 文档可以只是「链接占位」，正文只有一条外部引用。`fetch_knowledge_a_doc`
+新增两个可选参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `expand_references` | 缺省 `false`；`true` 时展开正文里的引用并返回 `references[]` |
+| `max_references` | 展开数量上限，缺省 10、最大 50 |
+
+支持的引用形态：飞书文档引用卡片（`<cite doc-id="..." file-type="docx">`）、飞书文档链接
+（`/docx/<token>`、`/wiki/<token>`）、网页链接（`http` / `https`）。
+
+- 飞书引用走 `docs +fetch`，与正文读取同一路径。
+- 网页引用走 `server/src/web_fetch.ts`：只发 GET，响应体上限 2 MB、超时 30 秒，
+  只处理 text/html、text/plain 与 application/xhtml+xml；HTML 转纯文本后若正文过短
+  或命中 JS 壳页面提示，返回 `status: "needs_render"` 与 `REFERENCE_NEEDS_RENDER`
+  warning，由 Skill 用会话内的浏览器工具读取全文。
+- 只展开一层；单条引用正文超过 200000 字符时截断并写 `REFERENCE_TRUNCATED`。
+- 图片、PDF 等二进制链接跳过并写 `REFERENCE_SKIPPED`。
+- 标题提取顺序改为：正文 `<title>` 标签 → 首个 Markdown 标题行 → 节点标题（warning）
+  → 空字符串（warning）。
+
 ## Base 日期字段换算（Task 1 决定）
 
 - `updated_at`、`last_synced_at` 在逻辑模型中为 ISO 8601；写入飞书 Base 的

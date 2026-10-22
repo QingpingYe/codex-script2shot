@@ -129,11 +129,21 @@ const TOOLS = [
     name: "fetch_knowledge_a_doc",
     description:
       "只读读取一个知识库 A 文档的 markdown 正文与 revision_id；" +
-      "正文标题取不到时回退节点标题并返回 warning。",
+      "expand_references=true 时展开正文里的飞书文档引用与网页链接，返回 references[]；" +
+      "标题提取顺序为 <title> 标签 → 首个 Markdown 标题行 → 节点标题（带 warning）。",
     inputSchema: {
       type: "object",
       properties: {
         doc: { type: "string", description: "飞书文档 URL 或 token。" },
+        expand_references: {
+          type: "boolean",
+          description:
+            "缺省 false：只读正文；true 时展开正文中的引用（飞书文档引用卡片、飞书文档链接、网页链接）。",
+        },
+        max_references: {
+          type: "number",
+          description: "展开引用的数量上限，缺省 10，最大 50。",
+        },
       },
       required: ["doc"],
       additionalProperties: false,
@@ -424,12 +434,18 @@ function parse_empty_arguments(raw: unknown): Parsed<Record<string, never>> {
   return unknown_key === undefined ? { ok: true, value: {} } : unknown_key;
 }
 
-function parse_fetch_doc_arguments(raw: unknown): Parsed<{ doc: string }> {
+function parse_fetch_doc_arguments(
+  raw: unknown,
+): Parsed<{ doc: string; expand_references?: boolean; max_references?: number }> {
   const parsed = parse_arguments_object(raw);
   if (!parsed.ok) {
     return parsed;
   }
-  const unknown_key = reject_unknown_keys(parsed.value, ["doc"]);
+  const unknown_key = reject_unknown_keys(parsed.value, [
+    "doc",
+    "expand_references",
+    "max_references",
+  ]);
   if (unknown_key !== undefined) {
     return unknown_key;
   }
@@ -437,7 +453,29 @@ function parse_fetch_doc_arguments(raw: unknown): Parsed<{ doc: string }> {
   if (typeof doc !== "string" || doc.trim() === "") {
     return invalid_arguments('入参字段 "doc" 期望非空字符串。', { field: "doc" });
   }
-  return { ok: true, value: { doc } };
+  const expand_references = parsed.value.expand_references;
+  if (expand_references !== undefined && typeof expand_references !== "boolean") {
+    return invalid_arguments('入参字段 "expand_references" 期望布尔值。', {
+      field: "expand_references",
+    });
+  }
+  const max_references = parsed.value.max_references;
+  if (
+    max_references !== undefined &&
+    (typeof max_references !== "number" || !Number.isFinite(max_references))
+  ) {
+    return invalid_arguments('入参字段 "max_references" 期望数字。', {
+      field: "max_references",
+    });
+  }
+  return {
+    ok: true,
+    value: {
+      doc,
+      ...(expand_references === undefined ? {} : { expand_references }),
+      ...(max_references === undefined ? {} : { max_references }),
+    },
+  };
 }
 
 /** build_sync_plan 消费的字段；只校验类型，不改写调用方数据。 */

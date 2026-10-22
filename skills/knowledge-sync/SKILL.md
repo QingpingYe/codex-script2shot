@@ -42,9 +42,13 @@ description: 把知识库 A 的变化同步到知识库 B：扫描或指定文�
    `warnings`，并注明 `to_delete` 是不可逆的删除操作。得到用户明确确认后才进入执行；
    用户不确认就停在这里。
 4. **按文档处理**（对确认清单内的每个文档；单个文档失败不阻塞其他文档）：
-   - 新增 / 修改：`fetch_knowledge_a_doc` 读取正文与 `revision_id` → 按
+   - 新增 / 修改：`fetch_knowledge_a_doc`（`expand_references: true`）读取正文、引用
+     目标正文与 `revision_id` → 按
      `references/card-authoring.md` 生成该文档的完整新卡集合 → `replace_doc_cards`
      （`cards` + `dry_run: false`）替换旧卡 → 成功后再调用 `update_doc_sync_state`。
+   - 引用展开的三种状态：`ok` 直接并入归纳；`needs_render`（网页是 JS 渲染、静态
+     HTML 没有正文）时用会话内的网页/浏览器工具读取该 URL 全文，读取失败就在汇总
+     报告里写明并跳过该引用；`failed` 保留 warning，按正文已有内容归纳，不编造引用内容。
    - 移动 / 改名：不读正文、不重新生成卡片，只调用 `replace_doc_cards` 的
      `metadata_patch` 模式（+ `dry_run: false`）更新来源元数据，成功后再调用
      `update_doc_sync_state`；`source_revision`、`card_count` 沿用现有 SyncState
@@ -77,8 +81,9 @@ description: 把知识库 A 的变化同步到知识库 B：扫描或指定文�
 
 ### 标题回退
 
-`fetch_knowledge_a_doc` 的直接读路径可能拿不到文档标题（返回空 `title` +
-warning）。此时 `source_title` 按以下顺序回退，并在汇总报告里保留该 warning：
+`fetch_knowledge_a_doc` 的标题提取顺序固定为：正文 `<title>` 标签 → 首个 Markdown
+标题行 → 节点标题 → 空字符串。后两级回退会带 warning；拿到回退值时
+`source_title` 按以下顺序取值，并在汇总报告里保留该 warning：
 
 - 扫描模式：回退为计划条目中的 `title`（扫描到的节点标题）；仍取不到时退化为
   `source_doc_token`。
@@ -119,6 +124,10 @@ warning）。此时 `source_title` 按以下顺序回退，并在汇总报告里
 
 - 知识库 A 只读：`scan_knowledge_a`、`fetch_knowledge_a_doc` 都只读；本 Skill 不向
   知识库 A 写入、修改或删除任何内容。
+- 引用展开同样只读：飞书引用走 `docs +fetch`，网页引用只发 `http` / `https` GET，
+  不提交表单、不带账号凭据，也不把引用内容写回知识库 A。
+- `SyncState.source_title` 取扫描到的节点标题（不是正文标题），否则每次同步都会把
+  文档误判成「移动/改名」；卡片自身的 `source_title` 按标题回退链取值。
 - 删除类操作（`delete_doc_cards`）属于不可逆外部写入，必须在整批 dry-run 清单获得
   用户确认后才执行；执行时才传 `dry_run: false`（实现层也只在执行路径带高风险确认
   `--yes`）。返回值中的 `dry_run` 字段用于区分预览与执行。

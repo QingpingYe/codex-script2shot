@@ -1,3 +1,4 @@
+import type { Script2ShotConfig } from "../config.js";
 import { load_config } from "../config.js";
 import {
   resolve_lark_cli,
@@ -5,6 +6,7 @@ import {
   STDERR_LIMIT,
   type LarkCliErrorCode,
 } from "../lark_cli.js";
+import { extract_html_title, fetch_web_page, format_local_iso } from "../web_fetch.js";
 
 /**
  * `fetch_knowledge_a_doc` 工具（架构 §6.1、§8）。
@@ -30,8 +32,36 @@ export type FetchKnowledgeADocErrorCode =
 export type FetchDocWarningCode = "DOC_TITLE_FROM_NODE" | "DOC_TITLE_MISSING";
 
 export interface FetchDocWarning {
-  code: FetchDocWarningCode;
+  code: FetchDocWarningCode | ReferenceWarningCode;
   message: string;
+}
+
+export type ReferenceWarningCode =
+  | "REFERENCE_EXPAND_FAILED"
+  | "REFERENCE_NEEDS_RENDER"
+  | "REFERENCE_TRUNCATED"
+  | "REFERENCE_LIMIT_EXCEEDED"
+  | "REFERENCE_SKIPPED";
+
+export type FetchedReferenceKind = "feishu_doc" | "web_page";
+
+export type FetchedReferenceStatus = "ok" | "failed" | "needs_render";
+
+/** 展开后的引用目标（架构 §6.5）。 */
+export interface FetchedReference {
+  kind: FetchedReferenceKind;
+  /** 原始引用：飞书文档 token 或网页 URL。 */
+  ref: string;
+  label?: string;
+  status: FetchedReferenceStatus;
+  title?: string;
+  content?: string;
+  content_length?: number;
+  /** 仅飞书文档引用。 */
+  revision_id?: number;
+  retrieved_at: string;
+  truncated?: boolean;
+  error?: { code: string; message: string; details?: Record<string, unknown> };
 }
 
 export interface FetchKnowledgeADocSuccess {
@@ -41,6 +71,8 @@ export interface FetchKnowledgeADocSuccess {
   content: string;
   tips: string;
   warnings: FetchDocWarning[];
+  /** `expand_references: true` 时展开的引用目标；否则为空数组。 */
+  references: FetchedReference[];
 }
 
 export interface FetchKnowledgeADocFailure {
@@ -57,11 +89,23 @@ export type FetchKnowledgeADocResult = FetchKnowledgeADocSuccess | FetchKnowledg
 export interface FetchKnowledgeADocInput {
   /** 文档 token 或飞书文档 URL（必填）。 */
   doc: string;
+  /** 缺省 false：只读文档正文，不展开正文里的引用。 */
+  expand_references?: boolean;
+  /** 展开引用的数量上限，缺省 10。 */
+  max_references?: number;
   /** 默认 process.env；测试可注入受控环境。 */
   env?: NodeJS.ProcessEnv;
   /** 默认 os.homedir()；用于 lark-cli 常见安装目录探测。 */
   home_dir?: string;
+  /** 默认 new Date()；测试可固定引用检索时刻。 */
+  now?: () => Date;
+  /** 默认 globalThis.fetch；测试可注入受控网页读取实现。 */
+  web_fetch_impl?: typeof fetch;
 }
+
+/** 展开引用时的固定上限（架构 §6.5）。 */
+export const MAX_REFERENCES_DEFAULT = 10;
+export const REFERENCE_CONTENT_LIMIT = 200_000;
 
 /** `docs +fetch` 返回的正文载荷。 */
 interface DocumentPayload {
@@ -112,15 +156,29 @@ export async function fetch_knowledge_a_doc(
   const doc_input = typeof original === "string" ? original.trim() : "";
   const classified = classify_doc_input(doc_input);
 
+  const base = await read_document_result(cli.path, classified, config, input, original);
+  if ("ok" in base || input.expand_references !== true) {
+    return base;
+  }
+  return expand_doc_references(base, cli.path, input);
+}
+
+async function read_document_result(
+  cli_path: string,
+  classified: ClassifiedDoc,
+  config: Script2ShotConfig,
+  input: FetchKnowledgeADocInput,
+  original: string,
+): Promise<FetchKnowledgeADocResult> {
   // `doccn*` / `/docx/<token>`：直接按文档读。
   if (classified.kind === "doc") {
-    return finish(await read_document(cli.path, classified.token, input.env), undefined, original);
+    return finish(await read_document(cli_path, classified.token, input.env), undefined, original);
   }
 
   // `wikcn*` / `/wiki/<token>`：先解析节点再读。
   if (classified.kind === "node") {
     const resolved = await resolve_node_token(
-      cli.path,
+      cli_path,
       classified.token,
       config.lark.space_a,
       input.env,
@@ -129,19 +187,19 @@ export async function fetch_knowledge_a_doc(
       return with_original_doc(resolved, original);
     }
     return finish(
-      await read_document(cli.path, resolved.node.obj_token, input.env),
+      await read_document(cli_path, resolved.node.obj_token, input.env),
       resolved.node.title,
       original,
     );
   }
 
   // 其他原始 token：先按文档读，失败再按节点解析一次。
-  const direct = await read_document(cli.path, classified.token, input.env);
+  const direct = await read_document(cli_path, classified.token, input.env);
   if (direct.ok) {
     return finish(direct, undefined, original);
   }
   const resolved = await resolve_node_token(
-    cli.path,
+    cli_path,
     classified.token,
     config.lark.space_a,
     input.env,
@@ -150,7 +208,7 @@ export async function fetch_knowledge_a_doc(
     return with_original_doc(combine_failures(direct, resolved), original);
   }
   return finish(
-    await read_document(cli.path, resolved.node.obj_token, input.env),
+    await read_document(cli_path, resolved.node.obj_token, input.env),
     resolved.node.title,
     original,
   );
@@ -337,11 +395,19 @@ function build_success(
     content: document.content,
     tips: document.tips,
     warnings,
+    references: [],
   };
 }
 
-/** 取正文首个 Markdown 标题行（`#` 至 `######` 后跟空格）的标题文本。 */
+/**
+ * 标题提取顺序（架构 §6.1，2026-10-22）：正文 `<title>` 标签 → 首个 Markdown 标题行。
+ * 飞书 docx 正文里通常带 `<title>`，优先取它才能和 Wiki 节点标题一致。
+ */
 function extract_title(content: string): string | undefined {
+  const html_title = extract_html_title(content);
+  if (html_title !== undefined) {
+    return html_title;
+  }
   for (const line of content.split(/\r?\n/)) {
     const match = /^#{1,6}\s+(.+?)\s*$/.exec(line.trim());
     if (match !== null) {
@@ -349,6 +415,268 @@ function extract_title(content: string): string | undefined {
     }
   }
   return undefined;
+}
+
+/** 文档引用卡片：`<cite doc-id="..." file-type="docx" title="...">`。 */
+const CITE_PATTERN = /<cite\b([^>]*)>/gi;
+const CITE_ATTR_PATTERN = /([a-zA-Z][a-zA-Z0-9-]*)\s*=\s*"([^"]*)"/g;
+const MARKDOWN_LINK_PATTERN = /\[([^\]\n]*)\]\(\s*(https?:\/\/[^\s)]+)[^)]*\)/g;
+const BARE_URL_PATTERN = /https?:\/\/[^\s<>"'()\[\]]+/g;
+const FEISHU_DOC_URL_PATTERN = /(?:^|\/)(?:docx|wiki)\/([A-Za-z0-9_-]+)/i;
+const BINARY_URL_PATTERN =
+  /\.(png|jpe?g|gif|webp|svg|bmp|ico|tiff?|pdf|zip|gz|7z|rar|mp4|mov|avi|mkv|mp3|wav|m4a|flac|docx?|xlsx?|pptx?)(\?|#|$)/i;
+
+export interface DetectedReference {
+  kind: FetchedReferenceKind;
+  /** 飞书文档 token 或网页 URL。 */
+  ref: string;
+  label?: string;
+}
+
+/**
+ * 找出正文里可展开的引用（架构 §6.5）：飞书文档引用卡片、飞书文档链接、网页链接。
+ * 不支持的引用形态写 warning 后跳过；同一目标只保留一条。
+ */
+export function detect_references(
+  content: string,
+  warnings: FetchDocWarning[],
+): DetectedReference[] {
+  const detected: DetectedReference[] = [];
+  const seen = new Set<string>();
+  const push = (reference: DetectedReference): void => {
+    const key = `${reference.kind}:${reference.ref}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    detected.push(reference);
+  };
+
+  for (const match of content.matchAll(CITE_PATTERN)) {
+    const attributes = parse_cite_attributes(match[1]);
+    const doc_id = attributes["doc-id"];
+    const file_type = attributes["file-type"];
+    const title = attributes["title"];
+    if (doc_id === undefined || doc_id === "") {
+      warnings.push({
+        code: "REFERENCE_SKIPPED",
+        message: `文档引用卡片缺少 doc-id，已跳过：${match[0]}`,
+      });
+      continue;
+    }
+    if (file_type !== undefined && file_type !== "docx") {
+      warnings.push({
+        code: "REFERENCE_SKIPPED",
+        message: `文档引用卡片 file-type=${file_type} 暂不支持展开（第一版只支持 docx），已跳过 ${doc_id}。`,
+      });
+      continue;
+    }
+    push(
+      title === undefined
+        ? { kind: "feishu_doc", ref: doc_id }
+        : { kind: "feishu_doc", ref: doc_id, label: title },
+    );
+  }
+
+  const linked_urls = new Set<string>();
+  for (const match of content.matchAll(MARKDOWN_LINK_PATTERN)) {
+    const label = match[1].trim();
+    const url = match[2];
+    linked_urls.add(url);
+    const classified = classify_reference_url(url, warnings);
+    if (classified === undefined) {
+      continue;
+    }
+    push(label === "" ? classified : { ...classified, label });
+  }
+  for (const url of content.match(BARE_URL_PATTERN) ?? []) {
+    if (linked_urls.has(url)) {
+      continue;
+    }
+    const classified = classify_reference_url(url, warnings);
+    if (classified !== undefined) {
+      push(classified);
+    }
+  }
+  return detected;
+}
+
+function classify_reference_url(
+  url: string,
+  warnings: FetchDocWarning[],
+): DetectedReference | undefined {
+  if (!/^https?:\/\//i.test(url)) {
+    return undefined;
+  }
+  const feishu = FEISHU_DOC_URL_PATTERN.exec(url);
+  if (feishu !== null) {
+    return { kind: "feishu_doc", ref: feishu[1] };
+  }
+  if (BINARY_URL_PATTERN.test(url)) {
+    warnings.push({
+      code: "REFERENCE_SKIPPED",
+      message: `网页引用指向二进制资源，暂不展开：${url}`,
+    });
+    return undefined;
+  }
+  return { kind: "web_page", ref: url };
+}
+
+function parse_cite_attributes(raw: string): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  for (const match of raw.matchAll(CITE_ATTR_PATTERN)) {
+    attributes[match[1].toLowerCase()] = match[2].trim();
+  }
+  return attributes;
+}
+
+async function expand_doc_references(
+  base: FetchKnowledgeADocSuccess,
+  cli_path: string,
+  input: FetchKnowledgeADocInput,
+): Promise<FetchKnowledgeADocSuccess> {
+  const warnings: FetchDocWarning[] = [...base.warnings];
+  const detected = detect_references(base.content, warnings);
+  const max_references = normalize_max_references(input.max_references);
+  if (detected.length > max_references) {
+    warnings.push({
+      code: "REFERENCE_LIMIT_EXCEEDED",
+      message:
+        `正文里检测到 ${detected.length} 条引用，超过上限 ${max_references} 条；` +
+        `只展开前 ${max_references} 条。`,
+    });
+  }
+
+  const now = input.now ?? (() => new Date());
+  const references: FetchedReference[] = [];
+  for (const reference of detected.slice(0, max_references)) {
+    references.push(
+      reference.kind === "feishu_doc"
+        ? await expand_feishu_reference(reference, cli_path, input, now, warnings)
+        : await expand_web_reference(reference, input, now, warnings),
+    );
+  }
+  return { ...base, warnings, references };
+}
+
+async function expand_feishu_reference(
+  reference: DetectedReference,
+  cli_path: string,
+  input: FetchKnowledgeADocInput,
+  now: () => Date,
+  warnings: FetchDocWarning[],
+): Promise<FetchedReference> {
+  const retrieved_at = format_local_iso(now());
+  const read = await read_document(cli_path, reference.ref, input.env);
+  if (!read.ok) {
+    warnings.push({
+      code: "REFERENCE_EXPAND_FAILED",
+      message: `飞书文档引用 ${reference.ref} 读取失败：${read.error.message}`,
+    });
+    return {
+      kind: "feishu_doc",
+      ref: reference.ref,
+      ...(reference.label === undefined ? {} : { label: reference.label }),
+      status: "failed",
+      retrieved_at,
+      error: read.error,
+    };
+  }
+  const capped = cap_reference_content(read.document.content, reference.ref, warnings);
+  const title = extract_title(read.document.content) ?? reference.label;
+  return {
+    kind: "feishu_doc",
+    ref: reference.ref,
+    ...(reference.label === undefined ? {} : { label: reference.label }),
+    status: "ok",
+    ...(title === undefined ? {} : { title }),
+    content: capped.content,
+    content_length: read.document.content.length,
+    revision_id: read.document.revision_id,
+    retrieved_at,
+    truncated: capped.truncated,
+  };
+}
+
+async function expand_web_reference(
+  reference: DetectedReference,
+  input: FetchKnowledgeADocInput,
+  now: () => Date,
+  warnings: FetchDocWarning[],
+): Promise<FetchedReference> {
+  const fetched = await fetch_web_page(reference.ref, {
+    fetch_impl: input.web_fetch_impl,
+    now,
+  });
+  if (!fetched.ok) {
+    warnings.push({
+      code: "REFERENCE_EXPAND_FAILED",
+      message: `网页引用 ${reference.ref} 读取失败：${fetched.error.message}`,
+    });
+    return {
+      kind: "web_page",
+      ref: reference.ref,
+      ...(reference.label === undefined ? {} : { label: reference.label }),
+      status: "failed",
+      retrieved_at: format_local_iso(now()),
+      error: fetched.error,
+    };
+  }
+  if (fetched.needs_render) {
+    warnings.push({
+      code: "REFERENCE_NEEDS_RENDER",
+      message:
+        `网页引用 ${reference.ref} 是 JS 渲染页面，静态 HTML 里没有正文；` +
+        "请用会话内的网页/浏览器工具读取全文后再归纳。",
+    });
+  }
+  if (fetched.truncated) {
+    warnings.push({
+      code: "REFERENCE_TRUNCATED",
+      message: `网页引用 ${reference.ref} 的响应超过 2 MB，已截断；如需全文请拆分来源页面。`,
+    });
+  }
+  const capped = cap_reference_content(fetched.text, reference.ref, warnings);
+  const title = fetched.title === "" ? reference.label : fetched.title;
+  return {
+    kind: "web_page",
+    ref: reference.ref,
+    ...(reference.label === undefined ? {} : { label: reference.label }),
+    status: fetched.needs_render ? "needs_render" : "ok",
+    ...(title === undefined || title === "" ? {} : { title }),
+    content: capped.content,
+    content_length: fetched.text.length,
+    retrieved_at: fetched.retrieved_at,
+    truncated: capped.truncated || fetched.truncated,
+  };
+}
+
+function cap_reference_content(
+  content: string,
+  ref: string,
+  warnings: FetchDocWarning[],
+): { content: string; truncated: boolean } {
+  if (content.length <= REFERENCE_CONTENT_LIMIT) {
+    return { content, truncated: false };
+  }
+  warnings.push({
+    code: "REFERENCE_TRUNCATED",
+    message:
+      `引用 ${ref} 的正文超过 ${REFERENCE_CONTENT_LIMIT} 字符，已截断；` +
+      "如需全文请拆分来源文档。",
+  });
+  return { content: content.slice(0, REFERENCE_CONTENT_LIMIT), truncated: true };
+}
+
+function normalize_max_references(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return MAX_REFERENCES_DEFAULT;
+  }
+  const rounded = Math.floor(value);
+  if (rounded < 1) {
+    return 1;
+  }
+  return Math.min(rounded, 50);
 }
 
 function with_original_doc(

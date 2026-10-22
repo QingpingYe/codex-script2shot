@@ -392,6 +392,11 @@ lark-cli wiki nodes list --space-id <space_a> [--parent-node-token <token>] \
 上表只用于扫描阶段。确认文档需要处理后，插件调用 `docs +fetch`，再保存
 返回的 `revision_id` 作为 `source_revision`。
 
+正文标题的提取顺序固定为（2026-10-22）：正文中的 `<title>` 标签 → 首个 Markdown
+标题行 → 节点标题（写 `DOC_TITLE_FROM_NODE` warning）→ 空字符串（写
+`DOC_TITLE_MISSING` warning）。飞书文档的正文里通常带 `<title>`，优先取它才能
+与 Wiki 节点标题保持一致。
+
 ### 6.2 增量同步算法
 
 ```text
@@ -449,7 +454,37 @@ $knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
 
 当 `obj_edit_time` 因为时间精度或其他原因没有变化时，也可以使用该模式强制同步指定文档。
 
-### 6.5 失败处理
+### 6.5 文档引用展开（2026-10-22）
+
+知识库 A 的 Wiki 文档可以只是「链接占位」：正文只有一条外部引用，真正的知识在引用
+目标里。同步时先展开这些引用、读取目标正文，再与文档正文一起归纳成知识卡。
+
+支持的引用形态：
+
+| 形态 | 识别方式 | 读取方式 |
+| --- | --- | --- |
+| 飞书云文档引用卡片 | 正文中的 `<cite doc-id="..." file-type="docx" ...>` | lark-cli `docs +fetch` |
+| 飞书文档链接 | `/docx/<token>`、`/wiki/<token>` 形式的 URL | 同上；`/wiki/<token>` 先解析节点 |
+| 网页链接 | 正文中的 `http(s)://` URL 或 Markdown 链接 | HTTP GET + HTML 转纯文本 |
+
+规则：
+
+- 只展开一层：不递归展开引用文档内部的引用。需要更深内容时，把内容并入 Wiki 文档
+  后重新同步。
+- 引用数量上限 10 条、单条正文上限 200000 字符、单页 HTTP 响应上限 2 MB、HTTP 超时
+  30 秒；超过上限写 warning，截断时在返回值里标记 `truncated`，不静默丢弃。
+- 网页只接受 `http` / `https`；图片、PDF 等二进制链接跳过并写 warning。
+- 网页是 JS 渲染、静态 HTML 里取不到正文时，返回 `needs_render` 状态与
+  `REFERENCE_NEEDS_RENDER` warning，由 Skill 用会话内的网页/浏览器工具读取全文后
+  继续归纳。
+- 引用目标发生变化不会改变 Wiki 节点的 `obj_edit_time`，因此不会自动触发重同步；
+  需要刷新时用指定文档模式（§6.4）强制重算。
+
+溯源要求：知识卡仍以该 Wiki 文档为同步单元（`source_doc_token`、`source_node_token`、
+`source_path`、`source_title`、`source_revision` 都取 Wiki 文档本身）；引用内容必须在
+卡片 `content` 中写明来源（飞书文档 token 或网页 URL）与检索日期。
+
+### 6.6 失败处理
 
 单文档同步失败时：
 
@@ -660,7 +695,7 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 | `health` | 检查 lark-cli、登录状态、知识库配置和本地索引 |
 | `write_config` | dry-run 预览并写入本地配置、初始化本地目录 |
 | `scan_knowledge_a` | 只扫描知识库 A 的节点元数据，不读取文档正文 |
-| `fetch_knowledge_a_doc` | 只读取一个指定文档的正文和 revision |
+| `fetch_knowledge_a_doc` | 只读取一个指定文档的正文和 revision；可选展开正文里的飞书文档引用与网页链接，返回 `references[]`（§6.5） |
 | `read_sync_state` | 读取知识库 B 的按文档 SyncState |
 | `build_sync_plan` | 纯函数工具：输入 `scan_knowledge_a` 的 `nodes[]` 与 `read_sync_state` 的 `records[]`，输出 `to_add` / `to_update` / `to_move` / `to_delete` / `unchanged` / `warnings` |
 | `init_knowledge_b` | 创建或校验 `KnowledgeCards` 和 `SyncState`，返回固定 table_id |

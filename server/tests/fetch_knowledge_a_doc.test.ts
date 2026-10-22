@@ -29,6 +29,13 @@ const TIPS_DOC_TOKEN = "doccnSAMPLEWITHTIPS";
 const TIPS_TEXT = "正文可能被上游裁剪；重放本次读取请固定 revision_id=21。";
 const NO_HEADING_NODE_TOKEN = "wikcnNOHEADING01";
 const NO_HEADING_DOC_TOKEN = "doccnNOHEADING01";
+const TITLE_TAG_DOC_TOKEN = "doccnSAMPLETITLETAG";
+const CITING_DOC_TOKEN = "doccnSAMPLECITING";
+const CITED_DOC_TOKEN = "doccnSAMPLECITED";
+const WEB_LINK_DOC_TOKEN = "doccnSAMPLEWEBLINK";
+const WEB_LINK_URL = "https://example.com/guide";
+const BROKEN_CITE_DOC_TOKEN = "doccnSAMPLEBROKENCITE";
+const MISSING_REF_DOC_TOKEN = "doccnNOTRECORDEDREF";
 
 let tempRoot = "";
 let home = "";
@@ -128,6 +135,31 @@ function write_docs_fetch_map(): string {
           NO_HEADING_DOC_TOKEN,
           4,
           "没有标题行的正文段落。\n",
+        ),
+        [TITLE_TAG_DOC_TOKEN]: document_payload(
+          TITLE_TAG_DOC_TOKEN,
+          5,
+          "<title>标签标题</title>\n\n# 正文首行标题\n\n正文段落。\n",
+        ),
+        [CITING_DOC_TOKEN]: document_payload(
+          CITING_DOC_TOKEN,
+          6,
+          `# 引用汇总\n\n<cite doc-id="${CITED_DOC_TOKEN}" file-type="docx" title="被引用文档"></cite>\n`,
+        ),
+        [CITED_DOC_TOKEN]: document_payload(
+          CITED_DOC_TOKEN,
+          522,
+          "# 被引用文档\n\n被引用的正文知识段落。\n",
+        ),
+        [WEB_LINK_DOC_TOKEN]: document_payload(
+          WEB_LINK_DOC_TOKEN,
+          7,
+          `# 网页引用\n\n${WEB_LINK_URL}\n`,
+        ),
+        [BROKEN_CITE_DOC_TOKEN]: document_payload(
+          BROKEN_CITE_DOC_TOKEN,
+          8,
+          `# 失效引用\n\n<cite doc-id="${MISSING_REF_DOC_TOKEN}" file-type="docx" title="读不到的文档"></cite>\n`,
         ),
       },
       null,
@@ -379,5 +411,106 @@ describe("fetch_knowledge_a_doc", () => {
     const calls = read_calls().map((call) => call.args);
     expect(calls.map((args) => [args[0], args[1]])).toEqual([["docs", "+fetch"]]);
     expect(flag_value(calls[0], "--doc")).toBe(NO_HEADING_DOC_TOKEN);
+  });
+
+  test("fetch prefers <title> tag over the first markdown heading", async () => {
+    const result = expect_fetch_ok(
+      await fetch_knowledge_a_doc({ doc: TITLE_TAG_DOC_TOKEN, env }),
+    );
+
+    expect(result.title).toBe("标签标题");
+    expect(result.warnings).toEqual([]);
+    expect(result.references).toEqual([]);
+  });
+
+  test("expand_references resolves feishu cite into references[]", async () => {
+    const result = expect_fetch_ok(
+      await fetch_knowledge_a_doc({
+        doc: CITING_DOC_TOKEN,
+        env,
+        expand_references: true,
+      }),
+    );
+
+    expect(result.references).toHaveLength(1);
+    const reference = result.references[0];
+    expect(reference.kind).toBe("feishu_doc");
+    expect(reference.ref).toBe(CITED_DOC_TOKEN);
+    expect(reference.label).toBe("被引用文档");
+    expect(reference.status).toBe("ok");
+    expect(reference.revision_id).toBe(522);
+    expect(reference.title).toBe("被引用文档");
+    expect(reference.content).toContain("被引用的正文知识段落");
+    expect(reference.truncated).toBe(false);
+    expect(result.warnings).toEqual([]);
+    // 正文一次 + 引用目标一次。
+    expect(read_calls().map((call) => flag_value(call.args, "--doc"))).toEqual([
+      CITING_DOC_TOKEN,
+      CITED_DOC_TOKEN,
+    ]);
+  });
+
+  test("expand_references reads web links with injected fetch", async () => {
+    const long_text = "火山引擎官方提示词指南正文段落。".repeat(40);
+    const result = expect_fetch_ok(
+      await fetch_knowledge_a_doc({
+        doc: WEB_LINK_DOC_TOKEN,
+        env,
+        expand_references: true,
+        now: () => new Date("2026-10-22T09:30:05+08:00"),
+        web_fetch_impl: async () =>
+          new Response(
+            `<html><head><title>Seedance 2.0 提示词指南</title></head><body><p>${long_text}</p></body></html>`,
+            { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
+          ),
+      }),
+    );
+
+    expect(result.references).toHaveLength(1);
+    const reference = result.references[0];
+    expect(reference.kind).toBe("web_page");
+    expect(reference.ref).toBe(WEB_LINK_URL);
+    expect(reference.status).toBe("ok");
+    expect(reference.title).toBe("Seedance 2.0 提示词指南");
+    expect(reference.content).toContain("火山引擎官方提示词指南正文段落");
+    expect(reference.retrieved_at).toBe("2026-10-22T09:30:05+08:00");
+    expect(result.warnings).toEqual([]);
+  });
+
+  test("expand_references flags JS-rendered web pages as needs_render", async () => {
+    const result = expect_fetch_ok(
+      await fetch_knowledge_a_doc({
+        doc: WEB_LINK_DOC_TOKEN,
+        env,
+        expand_references: true,
+        web_fetch_impl: async () =>
+          new Response("<html><body>You need to enable JavaScript to run this app.</body></html>", {
+            status: 200,
+            headers: { "content-type": "text/html" },
+          }),
+      }),
+    );
+
+    expect(result.references[0].status).toBe("needs_render");
+    expect(result.warnings.map((warning) => warning.code)).toContain(
+      "REFERENCE_NEEDS_RENDER",
+    );
+  });
+
+  test("expand_references reports failed references without blocking the document", async () => {
+    const result = expect_fetch_ok(
+      await fetch_knowledge_a_doc({
+        doc: BROKEN_CITE_DOC_TOKEN,
+        env,
+        expand_references: true,
+      }),
+    );
+
+    expect(result.references).toHaveLength(1);
+    expect(result.references[0].status).toBe("failed");
+    expect(result.references[0].ref).toBe(MISSING_REF_DOC_TOKEN);
+    expect(result.warnings.map((warning) => warning.code)).toContain(
+      "REFERENCE_EXPAND_FAILED",
+    );
   });
 });
