@@ -884,9 +884,16 @@ $script2shot 只执行 shot-prompting，run_id 是 <run_id>
   渲染时音效用 `<>` 包裹、音乐用 `()` 包裹（见 `docs/model-rules-notes.md` §2.4）。
 - 调用 `validate_prompt` 校验硬规则，失败时按结构化错误重新生成。
 - 调用 `render_prompt` 渲染目标模型提示词。
+- 只读目标模型规则文件的 `prompt_guidance`，作为 `shot_structure` / `dialogue` /
+  `sound` / `negative` 的写作口径参考；`long_shot_staging_threshold_sec` 是长镜头
+  阶段化判定的参考阈值。该字段**只指导写作，不参与 `validate_prompt` 判定**，
+  硬规则数值仍由 `validate_prompt` 按规则文件判定。此处明确选择**本地文件读取**，
+  不新增 MCP 工具。
 - 依赖提示词技巧、Seedance 2.0 和 2.5 软知识和模型规则文件。
 
-职责边界：不修改镜头计划。需要改镜头时回到 `shot-planning`。
+职责边界：不修改镜头计划。需要改镜头时回到 `shot-planning`。除只读目标模型规则
+文件的 `prompt_guidance` 外，不读取模型规则文件，也不在 Skill 或产物里另写硬规则
+数值。
 
 独立使用场景：用户自带镜头计划，只出提示词；此时仍需要同一 run 里通过校验的
 `script_analysis.json`，或由调用方提供等价的画面文本要素。
@@ -1146,6 +1153,10 @@ PromptIR 的结构化枚举和字段标识使用英文；最终渲染的 Seedanc
 - 必填字段。
 - 禁止项。
 - 提示词渲染模板。
+- `prompt_guidance`：只供 `shot-prompting` 只读参考的模型差异化写作指导，含
+  `long_shot_staging_threshold_sec`（正有限数）与 `shot_structure` / `dialogue` /
+  `sound` / `negative` 四个非空文案键；不参与 `validate_prompt` 判定；
+  `shot-prompting` 以本地文件读取方式只读该字段，不新增 MCP 工具。
 - `source`：规则来源。
 - `checked_at`：规则核对日期。
 

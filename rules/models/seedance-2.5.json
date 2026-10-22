@@ -41,6 +41,13 @@
     "empty_negative": "无",
     "empty_dialogue": "无对白；人物自然闭口，无旁白"
   },
+  "prompt_guidance": {
+    "long_shot_staging_threshold_sec": 15,
+    "shot_structure": "单段提示词可覆盖同一连续镜头内的多个连续节拍，但必须有统一的叙事目标，每个节拍仍有明确中心；超过阶段化阈值的长镜头必须阶段化：拆成连续阶段，每个阶段只安排一个主要状态变化，写清该阶段结束时画面中可见的状态，并保持人物身份、数量、服装、道具归属、空间方向与声音关系稳定。",
+    "dialogue": "支持更多语种；多人对话逐句标明说话人与语言，台词语种仍以原文为准，不擅自改语种或混用中英文。",
+    "sound": "音效用 <> 包裹、音乐用 () 包裹，台词用 {}；控制声音时直接写明保留与不采用的类别，例如「无背景音乐，只保留人物对白、环境声和动作音效」「不要任何声音」。",
+    "negative": "画面内容优先正向描述，只有素材职责、编辑范围与容易被误带入的内容才写限制；约束词用已核实句式：字幕写「不额外加入对白字幕」「不要字幕」，音频写「无 bgm，只生成环境音和动作音」（或「不要任何声音」），Logo 写「不要生成 Logo」，水印写「不要生成水印」；画面瑕疵类约束按正向短语写。"
+  },
   "source": [
     "https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh",
     "https://docs.volcengine.com/docs/ark/seedance-2-5?lang=zh"

@@ -7,7 +7,7 @@
 范围说明：Task 4b-1 落规划子集（§2.1 / §2.2）；Task 4c-2 追加硬规则子集
 `required_fields` 与 `forbidden`（§2.3）；Task 4c-3 补齐渲染模板 `render`
 （§4，插件设计决策，不对应外部来源）；Task A3 追加台词通道并重定义禁止项扫描
-边界（§2.4、§3、§4）。
+边界（§2.4、§3、§4）；Task B3 追加写作指导 `prompt_guidance`（§5）。
 
 ## 1. 来源清单
 
@@ -117,10 +117,10 @@ Task B2 的 `audio` 渲染直接沿用上表两行已核对的共同符号约定
 `prompt_technique:007`（检索日期 2026-10-22）。两个模型规则文件都只承载节标签与
 节顺序，不按模型分支改写声音符号。
 
-引用范围（Task A3 裁决）：本节的模型语言差异只记录在本文件，供后续 Task B3 的
-规则文件 `prompt_guidance` 落地；`skills/shot-prompting/SKILL.md` 只写通用取材
-规则（原文保真、`language` 只在可判定时填写、多人逐句标说话人、无对白留空数组），
-不写 2.0 / 2.5 的语言差异。
+引用范围（Task A3 裁决）：本节的模型语言差异只记录在本文件，供 Task B3 的规则文件
+`prompt_guidance` 落地；该落地已完成，逐值来源见 §5。`skills/shot-prompting/SKILL.md`
+只写通用取材规则（原文保真、`language` 只在可判定时填写、多人逐句标说话人、
+无对白留空数组），不写 2.0 / 2.5 的语言差异。
 
 ## 3. 口径说明与裁决记录
 
@@ -231,3 +231,39 @@ Task B2 的 `audio` 渲染直接沿用上表两行已核对的共同符号约定
   golden，因此没有需要记录的「迁就实现」修改。快照按字节比较，行尾参与比对：
   `.gitattributes` 对 `tests/fixtures/prompts/*.golden.md` 固定 `text eol=lf`，
   避免 Windows 上的 `core.autocrlf` 在检出时改写快照。
+
+## 5. prompt_guidance 逐值来源（Task B3）
+
+`rules/models/*.json` 的 `prompt_guidance` 是只供 `shot-prompting` **只读参考**的
+模型差异化写作指导，不参与 `validate_prompt` 的硬规则判定；硬规则数值仍以规则
+文件中 `required_fields` / `forbidden` / `duration` / `aspect_ratios` 为准。
+`shot-prompting` 以本地文件读取方式只读该字段，不新增 MCP 工具
+（`docs/architecture.md` §9.6 / §11.4）。
+
+本节的核对口径与 §2.4 相同：官方页面在当前运行环境不可访问（网络受限），以下事实
+逐条对照本地 AI 库缓存 `cards.json`（只读）中已同步的知识卡正文，卡片正文自带来源
+与检索日期。**待官方复核**：官方页面恢复可达后应重新核对本节全部指导文案。
+
+### 5.1 阶段化阈值（两模型一致）
+
+| 字段 | 规则取值 | 依据 | 核对日期 |
+| --- | --- | --- | --- |
+| `long_shot_staging_threshold_sec` | `15` | **插件设计裁决，无外部数值来源**：以 Seedance 2.0 单段上限（15 秒，见 §2.1 `duration.max_sec` / `shot_split.prefer_max_sec`）作为「长镜头」分界，2.5 超过该值的长镜头必须阶段化；2.0 的 15 等于其单段上限，实务上不触发阶段化。 | 2026-10-22 |
+
+### 5.2 Seedance 2.0（`rules/models/seedance-2.0.json`）
+
+| 键 | 取值 | 来源与依据 | 核对日期 |
+| --- | --- | --- | --- |
+| `shot_structure` | 单段提示词只安排一个主要动作或一个主要情绪，按动作先后顺序写清；信息越集中越稳定，不把多个独立事件压进同一段，不写时间戳；超过单段上限时拆成多个独立提示词再剪辑组接。 | `src:Jb6wdU3X3ocpzdxEgLhctgtNnkh:seedance_rule:011`「Seedance 2.0 与 2.5 的提示词维度差异对照」（2.0 最长 15 秒、适合单一动作单元，按镜头序号与动作先后顺序写，信息越集中越稳定）；与 §2.1 `shot_split.multi_action_rule` 同源。原始库 `通用知识/视频生成模型说明`，`source_revision=43`。 | 2026-10-22 |
+| `dialogue` | 台词语言以中文、英语为主且需统一，避免中英文混用（专有名词除外）；小语种台词必须标注语种，例如「用日语说道{こんにちは}」。 | `src:Jb6wdU3X3ocpzdxEgLhctgtNnkh:seedance_rule:011`（2.0 台词以中文、英语为主，小语种需明确标注）；`src:RpJHdwWB5onT8qx5fWqcw6Qnn9c:prompt_technique:013`「语言与特殊字符规范」（语言需统一、避免中英文混用、小语种标注示例）。原始库 `通用知识/视频生成模型说明`（`source_revision=43`）与 `通用知识/Seedance 2.0 提示词指南`（`source_revision=5`，卡片正文自带来源 <https://docs.volcengine.com/docs/ark/seedance-2-0-prompt-guide?lang=zh>）。 | 2026-10-22 |
+| `sound` | 音效用 <> 包裹、音乐用 () 包裹，台词用 {}；用固定符号区分信息类型，帮助模型准确理解声音与台词的归属。 | `src:RpJHdwWB5onT8qx5fWqcw6Qnn9c:prompt_technique:013`「语言与特殊字符规范」（音效 `<>`、音乐 `()`、台词 `{}`、字幕 `【】`，符号用于区分信息类型）；符号约定与 2.5 的同名约定一致（§2.4，Task B2 已冻结两模型共用）。 | 2026-10-22 |
+| `negative` | 负面约束只写已核实的官方句式：避免字幕与文字写「保持无字幕」「避免生成任何文字或字幕」，避免 Logo 写「不要生成 Logo」，避免水印写「不要生成水印」；画面瑕疵类约束按正向短语写（如「画面流畅无卡顿」），不发明固定模板词；字幕无法保证 100% 避免，不把这类约束当硬保证。 | `src:Jb6wdU3X3ocpzdxEgLhctgtNnkh:seedance_rule:009`「官方约束词写法与使用限制」（字幕与文字、Logo、水印的官方约束词；画面瑕疵类约束写成正向短语；字幕无法 100% 避免、参考素材自带字幕时指令可能失效）。原始库 `通用知识/视频生成模型说明`，`source_revision=43`。 | 2026-10-22 |
+
+### 5.3 Seedance 2.5（`rules/models/seedance-2.5.json`）
+
+| 键 | 取值 | 来源与依据 | 核对日期 |
+| --- | --- | --- | --- |
+| `shot_structure` | 单段提示词可覆盖同一连续镜头内的多个连续节拍，但必须有统一的叙事目标，每个节拍仍有明确中心；超过阶段化阈值的长镜头必须阶段化：拆成连续阶段，每个阶段只安排一个主要状态变化，写清该阶段结束时画面中可见的状态，并保持人物身份、数量、服装、道具归属、空间方向与声音关系稳定。 | `src:YcFddglYToIItoxnK3mcXXctnJb:prompt_technique:010`「30 秒长视频：用阶段与结束状态组织事件」（事件较多时拆连续阶段，每阶段一个主要状态变化并写清结束时可见状态；保持一致项含人物身份、数量、服装、道具归属、空间方向与声音关系）；`src:Jb6wdU3X3ocpzdxEgLhctgtNnkh:seedance_rule:011`（2.5 适合连续长镜和多节拍段落，可承载更复杂视觉信息但每个节拍仍需明确中心）。原始库 `通用知识/Seedance 2.5 提示词指南`（`source_revision=39`，来源飞书文档 `OsiUdR1OxoDqvnxsK8LczYx7nPd` 与检索日期 2026-10-22）与 `通用知识/视频生成模型说明`（`source_revision=43`）。 | 2026-10-22 |
+| `dialogue` | 支持更多语种；多人对话逐句标明说话人与语言，台词语种仍以原文为准，不擅自改语种或混用中英文。 | `src:Jb6wdU3X3ocpzdxEgLhctgtNnkh:seedance_rule:011`（2.5 支持更多语种；多人对话仍需逐句标明说话人与语言）；「不擅自改语种」沿用 §3 台词原文保真口径。 | 2026-10-22 |
+| `sound` | 音效用 <> 包裹、音乐用 () 包裹，台词用 {}；控制声音时直接写明保留与不采用的类别，例如「无背景音乐，只保留人物对白、环境声和动作音效」「不要任何声音」。 | `src:YcFddglYToIItoxnK3mcXXctnJb:prompt_technique:007`「声音与文字的特殊字符约定」（音乐 `()`、音效 `<>`、台词 `{}`、字幕 `【】`；控制声音时直接写明保留与不采用的类别）。原始库 `通用知识/Seedance 2.5 提示词指南`，`source_revision=39`；来源飞书文档 `OsiUdR1OxoDqvnxsK8LczYx7nPd`，检索日期 2026-10-22。 | 2026-10-22 |
+| `negative` | 画面内容优先正向描述，只有素材职责、编辑范围与容易被误带入的内容才写限制；约束词用已核实句式：字幕写「不额外加入对白字幕」「不要字幕」，音频写「无 bgm，只生成环境音和动作音」（或「不要任何声音」），Logo 写「不要生成 Logo」，水印写「不要生成水印」；画面瑕疵类约束按正向短语写。 | `src:Jb6wdU3X3ocpzdxEgLhctgtNnkh:seedance_rule:009`「官方约束词写法与使用限制」（2.5 负向控制字幕与音频的官方句式；Logo、水印与画面瑕疵类约束写法）；`src:YcFddglYToIItoxnK3mcXXctnJb:prompt_technique:007`（画面内容优先正向描述，只有素材职责、编辑范围和容易被误带入的内容才写限制）。 | 2026-10-22 |

@@ -12,8 +12,8 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 
 阶段只通过文件产物交接，不依赖会话上下文（stage-conventions §2）。本 Skill 只调用
 `validate_stage_artifact`、`load_knowledge_pack`、`search_knowledge`、`validate_prompt`、
-`render_prompt` 五个 MCP 工具，不自己实现检索、排序、硬规则校验或提示词渲染，也不直接
-读取模型规则文件。
+`render_prompt` 五个 MCP 工具，另只读目标模型规则文件的 `prompt_guidance`；不自己实现
+检索、排序、硬规则校验或提示词渲染，硬规则数值不复制，仍由 `validate_prompt` 判定。
 
 ## 适用时机
 
@@ -57,8 +57,10 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
   回填 `dropped_by_budget` 条目来源元数据的来源；它的 general → project → seedance
   合并池包含本阶段 `scope: "project"` 的检索池。知识包不可用时停止本阶段。
 - 模型硬规则：必填字段、禁止项、时长与画幅范围由 `rules/models/<target_model>.json`
-  定义，经 `validate_prompt` 判定；本阶段不直接读规则文件，也不在 Skill 或产物里
-  另写一套规则数值。
+  定义，经 `validate_prompt` 判定。本阶段对模型规则文件的唯一读取例外是只读目标模型
+  规则文件的 `prompt_guidance`（本地文件读取，不新增 MCP 工具），作为写作口径参考；
+  除该字段外不读规则文件，也不在 Skill 或产物里另写一套硬规则数值。
+  `prompt_guidance` 不参与校验判定。
 
 ## 流程
 
@@ -287,7 +289,8 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 - 不写状态与总账：`run.json` 的阶段状态由入口维护，`knowledge_refs.json` 由入口聚合，
   `warnings.md` 由入口写入；本阶段只写自己主产物里的逐镜头 `knowledge_refs`。
 - 不把模型硬规则复制成 Skill 内的独立权威：必填字段、禁止项、时长与画幅范围以目标
-  模型规则文件为准，并由 `validate_prompt` 判定；本阶段不读规则文件。
+  模型规则文件为准，并由 `validate_prompt` 判定；本阶段只读目标模型规则文件的
+  `prompt_guidance` 作为写作口径参考，不读其余规则字段，也不新增 MCP 工具。
 
 ## 失败处理
 

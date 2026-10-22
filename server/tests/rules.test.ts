@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "n
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import {
   MODEL_RULE_IDS,
   load_model_rules,
@@ -32,6 +32,23 @@ const EXPECTED: Record<
 
 const ASPECT_RATIOS = ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"];
 
+type GuidanceTextKey = "shot_structure" | "dialogue" | "sound" | "negative";
+
+const GUIDANCE_TEXT_KEYS: GuidanceTextKey[] = [
+  "shot_structure",
+  "dialogue",
+  "sound",
+  "negative",
+];
+
+const temp_rules_dirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of temp_rules_dirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function load_ok(model_id: ModelRuleId): ModelRules {
   const result = load_model_rules(model_id);
   expect(result.ok).toBe(true);
@@ -46,6 +63,24 @@ function read_rule_file(file_name: string): Record<string, unknown> {
     string,
     unknown
   >;
+}
+
+/** 在临时规则目录里写一份只改 prompt_guidance 的规则文件，用于损坏场景。 */
+function rule_dir_with_guidance(
+  model_id: ModelRuleId,
+  mutate: (guidance: Record<string, unknown>) => void,
+): string {
+  const temp_dir = mkdtempSync(path.join(os.tmpdir(), "script2shot-rules-guidance-"));
+  temp_rules_dirs.push(temp_dir);
+  const rules = read_rule_file(`${model_id}.json`);
+  const guidance = { ...(rules.prompt_guidance as Record<string, unknown>) };
+  mutate(guidance);
+  writeFileSync(
+    path.join(temp_dir, `${model_id}.json`),
+    JSON.stringify({ ...rules, prompt_guidance: guidance }),
+    "utf8",
+  );
+  return temp_dir;
 }
 
 describe("model rules", () => {
@@ -151,6 +186,67 @@ describe("model rules", () => {
       );
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each(GUIDANCE_TEXT_KEYS)("rules reject missing guidance key %s", (key) => {
+    const rules_dir = rule_dir_with_guidance("seedance-2.5", (guidance) => {
+      delete guidance[key];
+    });
+    expect(() => load_model_rules("seedance-2.5", { rules_dir })).toThrow(
+      new RegExp(`prompt_guidance\\.${key}`),
+    );
+  });
+
+  test.each(GUIDANCE_TEXT_KEYS)("rules reject blank guidance key %s", (key) => {
+    const rules_dir = rule_dir_with_guidance("seedance-2.5", (guidance) => {
+      guidance[key] = "\t  ";
+    });
+    expect(() => load_model_rules("seedance-2.5", { rules_dir })).toThrow(
+      new RegExp(`prompt_guidance\\.${key}`),
+    );
+  });
+
+  test("rules reject missing staging threshold", () => {
+    const rules_dir = rule_dir_with_guidance("seedance-2.5", (guidance) => {
+      delete guidance.long_shot_staging_threshold_sec;
+    });
+    expect(() => load_model_rules("seedance-2.5", { rules_dir })).toThrow(
+      /prompt_guidance\.long_shot_staging_threshold_sec/,
+    );
+  });
+
+  test.each([0, -1])("rules reject non positive staging threshold %s", (threshold) => {
+    const rules_dir = rule_dir_with_guidance("seedance-2.5", (guidance) => {
+      guidance.long_shot_staging_threshold_sec = threshold;
+    });
+    expect(() => load_model_rules("seedance-2.5", { rules_dir })).toThrow(
+      /prompt_guidance\.long_shot_staging_threshold_sec/,
+    );
+  });
+
+  test.each([null, "15", true])(
+    "rules reject non numeric staging threshold %s",
+    (threshold) => {
+      const rules_dir = rule_dir_with_guidance("seedance-2.5", (guidance) => {
+        guidance.long_shot_staging_threshold_sec = threshold;
+      });
+      expect(() => load_model_rules("seedance-2.5", { rules_dir })).toThrow(
+        /prompt_guidance\.long_shot_staging_threshold_sec/,
+      );
+    },
+  );
+
+  test("rules expose per model prompt guidance", () => {
+    for (const model_id of MODEL_RULE_IDS) {
+      const guidance = load_ok(model_id).prompt_guidance;
+      expect(guidance.long_shot_staging_threshold_sec).toBe(15);
+      expect(guidance.long_shot_staging_threshold_sec).toBeGreaterThan(0);
+      expect(Number.isFinite(guidance.long_shot_staging_threshold_sec)).toBe(true);
+      for (const key of GUIDANCE_TEXT_KEYS) {
+        expect(guidance[key]).toBeTypeOf("string");
+        expect(guidance[key].trim().length).toBeGreaterThan(0);
+      }
     }
   });
 });

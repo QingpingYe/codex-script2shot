@@ -14,7 +14,9 @@
  *
  * 目前已覆盖规划子集（时长、画幅、镜头拆分边界）、硬规则子集
  * （`required_fields` 必填非空字段、`forbidden` 禁止项）与渲染模板
- * （`render`：标题、分节标题模板、节标签、节顺序、空负面约束与空对白占位）。
+ * （`render`：标题、分节标题模板、节标签、节顺序、空负面约束与空对白占位），
+ * 以及写作指导 `prompt_guidance`（模型差异化写作口径，含长镜头阶段化阈值；
+ * 只供 `shot-prompting` 只读参考，不参与 `validate_prompt` 判定）。
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -58,6 +60,23 @@ export interface ModelRulesRender {
   empty_dialogue: string;
 }
 
+/**
+ * 模型差异化写作指导（Task B3；逐值来源见 docs/model-rules-notes.md §5）。
+ * 只供 `shot-prompting` 只读参考写作口径，不参与 `validate_prompt` 硬规则判定；
+ * 硬规则数值仍以 `required_fields` / `forbidden` / `duration` / `aspect_ratios` 为准。
+ */
+export interface ModelRulesPromptGuidance {
+  /**
+   * 长镜头阶段化阈值（秒），必须是正有限数。
+   * 2.5 超过该值的长镜头必须阶段化；2.0 等于其单段上限，实务上不触发。
+   */
+  long_shot_staging_threshold_sec: number;
+  shot_structure: string;
+  dialogue: string;
+  sound: string;
+  negative: string;
+}
+
 export interface ModelRules {
   model: ModelRuleId;
   label: string;
@@ -70,6 +89,8 @@ export interface ModelRules {
   forbidden: string[];
   /** 提示词渲染模板。 */
   render: ModelRulesRender;
+  /** 模型差异化写作指导；只读参考，不参与校验判定。 */
+  prompt_guidance: ModelRulesPromptGuidance;
   source: string[];
   checked_at: string;
 }
@@ -175,6 +196,7 @@ function parse_model_rules(raw: unknown, file_path: string, model_id: ModelRuleI
   }
 
   const render = parse_render_template(value.render, fail);
+  const prompt_guidance = parse_prompt_guidance(value.prompt_guidance, fail);
 
   const duration = value.duration;
   if (duration === null || typeof duration !== "object" || Array.isArray(duration)) {
@@ -221,6 +243,7 @@ function parse_model_rules(raw: unknown, file_path: string, model_id: ModelRuleI
     required_fields: value.required_fields as string[],
     forbidden: value.forbidden as string[],
     render,
+    prompt_guidance,
     source: value.source as string[],
     checked_at: value.checked_at as string,
   };
@@ -281,6 +304,39 @@ function parse_render_template(
     section_order,
     empty_negative: value.empty_negative as string,
     empty_dialogue: value.empty_dialogue as string,
+  };
+}
+
+/**
+ * `prompt_guidance` 的读取与结构校验；缺键、空串、空白串或非法阈值
+ * 按插件安装损坏处理（抛错）。
+ */
+function parse_prompt_guidance(
+  raw: unknown,
+  fail: (reason: string) => never,
+): ModelRulesPromptGuidance {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    fail("缺少对象字段 prompt_guidance");
+  }
+  const value = raw as Record<string, unknown>;
+
+  const threshold = value.long_shot_staging_threshold_sec;
+  if (typeof threshold !== "number" || !Number.isFinite(threshold) || threshold <= 0) {
+    fail("prompt_guidance.long_shot_staging_threshold_sec 必须是正有限数");
+  }
+
+  for (const key of ["shot_structure", "dialogue", "sound", "negative"] as const) {
+    if (typeof value[key] !== "string" || (value[key] as string).trim() === "") {
+      fail(`prompt_guidance.${key} 必须是非空字符串`);
+    }
+  }
+
+  return {
+    long_shot_staging_threshold_sec: threshold,
+    shot_structure: value.shot_structure as string,
+    dialogue: value.dialogue as string,
+    sound: value.sound as string,
+    negative: value.negative as string,
   };
 }
 
