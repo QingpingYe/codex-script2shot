@@ -1,0 +1,19 @@
+{
+  "model": "seedance-2.5",
+  "label": "Seedance 2.5",
+  "duration": {
+    "min_sec": 4,
+    "max_sec": 30,
+    "default_sec": 5
+  },
+  "aspect_ratios": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+  "shot_split": {
+    "prefer_max_sec": 30,
+    "multi_action_rule": "一段提示词可覆盖同一连续镜头内的多个连续节拍，但必须有统一的叙事目标，且只保留一个主要动作或一个主要情绪；避免把多个独立事件压进同一段；不为填满时长添加原文没有的动作、台词或事件。"
+  },
+  "source": [
+    "https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh",
+    "https://docs.volcengine.com/docs/ark/seedance-2-5?lang=zh"
+  ],
+  "checked_at": "2026-10-22"
+}
