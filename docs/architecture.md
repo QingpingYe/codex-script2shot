@@ -891,6 +891,12 @@ $script2shot 只执行 shot-prompting，run_id 是 <run_id>
   不新增 MCP 工具。
 - 长镜头按目标模型 `prompt_guidance.long_shot_staging_threshold_sec` 阶段化，
   Skill 不写数值；`shot_split.multi_action_rule` 管边界，Skill 管写法。
+- 负面约束按目标模型 `prompt_guidance.negative` 与通用原则执行：不自动添加用户未
+  要求的画质包、稳定包、水印、Logo、字幕或分身类约束，没有依据时留空数组，措辞
+  只用规则文件里已核实的句式。
+- 渲染前完成一次逐镜头语义自检（台词、镜头决策、画面要素、连续性、声音与负面约束
+  的依据）；自检不替代 `validate_prompt`，确定性的必填、枚举、范围、禁止项与模型
+  一致性校验仍由 `validate_prompt` 承担。
 - 依赖提示词技巧、Seedance 2.0 和 2.5 软知识和模型规则文件。
 
 职责边界：不修改镜头计划。需要改镜头时回到 `shot-planning`。除只读目标模型规则

@@ -113,6 +113,8 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
      编造原文没有的声音事件；没有依据时 `ambience` / `sfx` 写空数组、`music` 写空
      字符串。渲染时音效用 `<>` 包裹、音乐用 `()` 包裹；三项全空时渲染层整行省略，
      不写「无声音」类占位。声音符号约定见 `docs/model-rules-notes.md` §2.4。
+   - `negative_prompt` 只写有依据的条目，通用原则与模型化措辞按「负面约束策略」
+     小节；没有依据时写空数组。
    - 引用的 `source_doc_token`、`source_path`、`source_revision`、`last_synced_at`
      用 `card_id` 从第 2 步的知识包里匹配补齐；`scene_id`、`shot_id`、`query` 取本镜头
      自己的上下文（`shot_id` 必须等于所属镜头的 `shot_id`）。
@@ -131,7 +133,8 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
      **不调用 `render_prompt`、不写提示词文件**。
    - 修复只改 PromptIR 的镜头内容与检索上下文，不回改 `shot_plan.json`；`code` 为
      `MODEL_RULES_UNAVAILABLE` 时属安装损坏，直接停止报告，重新生成镜头不解决。
-5. **渲染并报告产物。** 校验通过后调用
+5. **渲染并报告产物。** 校验通过后、调用 `render_prompt` 前，先按「渲染前自检」
+   小节对 `prompts.ir.json` 完成一次逐镜头的语义自检；再调用
    `render_prompt({ prompt_ir_path: "<workspace>/.script2shot/outputs/<run_id>/prompts.ir.json", output_path: "<workspace>/.script2shot/outputs/<run_id>/prompts.<target_model>.md" })`。
    - 返回 `ok: true` ⇒ 本阶段产物为 `prompts.ir.json` 与 `prompts.<target_model>.md`，
      报告两份路径。
@@ -179,6 +182,50 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 
 阶段化只改 `action` 的组织方式；镜头数量、时长、景别、机位与运镜仍以
 `shot_plan.json` 为准，需要调整时回到 `shot-planning`。
+
+## 负面约束策略
+
+`negative_prompt` 是逐镜头的负面约束条目数组，只用来约束画面内容，不承担改写镜头
+决策的职责：只有上游产物、用户要求或检索卡片给出明确依据时才写条目，没有依据就写
+空数组 `[]`，不为「保险」兜底填充。
+
+**通用原则**
+
+- 不自动添加用户未要求的画质包、稳定包、水印、Logo、字幕与分身类约束：用户或上游
+  没有明确提出这些限制时，不把它们写进 `negative_prompt`；需要写限制时，措辞与
+  写法按本节的模型化口径。
+- 每条条目都要能指回依据：用户要求、上游产物的明确线索或本阶段检索卡片；说不出
+  依据的条目一律不加。
+- 负面条目不改写上游事实：不借 `negative_prompt` 删改台词原文，也不借它改镜头
+  时长、景别、机位或运镜。
+
+**模型化措辞**：条目的措辞与限制范围按目标模型规则文件的 `prompt_guidance.negative`
+写，逐条使用其中已核实的句式，不发明固定模板词；Skill 不复制这些句式文本，句式随
+规则文件更新。
+
+## 渲染前自检
+
+`validate_prompt` 返回 `ok: true` 后、调用 `render_prompt` 前，对 `prompts.ir.json`
+做一次逐镜头的语义核对；八项都要过，任何一项不通过先修 PromptIR 再渲染，不带已知
+偏差渲染。这一步是 LLM 的语义自检，不替代 `validate_prompt`：必填、枚举、范围、
+禁止项与模型一致性的确定性校验仍由 `validate_prompt` 按规则文件判定，自检不跳过
+它，也不改判它的结论。
+
+1. 台词与上游 `dialogue_units` 逐句一致且不扩写：不增句、不改写、不翻译、不补
+   旁白；只有意图没有台词原文的镜头没有编造台词。
+2. 无对白镜头的 `dialogue` 是空数组，画面按自然闭口处理，不出现旁白。
+3. `shot_size`、`camera_angle` / `camera_movement`（即 `camera_*` 字段）和
+   `duration`：取值与 `shot_plan.json` 一致，只做枚举翻译，不改写镜头决策。
+4. `subject`、`setting`、`emotion` 与 `script_analysis.json` 一致，只重组已有
+   线索，不新增原文没有的角色、地点或情绪表现。
+5. `continuity.previous_shot` 指到正确的上一镜头（首镜头省略或为 `null`），并与
+   `character_state`、`environment_state` 衔接同一份上游状态，不另写一套连续性。
+6. 声音只取已有线索：`ambience`、`sfx`、`music` 的每一项都能指回原文声音线索或
+   检索卡片，不编造原文没有的声音事件。
+7. `negative_prompt` 逐条有依据，措辞与限制符合目标模型 `prompt_guidance.negative`；
+   没有依据的条目删掉，全部无依据时留空数组。
+8. 超过 `prompt_guidance.long_shot_staging_threshold_sec` 的长镜头已按「事件脚本化」
+   阶段化，且 `action` 未使用原文或用户未给出的数字时间段。
 
 ## 知识检索配方
 

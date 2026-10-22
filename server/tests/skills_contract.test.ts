@@ -70,6 +70,18 @@ describe("shot-prompting skill content contract", () => {
     expect(markdown).toContain("prompt_guidance.long_shot_staging_threshold_sec");
     expect(markdown).not.toMatch(/15\s*秒|30\s*秒/);
   });
+
+  // B5：负面约束策略与渲染前自检是 shot-prompting 的两组写作规则。模型化的负面措辞
+  // 只以规则文件的 `prompt_guidance.negative` 字段名引用，Skill 不复制具体句式；自检
+  // 是 LLM 语义核对，确定性的硬规则校验仍由 `validate_prompt` 承担。
+  test("shot prompting skill documents negative constraint policy and pre-render checklist", () => {
+    const markdown = readFileSync(skillPath, "utf8");
+
+    expect(markdown).toContain("## 负面约束策略");
+    expect(markdown).toContain("## 渲染前自检");
+    expect(markdown).toContain("prompt_guidance.negative");
+    expect(markdown).toContain("不替代 `validate_prompt`");
+  });
 });
 
 function launcherCommand(scriptPath: string): { command: string; args: string[] } {
