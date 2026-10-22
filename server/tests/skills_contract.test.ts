@@ -98,7 +98,8 @@ describe("knowledge-sync mcp tools contract", () => {
    * tools/list 回归清单：名单里的 `health` 与七个同步工具
    * （scan/read/plan/fetch/replace/update/delete）是 knowledge-sync 直接消费的；
    * `write_config` 与 `init_knowledge_b` 属于 setup 流程，`validate_stage_artifact`
-   * 是阶段产物校验入口，一并纳入额外回归覆盖。
+   * 是阶段产物校验入口，`validate_prompt` 是 PromptIR 硬规则校验入口，
+   * 一并纳入额外回归覆盖。
    */
   const requiredToolNames = [
     "health",
@@ -112,6 +113,7 @@ describe("knowledge-sync mcp tools contract", () => {
     "update_doc_sync_state",
     "delete_doc_cards",
     "validate_stage_artifact",
+    "validate_prompt",
   ];
 
   test("tools/list exposes the tools consumed by knowledge-sync plus the setup tools", async () => {

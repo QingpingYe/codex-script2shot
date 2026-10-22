@@ -142,6 +142,7 @@ describe("mcp handshake", () => {
       const toolNames = result.tools.map((tool) => tool.name);
       expect(toolNames).toContain("health");
       expect(toolNames).toContain("write_config");
+      expect(toolNames).toContain("validate_prompt");
       for (const tool of result.tools) {
         expect(typeof tool.name).toBe("string");
         expect(tool.name.length).toBeGreaterThan(0);
@@ -258,6 +259,47 @@ describe("mcp handshake", () => {
       expect(emptyPath).toMatchObject({
         ok: false,
         error: { code: "CONFIG_INVALID", details: { field: "path" } },
+      });
+
+      expect(errors.join(""), "server stderr should stay empty").toBe("");
+    } finally {
+      await client.close();
+    }
+  }, 30000);
+
+  test("tools/call validates prompt ir and rejects malformed arguments", async () => {
+    const { client, errors } = await connect_server(server_env());
+
+    try {
+      const prompt_ir_path = path.join(repoRoot, "tests", "fixtures", "prompts_ir.sample.json");
+      const valid = parse_tool_json(
+        await client.callTool({
+          name: "validate_prompt",
+          arguments: { prompt_ir_path },
+        }),
+      );
+      expect(valid).toEqual({ ok: true, errors: [] });
+
+      const unknownKey = parse_tool_json(
+        await client.callTool({
+          name: "validate_prompt",
+          arguments: { prompt_ir_path, unexpected: true },
+        }),
+      );
+      expect(unknownKey).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "unexpected" } },
+      });
+
+      const emptyPath = parse_tool_json(
+        await client.callTool({
+          name: "validate_prompt",
+          arguments: { prompt_ir_path: "   " },
+        }),
+      );
+      expect(emptyPath).toMatchObject({
+        ok: false,
+        error: { code: "CONFIG_INVALID", details: { field: "prompt_ir_path" } },
       });
 
       expect(errors.join(""), "server stderr should stay empty").toBe("");

@@ -11,6 +11,8 @@
     "prefer_max_sec": 15,
     "multi_action_rule": "每段提示词只安排一个主要动作或一个主要情绪，避免把多个独立事件压进同一段；内容超过单段上限（15 秒）时拆成多个独立提示词再剪辑组接；不为填满时长添加原文没有的动作、台词或事件。"
   },
+  "required_fields": ["subject", "action", "setting", "camera_movement", "lighting", "color", "style"],
+  "forbidden": ["--ar", "aspect_ratio", "duration", "fps", "resolution", "run_id", "seedance"],
   "source": [
     "https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh",
     "https://docs.volcengine.com/docs/ark/seedance-2-0?lang=zh",

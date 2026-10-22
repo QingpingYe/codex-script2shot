@@ -1,10 +1,10 @@
 # script2shot 本地 MCP Server
 
-本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册 14 个工具：
+本目录是插件的 stdio MCP Server。当前支持 MCP 握手，`tools/list` 已注册 15 个工具：
 `health`、`write_config`、`init_knowledge_b`、`scan_knowledge_a`、`read_sync_state`、
 `build_sync_plan`、`fetch_knowledge_a_doc`、`replace_doc_cards`、`update_doc_sync_state`、
 `delete_doc_cards`、`refresh_local_index`、`search_knowledge`、`load_knowledge_pack`、
-`validate_stage_artifact`。
+`validate_stage_artifact`、`validate_prompt`。
 
 文档中的「原始库 / AI 库」分别指飞书知识库（原始资料）和飞书知识库（AI）；
 工具名与配置键中的 `a/b` 标识保留兼容。
@@ -24,6 +24,11 @@ Phase 3 注册的三个本地检索工具：
   `{ ok, errors[] }`；schema 错误的 `path` 使用 JSON Pointer，文件缺失 / 不可读 /
   JSON 非法分别返回 `STAGE_ARTIFACT_MISSING` / `STAGE_ARTIFACT_UNREADABLE` /
   `STAGE_ARTIFACT_INVALID_JSON`。
+- `validate_prompt`：按 PromptIR schema 与目标模型规则文件（`rules/models/*.json`）的
+  硬规则校验 `prompts.ir.json`，返回 `{ ok, errors[] }`；`errors[]` 为
+  `{ shot_id, field, code, message }`，`code` 只取 `MISSING_FIELD` / `OUT_OF_RANGE` /
+  `FORBIDDEN_TERM` / `MODEL_MISMATCH`；顺序固定为镜头顺序 → 镜头内字段顺序；
+  文件缺失 / 不可读 / JSON 非法返回单条 `field: "prompt_ir_path"` 的结构化错误。
 
 阶段运行工具（`init_run` 等）由后续阶段注册。
 
@@ -153,6 +158,6 @@ POSIX 脚本带可执行位，也可以直接执行 `./scripts/launch_script2sho
 
 ## 已知限制
 
-- 已注册上列 14 个工具（健康检查、配置写入、AI 库初始化与知识库同步、
+- 已注册上列 15 个工具（健康检查、配置写入、AI 库初始化与知识库同步、
   本地检索）；阶段运行工具由后续阶段注册。
 - 启动依赖已构建的 `server/dist/server.mjs`，源码目录不直接运行。

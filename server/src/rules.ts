@@ -12,8 +12,9 @@
  * 文件内的 `model` 与请求的 `model_id` 不一致属于插件安装损坏，直接抛错
  * （与 `schemas.ts` 的 schema 加载失败处理一致）。
  *
- * 本期只覆盖规划子集（时长、画幅、镜头拆分边界）；`required_fields` /
- * `forbidden` / `render` 由 4c 任务补齐，届时同步扩展类型。
+ * 目前已覆盖规划子集（时长、画幅、镜头拆分边界）与硬规则子集
+ * （`required_fields` 必填非空字段、`forbidden` 禁止项）；`render` 由 4c-3 补齐，
+ * 届时同步扩展类型。
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -43,6 +44,10 @@ export interface ModelRules {
   duration: ModelRulesDuration;
   aspect_ratios: string[];
   shot_split: ModelRulesShotSplit;
+  /** 提示词正文必须非空的 PromptIR 镜头字段（字段名与 schemas/prompt_ir.schema.json 对齐）。 */
+  required_fields: string[];
+  /** 提示词正文字段不得命中的禁止项；validate_prompt 按大小写不敏感子串匹配。 */
+  forbidden: string[];
   source: string[];
   checked_at: string;
 }
@@ -140,6 +145,12 @@ function parse_model_rules(raw: unknown, file_path: string, model_id: ModelRuleI
   if (!is_string_array(value.aspect_ratios)) {
     fail("缺少字符串数组字段 aspect_ratios");
   }
+  if (!is_string_list(value.required_fields)) {
+    fail("缺少字符串数组字段 required_fields");
+  }
+  if (!is_string_list(value.forbidden)) {
+    fail("缺少字符串数组字段 forbidden");
+  }
 
   const duration = value.duration;
   if (duration === null || typeof duration !== "object" || Array.isArray(duration)) {
@@ -183,15 +194,22 @@ function parse_model_rules(raw: unknown, file_path: string, model_id: ModelRuleI
       prefer_max_sec: shot_split_value.prefer_max_sec as number,
       multi_action_rule: shot_split_value.multi_action_rule as string,
     },
+    required_fields: value.required_fields as string[],
+    forbidden: value.forbidden as string[],
     source: value.source as string[],
     checked_at: value.checked_at as string,
   };
 }
 
+/** 非空字符串数组（source / aspect_ratios）。 */
 function is_string_array(value: unknown): value is string[] {
+  return is_string_list(value) && value.length > 0;
+}
+
+/** 允许为空的字符串数组（required_fields / forbidden）。 */
+function is_string_list(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
-    value.length > 0 &&
     value.every((entry) => typeof entry === "string" && entry.trim() !== "")
   );
 }

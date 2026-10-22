@@ -1035,7 +1035,7 @@ general / project 块重复归类。
   "setting": "狭窄巷道，湿润砖墙，霓虹灯反射",
   "time": "night",
   "camera_angle": "low-angle",
-  "camera_movement": "handheld tracking",
+  "camera_movement": "handheld",
   "lighting": "low-key neon lighting",
   "color": "cool cyan and red accents",
   "style": "neo-noir cinematic realism",
