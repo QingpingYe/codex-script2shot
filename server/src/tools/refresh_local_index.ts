@@ -163,8 +163,9 @@ export async function refresh_local_index(
   const index_path = index_file_path();
   const index_before = index_status(index_path);
   // 索引 ready 时把 doc_state 的 token 也纳入删除集：缓存与索引可能不同步
-    // （save_cache 失败、崩溃或缓存文件被删除/恢复），只信缓存会漏删 AI 库已移除
-  // 的文档，让它继续可被检索。读取失败时按索引不可读处理，走整体重建。
+  // （save_cache 失败、崩溃或缓存文件被删除/恢复），只信缓存会漏删 AI 库已移除
+  // 的文档，让它继续可被检索。读取失败时按索引暂时不可用处理：dry run 不写盘且
+  // 照常返回预览，写路径 fail-closed 返回 INDEX_UNAVAILABLE，不删除索引文件。
   const index_tokens =
     index_before.state === "ready" ? read_index_doc_tokens(index_path) : undefined;
   const index_read_failed = index_before.state === "ready" && index_tokens === undefined;

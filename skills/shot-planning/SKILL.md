@@ -149,8 +149,9 @@ MCP 工具，不自己实现检索、排序、校验或渲染；目标模型规�
 - `character_bible`、`scene_description`、`visual_style` 保持正文原文；其余适用卡片可
   压缩为决策要点使用，不逐字复制到产物。
 - 只取用于景别、机位、运镜、时长、组接、空间和风格一致性的知识，不取提示词写作技巧。
-- `degraded`、`warnings` 和 `explain` 只返回给调用方，由入口写入 `warnings.md`；
-  不写进 `shot_plan.json`，也不新增输出文件（stage-conventions §5、架构 §10.4）。
+- `degraded` 与 `warnings` 只返回给调用方，由入口写入 `warnings.md`；`explain` 不在本
+  阶段使用，其诊断输出同样只交调用方。三者都不写进 `shot_plan.json`，也不新增输出
+  文件（stage-conventions §5、架构 §10.4）。
 
 ## 输出
 

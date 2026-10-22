@@ -17,7 +17,7 @@
       "color": "cool cyan and red accents",
       "style": "neo-noir cinematic realism",
       "continuity": {
-        "previous_shot": "ep01-sc01-sh00",
+        "previous_shot": null,
         "character_state": "wet coat, holding black umbrella",
         "environment_state": "heavy rain"
       },

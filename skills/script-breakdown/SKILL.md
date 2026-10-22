@@ -102,8 +102,9 @@ MCP 工具，不自己实现检索、排序、校验或渲染。
 - 本阶段所有检索都不传 `target_model`（stage-conventions §3.1 例外、架构 §10.1）；
   候选数量按 `retrieval.default_top_k` 由工具默认处理，不额外设置 `max_cards` /
   `char_budget`（§3.5 的按场景/按镜头上限属于下游阶段）。
-- `degraded`、`warnings` 与 `explain` 只返回给调用方，由入口写进 `warnings.md`；
-  不写进产物，也不新增输出文件（stage-conventions §5、架构 §10.4）。
+- `degraded` 与 `warnings` 只返回给调用方，由入口写进 `warnings.md`；`explain` 不在本
+  阶段使用，其诊断输出同样只交调用方。三者都不写进 `script_analysis.json`，也不新增
+  输出文件（stage-conventions §5、架构 §10.4）。
 
 ## 输出
 

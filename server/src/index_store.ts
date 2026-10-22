@@ -16,9 +16,10 @@ import { normalize_text } from "./normalize.js";
  * - 索引只是 AI 库的派生物：`replace_doc_rows` 按文档整体替换，单事务内
  *   完成「删旧行 -> 插新行 -> upsert doc_state」，失败整体回滚。
  * - `index_status()` 按路径**只读**探测：文件缺失返回 missing；存在但不是普通文件、
- *   0 字节、打不开或缺少 `cards` 表时返回 corrupt；其余返回 ready。绝不抛异常、
- *   不凭空创建文件、不执行任何 DDL（health 与 `refresh_local_index` 的 dry run
- *   依赖「探测不写入」这一保证；schema 保证只由写路径的 `open_index()` 负责）。
+ *   0 字节、SQLite 结构损坏或缺少 `cards` 表时返回 corrupt；打开或验证查询遇到权限、
+ *   占用、IO 等临时失败时返回 unreadable；其余返回 ready。绝不抛异常、不凭空创建
+ *   文件、不执行任何 DDL（health 与 `refresh_local_index` 的 dry run 依赖「探测不
+ *   写入」这一保证；schema 保证只由写路径的 `open_index()` 负责）。
  */
 
 export const INDEX_DIR_NAME = "index";

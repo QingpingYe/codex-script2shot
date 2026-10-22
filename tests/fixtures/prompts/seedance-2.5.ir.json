@@ -17,7 +17,7 @@
       "color": "青蓝与暗红",
       "style": "阴郁写实电影质感",
       "continuity": {
-        "previous_shot": "ep02-sc01-sh00",
+        "previous_shot": null,
         "character_state": "角色A握紧黑色伞柄",
         "environment_state": "暴雨持续"
       },
