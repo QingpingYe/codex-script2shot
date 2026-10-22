@@ -64,6 +64,7 @@
         "target_model",
         "duration",
         "aspect_ratio",
+        "shot_size",
         "subject",
         "action",
         "setting",
@@ -93,6 +94,21 @@
           "type": "string",
           "description": "画幅比例；六个取值与 rules/models/*.json 的 aspect_ratios 一致。",
           "enum": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"]
+        },
+        "shot_size": {
+          "type": "string",
+          "description": "景别英文枚举，与 schemas/shot_plan.schema.json 的中文枚举一一对应：大远景=extreme-long-shot、远景=long-shot、全景=full-shot、中全景=medium-full-shot、中景=medium-shot、中近景=medium-close-up、近景=close-shot、特写=close-up、插入镜头=insert-shot。取值取自上游 shot_plan 的冻结枚举，渲染为「景别：{中文}」。",
+          "enum": [
+            "extreme-long-shot",
+            "long-shot",
+            "full-shot",
+            "medium-full-shot",
+            "medium-shot",
+            "medium-close-up",
+            "close-shot",
+            "close-up",
+            "insert-shot"
+          ]
         },
         "subject": {
           "type": "string"

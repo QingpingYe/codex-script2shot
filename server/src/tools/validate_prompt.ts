@@ -62,6 +62,7 @@ const SHOT_FIELD_ORDER = [
   "target_model",
   "duration",
   "aspect_ratio",
+  "shot_size",
   "subject",
   "action",
   "setting",
@@ -80,6 +81,8 @@ const SHOT_FIELD_ORDER = [
  * 禁止项扫描范围：最终会渲染进提示词正文的文本字段（画面 / 动作 / 场景 / 时间 /
  * 机位 / 运镜 / 光影 / 色调 / 风格），另加 `continuity` 的两个状态字段与
  * `negative_prompt[]` 条目。`knowledge_refs` 是知识溯源元数据，不渲染进正文，不扫描。
+ * `shot_size` / `aspect_ratio` 同属冻结枚举且渲染成固定中文标签，文本里不可能夹带
+ * 禁止项，因此不入扫描范围。
  */
 const FORBIDDEN_SCAN_FIELDS = [
   "subject",

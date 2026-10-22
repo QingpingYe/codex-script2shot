@@ -11,12 +11,12 @@
  * 3. 输出为 Markdown：整篇标题 → 每个镜头一节（分节标题行 + 固定顺序的七条节内容）。
  *    正文不含时间戳 / run 元数据，行尾统一 `\n`，同输入逐字节一致。
  *
- * 节顺序（与 brief 冻结的 镜头号与时长 → 主体与动作 → 环境与时间 → 机位与运镜 →
+ * 节顺序（与 brief 冻结的 镜头号与时长 → 主体与动作 → 环境与时间 → 景别、机位与运镜 →
  * 光线与色彩 → 风格 → 连续性 → 负面约束 一致）：「镜头号与时长」由分节标题行
  * `## 镜头 {shot_id}（时长 {duration} 秒，画幅 {aspect_ratio}）` 承载，其余七节
  * 是节内条目，顺序由规则文件 `render.section_order` 给出。
  *
- * 冻结英文枚举 `camera_angle` / `camera_movement` 渲染为中文标签（映射表与
+ * 冻结英文枚举 `shot_size` / `camera_angle` / `camera_movement` 渲染为中文标签（映射表与
  * `schemas/prompt_ir.schema.json` 描述、`schemas/shot_plan.schema.json` 的中文词表
  * 一一对应）；其余自由文本字段原样输出，渲染层不翻译、不补写内容。
  *
@@ -76,6 +76,23 @@ interface RenderTemplate {
   section_labels: Record<RenderSectionKey, string>;
   empty_negative: string;
 }
+
+/**
+ * `shot_size` 冻结英文枚举 → 中文标签。与
+ * `schemas/prompt_ir.schema.json` 的描述、`schemas/shot_plan.schema.json` 的
+ * `shot_size` 中文枚举按顺序一一对应。
+ */
+export const SHOT_SIZE_LABELS: Record<string, string> = {
+  "extreme-long-shot": "大远景",
+  "long-shot": "远景",
+  "full-shot": "全景",
+  "medium-full-shot": "中全景",
+  "medium-shot": "中景",
+  "medium-close-up": "中近景",
+  "close-shot": "近景",
+  "close-up": "特写",
+  "insert-shot": "插入镜头",
+};
 
 /**
  * `camera_angle` 冻结英文枚举 → 中文标签。与
@@ -181,6 +198,7 @@ interface PromptIrShot {
   shot_id: string;
   duration: number;
   aspect_ratio: string;
+  shot_size: string;
   subject: string;
   action: string;
   setting: string;
@@ -272,6 +290,7 @@ function render_section(
       return join_parts([field("环境", shot.setting), field("时间", shot.time)]);
     case "camera":
       return join_parts([
+        field("景别", label_for(SHOT_SIZE_LABELS, shot.shot_size)),
         field("机位", label_for(CAMERA_ANGLE_LABELS, shot.camera_angle)),
         field("运镜", label_for(CAMERA_MOVEMENT_LABELS, shot.camera_movement)),
       ]);

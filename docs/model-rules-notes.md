@@ -56,20 +56,24 @@
 
 #### 2.3.1 `required_fields`（提示词正文必须非空的 PromptIR 镜头字段）
 
-取值：`["subject", "action", "setting", "camera_movement", "lighting", "color", "style"]`
+取值：`["shot_size", "subject", "action", "setting", "camera_movement", "lighting", "color", "style"]`
 
 | 字段 | 规则取值 | 来源 | 核对日期 |
 | --- | --- | --- | --- |
-| `required_fields[0]` | `subject` | 原始库 `通用知识/Seedance 2.0 提示词指南`（`source_revision=5`）卡片 `src:RpJHdwWB5onT8qx5fWqcw6Qnn9c:prompt_technique:003` 的进阶公式「精准主体 + 动作细节 + 场景环境 + 光影色调 + 镜头运镜 + 视觉风格 + 画质 + 约束条件」的「精准主体」 | 2026-10-22 |
-| `required_fields[1]` | `action` | 同一公式的「动作细节」 | 2026-10-22 |
-| `required_fields[2]` | `setting` | 同一公式的「场景环境」 | 2026-10-22 |
-| `required_fields[3]` | `camera_movement` | 同一公式的「镜头运镜」 | 2026-10-22 |
-| `required_fields[4]` | `lighting` | 同一公式的「光影色调」中的「光影」 | 2026-10-22 |
-| `required_fields[5]` | `color` | 同一公式的「光影色调」中的「色调」 | 2026-10-22 |
-| `required_fields[6]` | `style` | 同一公式的「视觉风格」+「画质」；PromptIR 没有独立画质字段，画质口径并入 `style` | 2026-10-22 |
+| `required_fields[0]` | `shot_size` | **插件设计裁决，无外部来源**：景别取自 `schemas/shot_plan.schema.json` 的冻结 9 值中文枚举，PromptIR 用英文枚举一一对应（见 §4.2、§4.3）；上游已有该信息，渲染出的提示词正文按「景别、机位与运镜」成节，因此要求非空 | 2026-10-22 |
+| `required_fields[1]` | `subject` | 原始库 `通用知识/Seedance 2.0 提示词指南`（`source_revision=5`）卡片 `src:RpJHdwWB5onT8qx5fWqcw6Qnn9c:prompt_technique:003` 的进阶公式「精准主体 + 动作细节 + 场景环境 + 光影色调 + 镜头运镜 + 视觉风格 + 画质 + 约束条件」的「精准主体」 | 2026-10-22 |
+| `required_fields[2]` | `action` | 同一公式的「动作细节」 | 2026-10-22 |
+| `required_fields[3]` | `setting` | 同一公式的「场景环境」 | 2026-10-22 |
+| `required_fields[4]` | `camera_movement` | 同一公式的「镜头运镜」 | 2026-10-22 |
+| `required_fields[5]` | `lighting` | 同一公式的「光影色调」中的「光影」 | 2026-10-22 |
+| `required_fields[6]` | `color` | 同一公式的「光影色调」中的「色调」 | 2026-10-22 |
+| `required_fields[7]` | `style` | 同一公式的「视觉风格」+「画质」；PromptIR 没有独立画质字段，画质口径并入 `style` | 2026-10-22 |
 
 公式中的「约束条件」由 `negative_prompt` 承载，允许为空数组，不列入 `required_fields`；
 `time`、`camera_angle`、`continuity`、`knowledge_refs` 由 schema 保证存在，但不要求非空。
+`shot_size` 是 I1.1 新增的插件设计裁决项：它没有外部公式依据，只保证上游景别不被第三
+阶段丢掉；`required_fields` 的数组顺序与 `schemas/prompt_ir.schema.json` 的 `required`
+顺序（`aspect_ratio` 之后、`subject` 之前）保持一致。
 
 #### 2.3.2 `forbidden`（提示词正文字段不得命中的禁止项）
 
@@ -135,7 +139,7 @@
 | 镜头号与时长 | `shot_heading` 分节标题行；PromptIR 的 `aspect_ratio` 必须进入产物但不在冻结的八个节名内，与镜头号、时长同一行 |
 | 主体与动作 | `subject_action`：`主体：{subject}；动作：{action}` |
 | 环境与时间 | `setting_time`：`环境：{setting}；时间：{time}` |
-| 机位与运镜 | `camera`：`机位：{camera_angle 中文标签}；运镜：{camera_movement 中文标签}` |
+| 景别、机位与运镜 | `camera`：`景别：{shot_size 中文标签}；机位：{camera_angle 中文标签}；运镜：{camera_movement 中文标签}` |
 | 光线与色彩 | `light_color`：`光线：{lighting}；色彩：{color}` |
 | 风格 | `style`：`{style}`（单字段，无子标签） |
 | 连续性 | `continuity`：`承接镜头：{previous_shot}；角色状态：{character_state}；环境状态：{environment_state}` |
@@ -150,9 +154,11 @@
   `time` / `lighting` / `color` / `style` 与 `continuity` 状态字段是自由文本，渲染层
   原样输出、不翻译。`time` 在 schema 里是英文术语（如 `night`），渲染层不内置时间
   词表，避免发明未定义的映射。
-- 英文枚举 → 中文：只有冻结枚举 `camera_angle` / `camera_movement` 做映射，取值与
-  `schemas/prompt_ir.schema.json` 的字段描述、`schemas/shot_plan.schema.json` 的中文
-  枚举一一对应（13 个机位、16 个运镜；映射表在 `server/src/tools/render_prompt.ts`）。
+- 英文枚举 → 中文：冻结枚举 `shot_size` / `camera_angle` / `camera_movement` 做映射，
+  取值与 `schemas/prompt_ir.schema.json` 的字段描述、`schemas/shot_plan.schema.json` 的
+  中文枚举一一对应（9 个景别、13 个机位、16 个运镜；映射表在
+  `server/src/tools/render_prompt.ts`）。`shot_size` 由 I1.1 加入 `camera` 节，
+  节 key 不变，只是节标签改为「景别、机位与运镜」、节内子标签从两项变三项。
 - 空子字段：可为空的子字段（`time`、`previous_shot` 缺省 / `null`）为空时不生成子
   标签；必填字段由 4c-2 硬规则保证非空。
 - 校验失败不渲染：`render_prompt` 先调用 `validate_prompt`；不通过返回

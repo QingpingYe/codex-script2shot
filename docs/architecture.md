@@ -1042,6 +1042,7 @@ general / project 块重复归类。
   "target_model": "seedance-2.5",
   "duration": 8,
   "aspect_ratio": "16:9",
+  "shot_size": "medium-shot",
   "subject": "角色A",
   "action": "在雨夜穿过旧城区巷道",
   "setting": "狭窄巷道，湿润砖墙，霓虹灯反射",
@@ -1060,6 +1061,17 @@ general / project 块重复归类。
   "knowledge_refs": []
 }
 ```
+
+镜头字段的口径：
+
+- 结构性枚举（`aspect_ratio`、`shot_size`、`camera_angle`、`camera_movement`）
+  使用英文标识，取值集合冻结在 `schemas/prompt_ir.schema.json`。
+- `shot_size` 取自上游 `shot_plan.json` 的 9 值中文景别枚举，按冻结映射译成英文，
+  顺序一一对应：大远景=`extreme-long-shot`、远景=`long-shot`、全景=`full-shot`、
+  中全景=`medium-full-shot`、中景=`medium-shot`、中近景=`medium-close-up`、
+  近景=`close-shot`、特写=`close-up`、插入镜头=`insert-shot`。
+- 自由文本字段（`subject`、`action`、`setting`、`time`、`lighting`、`color`、
+  `style` 与 `continuity` 的状态字段）渲染时原样输出，渲染层不补写内容。
 
 PromptIR 的结构化枚举和字段标识使用英文；最终渲染的 Seedance 提示词正文
 统一使用中文。用户没有额外指定语言时不生成英文提示词。

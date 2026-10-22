@@ -11,7 +11,7 @@
     "prefer_max_sec": 30,
     "multi_action_rule": "一段提示词可覆盖同一连续镜头内的多个连续节拍，但必须有统一的叙事目标，且只保留一个主要动作或一个主要情绪；避免把多个独立事件压进同一段；不为填满时长添加原文没有的动作、台词或事件。"
   },
-  "required_fields": ["subject", "action", "setting", "camera_movement", "lighting", "color", "style"],
+  "required_fields": ["shot_size", "subject", "action", "setting", "camera_movement", "lighting", "color", "style"],
   "forbidden": ["--ar", "aspect_ratio", "duration", "fps", "resolution", "run_id", "seedance"],
   "render": {
     "title": "# Seedance 2.5 提示词",
@@ -19,7 +19,7 @@
     "section_labels": {
       "subject_action": "主体与动作",
       "setting_time": "环境与时间",
-      "camera": "机位与运镜",
+      "camera": "景别、机位与运镜",
       "light_color": "光线与色彩",
       "style": "风格",
       "continuity": "连续性",

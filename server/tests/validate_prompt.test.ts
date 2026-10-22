@@ -127,6 +127,18 @@ describe("prompt hard rule validation", () => {
     expect(above.errors[0]?.message).toContain("30");
   });
 
+  test("validate rejects missing shot size", () => {
+    const ir = read_prompt_ir("prompts_ir.sample.json");
+    const shot = ir.shots[0] as unknown as Record<string, unknown>;
+    delete shot.shot_size;
+
+    const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
+
+    expect(result.ok).toBe(false);
+    expect(error_keys(result)).toEqual(["ep01-sc01-sh01|shot_size|MISSING_FIELD"]);
+    expect(result.errors[0]?.message).toContain("shot_size");
+  });
+
   test("validate rejects forbidden term", () => {
     const rules = load_model_rules("seedance-2.5");
     expect(rules.ok).toBe(true);

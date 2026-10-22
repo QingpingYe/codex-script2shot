@@ -84,10 +84,11 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
    `dropped_by_budget`），再把完整文档写入
    `<workspace>/.script2shot/outputs/<run_id>/prompts.ir.json`，供第 4 步的
    `validate_prompt` 按路径读取。
-   - `duration` 取上游 `duration_sec` 的整数秒；`camera_angle`、`camera_movement`
-     按「输出」的冻结映射表把上游中文枚举译成英文枚举；`subject`、`action`、
-     `setting`、`time` 取材于 `script_analysis.json` 的对应场景与原文单元；
-     `lighting`、`color`、`style` 取材于上游信息与检索卡片。
+   - `duration` 取上游 `duration_sec` 的整数秒；`shot_size` 取自上游 `shot_size`
+     枚举，`camera_angle`、`camera_movement` 同样取自上游对应枚举，三者都按「输出」
+     的冻结映射表把中文枚举译成英文枚举；`subject`、`action`、`setting`、`time`
+     取材于 `script_analysis.json` 的对应场景与原文单元；`lighting`、`color`、
+     `style` 取材于上游信息与检索卡片。
    - 引用的 `source_doc_token`、`source_path`、`source_revision`、`last_synced_at`
      用 `card_id` 从第 2 步的知识包里匹配补齐；`scene_id`、`shot_id`、`query` 取本镜头
      自己的上下文（`shot_id` 必须等于所属镜头的 `shot_id`）。
@@ -199,6 +200,7 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 | `target_model` | string | 与顶层 `target_model` 一致 |
 | `duration` | integer | 整数秒，取自上游 `duration_sec`；范围由 `validate_prompt` 判定 |
 | `aspect_ratio` | string | `16:9`、`4:3`、`1:1`、`3:4`、`9:16`、`21:9`，取自 `run.json` 或调用方显式提供 |
+| `shot_size` | string | 英文枚举，取自上游 `shot_size`，映射见下表 |
 | `subject` | string | 取自上游场景与角色信息 |
 | `action` | string | 取自上游动作单元与镜头计划 |
 | `setting` | string | 取自上游场景地点与检索到的场景说明 |
@@ -211,6 +213,11 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 | `continuity` | object | `previous_shot`（可选，上一镜头 ID 或 `null`）、`character_state`、`environment_state`，后两项为非空字符串 |
 | `negative_prompt` | string[] | 负面约束条目；没有依据时写空数组 |
 | `knowledge_refs` | array | 本镜头的 `knowledge_ref[]` |
+
+中文 → 英文景别枚举，一一对应（`shot_plan.json` → `prompts.ir.json`）：
+大远景=`extreme-long-shot`、远景=`long-shot`、全景=`full-shot`、
+中全景=`medium-full-shot`、中景=`medium-shot`、中近景=`medium-close-up`、
+近景=`close-shot`、特写=`close-up`、插入镜头=`insert-shot`。
 
 中文 → 英文机位枚举，一一对应（`shot_plan.json` → `prompts.ir.json`）：
 平视=`eye-level`、仰视=`low-angle`、俯视=`high-angle`、鸟瞰=`bird's-eye`、

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   CAMERA_ANGLE_LABELS,
   CAMERA_MOVEMENT_LABELS,
+  SHOT_SIZE_LABELS,
   render_prompt,
 } from "../src/tools/render_prompt.js";
 
@@ -129,6 +130,34 @@ describe("prompt rendering", () => {
     expect(Object.values(CAMERA_ANGLE_LABELS)).toEqual(shot_plan_angles);
     expect(Object.keys(CAMERA_MOVEMENT_LABELS)).toEqual(prompt_ir_movements);
     expect(Object.values(CAMERA_MOVEMENT_LABELS)).toEqual(shot_plan_movements);
+  });
+
+  test("shot size label table matches the frozen english and chinese enums", () => {
+    const prompt_ir_sizes = read_camera_enum("prompt_ir.schema.json", "shot_size");
+    const shot_plan_sizes = read_camera_enum("shot_plan.schema.json", "shot_size");
+
+    // 键 === prompt_ir 英文枚举（数量与顺序一致）；值 === shot_plan 中文枚举。
+    expect(prompt_ir_sizes).toHaveLength(9);
+    expect(shot_plan_sizes).toHaveLength(9);
+    expect(Object.keys(SHOT_SIZE_LABELS)).toEqual(prompt_ir_sizes);
+    expect(Object.values(SHOT_SIZE_LABELS)).toEqual(shot_plan_sizes);
+  });
+
+  test("render includes shot size in camera section", () => {
+    const { result, output_path } = render_fixture(
+      "seedance-2.5.ir.json",
+      "prompts.seedance-2.5.shot-size.md",
+    );
+
+    expect(result).toEqual({ ok: true, output_path });
+
+    const camera_lines = readFileSync(output_path, "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("- 景别、机位与运镜："));
+    expect(camera_lines).toEqual([
+      "- 景别、机位与运镜：景别：中景；机位：仰视；运镜：手持",
+      "- 景别、机位与运镜：景别：中近景；机位：背身；运镜：滑动变焦",
+    ]);
   });
 
   test("render reports failure when output directory cannot be created", () => {

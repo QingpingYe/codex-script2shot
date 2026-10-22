@@ -63,6 +63,16 @@ describe("prompt ir schema validation", () => {
     expect(error_paths(result)).toEqual(["shots[0].camera_angle"]);
   });
 
+  test("prompt ir rejects unknown shot size", () => {
+    const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
+    edited.shots[0].shot_size = "medium_shot";
+
+    const result = validate_prompt_ir(edited);
+
+    expect(result.ok).toBe(false);
+    expect(error_paths(result)).toEqual(["shots[0].shot_size"]);
+  });
+
   test("prompt ir rejects empty continuity exit state", () => {
     const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
     const continuity = edited.shots[0].continuity as Record<string, unknown>;
