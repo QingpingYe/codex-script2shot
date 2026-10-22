@@ -7,6 +7,7 @@ import {
   CAMERA_ANGLE_LABELS,
   CAMERA_MOVEMENT_LABELS,
   SHOT_SIZE_LABELS,
+  TIME_LABELS,
   render_prompt,
 } from "../src/tools/render_prompt.js";
 
@@ -143,6 +144,22 @@ describe("prompt rendering", () => {
     expect(Object.values(SHOT_SIZE_LABELS)).toEqual(shot_plan_sizes);
   });
 
+  test("time label table matches the frozen mapping", () => {
+    // 时间词映射是 Task A2 的插件设计裁决（docs/model-rules-notes.md §4.3）：
+    // 键 === PromptIR 英文术语与冻结顺序，值 === 渲染正文使用的中文标签。
+    // schema 不收录时间词枚举，因此这张表由本测试单独钉住。
+    expect(Object.entries(TIME_LABELS)).toEqual([
+      ["night", "夜晚"],
+      ["day", "白天"],
+      ["dawn", "清晨"],
+      ["dusk", "黄昏"],
+      ["morning", "早晨"],
+      ["noon", "正午"],
+      ["afternoon", "下午"],
+      ["evening", "傍晚"],
+    ]);
+  });
+
   test("render includes shot size in camera section", () => {
     const { result, output_path } = render_fixture(
       "seedance-2.5.ir.json",
@@ -158,6 +175,46 @@ describe("prompt rendering", () => {
       "- 景别、机位与运镜：景别：中景；机位：仰视；运镜：手持",
       "- 景别、机位与运镜：景别：中近景；机位：背身；运镜：滑动变焦",
     ]);
+  });
+
+  test("render localizes english time terms", () => {
+    const { result, output_path } = render_fixture(
+      "seedance-2.5.ir.json",
+      "prompts.seedance-2.5.time.md",
+    );
+
+    expect(result).toEqual({ ok: true, output_path });
+
+    // 收录词渲染为中文标签；空 time 仍不生成「时间」子标签（节骨架不变）。
+    const setting_time_lines = readFileSync(output_path, "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("- 环境与时间："));
+    expect(setting_time_lines).toEqual([
+      "- 环境与时间：环境：狭窄巷道，湿润砖墙，霓虹灯反射；时间：夜晚",
+      "- 环境与时间：环境：巷道尽头的灯牌墙，积水地面",
+    ]);
+  });
+
+  test("render passes through unknown time term", () => {
+    const mutated = JSON.parse(
+      readFileSync(path.join(promptFixturesDir, "seedance-2.5.ir.json"), "utf8"),
+    ) as { shots: Array<{ time: string }> };
+    mutated.shots[0].time = "holographic-noon";
+    const prompt_ir_path = path.join(tempDir, "seedance-2.5.unknown-time.ir.json");
+    writeFileSync(prompt_ir_path, JSON.stringify(mutated, null, 2), "utf8");
+    const output_path = path.join(tempDir, "prompts.seedance-2.5.unknown-time.md");
+
+    const result = render_prompt({ prompt_ir_path, output_path });
+
+    expect(result).toEqual({ ok: true, output_path });
+
+    // 未收录词不猜译、不丢弃：原样进入正文。
+    const setting_time_line = readFileSync(output_path, "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("- 环境与时间："));
+    expect(setting_time_line).toBe(
+      "- 环境与时间：环境：狭窄巷道，湿润砖墙，霓虹灯反射；时间：holographic-noon",
+    );
   });
 
   test("render reports failure when output directory cannot be created", () => {

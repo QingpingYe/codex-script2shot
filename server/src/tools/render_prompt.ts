@@ -18,7 +18,8 @@
  *
  * 冻结英文枚举 `shot_size` / `camera_angle` / `camera_movement` 渲染为中文标签（映射表与
  * `schemas/prompt_ir.schema.json` 描述、`schemas/shot_plan.schema.json` 的中文词表
- * 一一对应）；其余自由文本字段原样输出，渲染层不翻译、不补写内容。
+ * 一一对应）；`time` 按 `TIME_LABELS` 做中文映射，未收录词原样透传；其余自由文本字段
+ * 原样输出，渲染层不翻译、不补写内容。
  *
  * 空 `negative_prompt` 的裁决：不省略节，稳定输出「负面约束：{empty_negative}」
  * （当前规则文件取值为「无」），保证每个镜头都是同一套节骨架。
@@ -137,6 +138,22 @@ export const CAMERA_MOVEMENT_LABELS: Record<string, string> = {
   "whip-pan": "甩镜",
   "dolly-zoom": "滑动变焦",
   "follow-focus": "跟焦",
+};
+
+/**
+ * `time` 英文时间术语 → 中文标签（Task A2，插件设计裁决，无外部来源；见
+ * `docs/model-rules-notes.md` §4.3）。`time` 的 schema 口径不变，仍是英文术语，
+ * 只有渲染层本地化；键顺序为该裁决记录的顺序。
+ */
+export const TIME_LABELS: Record<string, string> = {
+  night: "夜晚",
+  day: "白天",
+  dawn: "清晨",
+  dusk: "黄昏",
+  morning: "早晨",
+  noon: "正午",
+  afternoon: "下午",
+  evening: "傍晚",
 };
 
 export function render_prompt(input: RenderPromptInput): RenderPromptResult {
@@ -287,7 +304,10 @@ function render_section(
     case "subject_action":
       return join_parts([field("主体", shot.subject), field("动作", shot.action)]);
     case "setting_time":
-      return join_parts([field("环境", shot.setting), field("时间", shot.time)]);
+      return join_parts([
+        field("环境", shot.setting),
+        field("时间", time_label(shot.time)),
+      ]);
     case "camera":
       return join_parts([
         field("景别", label_for(SHOT_SIZE_LABELS, shot.shot_size)),
@@ -321,6 +341,11 @@ function join_parts(parts: Array<string | undefined>): string {
 /** 冻结枚举查表；schema 校验保证取值合法，查不到时原样透传（防御式兜底）。 */
 function label_for(labels: Record<string, string>, value: string): string {
   return labels[value] ?? value;
+}
+
+/** 时间词本地化：命中映射取中文，未收录词原样透传（不发明未定义的映射）。 */
+function time_label(value: string): string {
+  return TIME_LABELS[value] ?? value;
 }
 
 /** 空 `negative_prompt`（含全空白条目）不省略节，渲染模板里的稳定占位。 */

@@ -138,7 +138,7 @@
 | --- | --- |
 | 镜头号与时长 | `shot_heading` 分节标题行；PromptIR 的 `aspect_ratio` 必须进入产物但不在冻结的八个节名内，与镜头号、时长同一行 |
 | 主体与动作 | `subject_action`：`主体：{subject}；动作：{action}` |
-| 环境与时间 | `setting_time`：`环境：{setting}；时间：{time}` |
+| 环境与时间 | `setting_time`：`环境：{setting}；时间：{time 中文标签}` |
 | 景别、机位与运镜 | `camera`：`景别：{shot_size 中文标签}；机位：{camera_angle 中文标签}；运镜：{camera_movement 中文标签}` |
 | 光线与色彩 | `light_color`：`光线：{lighting}；色彩：{color}` |
 | 风格 | `style`：`{style}`（单字段，无子标签） |
@@ -151,9 +151,16 @@
   每个镜头维持同一套节骨架，便于逐镜头复制与快照比对；`negative_prompt` 允许为空
   （4c-2 未列入 `required_fields`），省略节会让节数随内容变化。
 - 中文正文与自由文本：节标签、子标签为中文；`subject` / `action` / `setting` /
-  `time` / `lighting` / `color` / `style` 与 `continuity` 状态字段是自由文本，渲染层
-  原样输出、不翻译。`time` 在 schema 里是英文术语（如 `night`），渲染层不内置时间
-  词表，避免发明未定义的映射。
+  `lighting` / `color` / `style` 与 `continuity` 状态字段是自由文本，渲染层原样输出、
+  不翻译。
+- 时间词本地化（Task A2，**插件设计裁决，无外部来源**）：`time` 是结构化时间术语，
+  但「最终渲染的 Seedance 提示词正文统一使用中文」（`docs/architecture.md` §11.3），
+  因此渲染层对收录的时间词做中文映射，`TIME_LABELS` 的键顺序为：
+  `night`→夜晚、`day`→白天、`dawn`→清晨、`dusk`→黄昏、`morning`→早晨、`noon`→正午、
+  `afternoon`→下午、`evening`→傍晚。映射表在
+  `server/src/tools/render_prompt.ts`；`time` 字段的 schema 口径不变，仍是英文术语，
+  只有渲染层本地化。未收录词（如 `holographic-noon`）原样透传，不发明未定义的映射；
+  空 `time` 不生成「时间」子标签（沿用空子字段口径）。
 - 英文枚举 → 中文：冻结枚举 `shot_size` / `camera_angle` / `camera_movement` 做映射，
   取值与 `schemas/prompt_ir.schema.json` 的字段描述、`schemas/shot_plan.schema.json` 的
   中文枚举一一对应（9 个景别、13 个机位、16 个运镜；映射表在
