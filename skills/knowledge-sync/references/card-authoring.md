@@ -1,13 +1,13 @@
 # 知识卡生成参考
 
-`$knowledge-sync` 生成知识卡时按本文件执行。知识卡写入知识库 B 的 `KnowledgeCards`
+`$knowledge-sync` 生成知识卡时按本文件执行。知识卡写入 AI 库的 `KnowledgeCards`
 表，字段定义以 `schemas/knowledge_card.schema.json` 为准。
 
 ## 分类映射
 
-十类分类与知识库 A 目录一一对应（目录说明见 `docs/knowledge-base-a.md`）：
+十类分类与原始库目录一一对应（目录说明见 `docs/knowledge-base-raw.md`）：
 
-| 知识库 A 目录 | 分类 `category` |
+| 原始库目录 | 分类 `category` |
 | --- | --- |
 | 拆镜方法 | `shot_breakdown` |
 | 镜头语言词典 | `camera_lexicon` |

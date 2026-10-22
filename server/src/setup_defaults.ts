@@ -3,7 +3,7 @@
  *
  * 这里是默认值的唯一来源：`write_config` 与 setup Skill 的说明都引用本模块，
  * `config.ts` 的缺省回填也从这里取值，不各自硬编码；本模块保持零依赖。
- * 默认知识库 A / B 可被用户替换；`project_roots` 给出根节点到项目 ID 的默认映射。
+ * 默认原始库与 AI 库可被用户替换；`project_roots` 给出根节点到项目 ID 的默认映射。
  */
 
 export interface SetupDefaults {

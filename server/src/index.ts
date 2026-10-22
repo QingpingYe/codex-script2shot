@@ -46,7 +46,7 @@ const server = new Server(
 const TOOLS = [
   {
     name: "health",
-    description: "只读检查：lark-cli 路径与版本、登录状态、知识库 A/B 可达性、本地目录与索引状态。",
+    description: "只读检查：lark-cli 路径与版本、登录状态、原始库与 AI 库可达性、本地目录与索引状态。",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -77,7 +77,7 @@ const TOOLS = [
   {
     name: "init_knowledge_b",
     description:
-      "创建或校验知识库 B 的 KnowledgeCards 与 SyncState 两张数据表（按固定表名解析 table_id），" +
+      "创建或校验 AI 库的 KnowledgeCards 与 SyncState 两张数据表（按固定表名解析 table_id），" +
       "报告字段漂移；dry_run 缺省 true，只有 dry_run=false 且校验通过后才把 table_id 写回本地配置。",
     inputSchema: {
       type: "object",
@@ -93,14 +93,14 @@ const TOOLS = [
   {
     name: "scan_knowledge_a",
     description:
-      "只读扫描知识库 A 的 Wiki 节点元数据（不读正文），返回 nodes[] / skipped[] / warnings[]；" +
+      "只读扫描原始库的 Wiki 节点元数据（不读正文），返回 nodes[] / skipped[] / warnings[]；" +
       "nodes[] 是 build_sync_plan 的输入。",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "read_sync_state",
     description:
-      "只读读取知识库 B 的 SyncState 全表，返回 records[]（每条带 Base record_id）；" +
+      "只读读取 AI 库的 SyncState 全表，返回 records[]（每条带 Base record_id）；" +
       "records[] 是 build_sync_plan 的输入。",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
@@ -128,7 +128,7 @@ const TOOLS = [
   {
     name: "fetch_knowledge_a_doc",
     description:
-      "只读读取一个知识库 A 文档的 markdown 正文与 revision_id；" +
+      "只读读取一个原始库文档的 markdown 正文与 revision_id；" +
       "expand_references=true 时展开正文里的飞书文档引用与网页链接，返回 references[]；" +
       "标题提取顺序为 <title> 标签 → 首个 Markdown 标题行 → 节点标题（带 warning）。",
     inputSchema: {
@@ -159,7 +159,7 @@ const TOOLS = [
       properties: {
         source_doc_token: {
           type: "string",
-          description: "知识库 A 文档 token（即知识卡的 source_doc_token）。",
+          description: "原始库文档 token（即知识卡的 source_doc_token）。",
         },
         cards: {
           type: "array",
@@ -197,14 +197,14 @@ const TOOLS = [
   {
     name: "delete_doc_cards",
     description:
-      "删除一个文档在知识库 B 中的全部知识卡与 SyncState 记录（不可逆）；" +
+      "删除一个文档在 AI 库中的全部知识卡与 SyncState 记录（不可逆）；" +
       "dry_run 缺省 true 只预览，只有执行路径才带高风险确认 --yes，返回值中的 dry_run 字段区分预览与执行。",
     inputSchema: {
       type: "object",
       properties: {
         source_doc_token: {
           type: "string",
-          description: "要删除知识卡与 SyncState 的知识库 A 文档 token。",
+          description: "要删除知识卡与 SyncState 的原始库文档 token。",
         },
         dry_run: { type: "boolean", description: "缺省 true：只预览，不真正删除。" },
       },
@@ -215,15 +215,15 @@ const TOOLS = [
   {
     name: "refresh_local_index",
     description:
-      "以知识库 B 的 SyncState 为准增量刷新本地卡片缓存与关键词索引：只拉取变化文档的知识卡、" +
-      "删除 B 中已移除文档的本地数据；dry_run 缺省 true（不写缓存、不建索引）；" +
-      "B 不可达但有缓存时降级返回并写 warning。",
+      "以 AI 库的 SyncState 为准增量刷新本地卡片缓存与关键词索引：只拉取变化文档的知识卡、" +
+      "删除 AI 库中已移除文档的本地数据；dry_run 缺省 true（不写缓存、不建索引）；" +
+      "AI 库不可达但有缓存时降级返回并写 warning。",
     inputSchema: {
       type: "object",
       properties: {
         dry_run: {
           type: "boolean",
-          description: "缺省 true：只读取 B 并计算变化清单，不写缓存、不建索引。",
+          description: "缺省 true：只读取 AI 库并计算变化清单，不写缓存、不建索引。",
         },
       },
       additionalProperties: false,

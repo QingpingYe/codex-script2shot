@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal：** 从知识库 B 增量刷新本地缓存和 SQLite 关键词索引，提供可重复验证的过滤、关键词检索和规则排序，以及按项目组装知识包。
+**Goal：** 从 AI 库增量刷新本地缓存和 SQLite 关键词索引，提供可重复验证的过滤、关键词检索和规则排序，以及按项目组装知识包。
 
-**Architecture：** `cache/cards.json` 保存按文档聚合的卡片与本地缓存标记；`index/knowledge.sqlite` 保存检索用行数据和文档标记。`refresh_local_index` 以 B 的 `SyncState` 为唯一同步事实来源，只拉取变化文档；`search_knowledge` 与 `load_knowledge_pack` 只读本地索引和缓存，索引不可用时按 `priority` 降序回退并写 warning。
+**Architecture：** `cache/cards.json` 保存按文档聚合的卡片与本地缓存标记；`index/knowledge.sqlite` 保存检索用行数据和文档标记。`refresh_local_index` 以 AI 库的 `SyncState` 为唯一同步事实来源，只拉取变化文档；`search_knowledge` 与 `load_knowledge_pack` 只读本地索引和缓存，索引不可用时按 `priority` 降序回退并写 warning。
 
 **Tech Stack：** Node.js >= 24 + TypeScript；SQLite 使用 Node 内置 `node:sqlite`（无原生模块，见架构 §7.1）。
 
 **Spec：** `docs/architecture.md` §7.2（本地数据目录）、§7.4（缓存与索引刷新）、§8（MCP Tool）、§10（检索设计）、§13（失败处理）、§14 Phase 3；`references/stage-conventions.md` §3（检索契约）。
 
-**前置：** Phase 2 完成（B 的表与同步工具可用）。
+**前置：** Phase 2 完成（AI 库的表与同步工具可用）。
 
 ## Global Constraints
 
@@ -18,8 +18,8 @@
 - 排序规则固定为五级，不引入权重参数：标题或实体精确命中 > 标题或标签部分命中 > 正文命中 > priority 降序 > updated_at 降序（§10.2）。
 - `target_model` 过滤放行两类卡片：`target_models` 含当前模型，或 `target_models` 为空（stage-conventions §3.1）。
 - `script-breakdown` 阶段不做 `target_model` 过滤是调用方约定，本阶段工具只提供参数，不内置阶段逻辑。
-- 本地缓存标记不是同步状态；B 的 `SyncState` 始终是权威（§2.4、§7.4）。
-- 索引不可用时按 `priority` 降序回退并写 warning；B 不可达时有缓存则继续运行 + warning，无缓存则停止（§13）。
+- 本地缓存标记不是同步状态；AI 库的 `SyncState` 始终是权威（§2.4、§7.4）。
+- 索引不可用时按 `priority` 降序回退并写 warning；AI 库不可达时有缓存则继续运行 + warning，无缓存则停止（§13）。
 - 被预算截断的卡片按 `dropped_by_budget` 语义返回（stage-conventions §3.5）。
 
 ## Review Focus
@@ -27,7 +27,7 @@
 1. 索引缺失或被损坏：检索必须回退到缓存按 `priority` 排序并写 warning，不崩溃（Task 2 用例 `index.reports_corrupt_file`；Task 4 用例 `search.falls_back_to_priority_when_index_unavailable`）。
 2. 中文全角、大小写、多余空白：归一化后「角色Ａ」「角色a」「角色A 」命中一致（Task 2 用例 `normalize.covers_fullwidth_case_and_whitespace`）。
 3. `max_cards` 与 `char_budget` 边界：负数报错；0 返回空并如实记录；超预算按排序从低到高截断（Task 4 用例 `search.rejects_negative_limits`、`search.drops_lowest_ranked_when_over_budget`）。
-4. B 不可达但本地缓存存在：刷新照常返回、标记 `degraded` 并写 warning；无缓存时返回 `KB_B_UNREACHABLE`（Task 3 用例 `refresh.continues_with_cache_when_b_unreachable`、`refresh.stops_without_cache_when_b_unreachable`）。
+4. AI 库不可达但本地缓存存在：刷新照常返回、标记 `degraded` 并写 warning；无缓存时返回 `KB_B_UNREACHABLE`（Task 3 用例 `refresh.continues_with_cache_when_b_unreachable`、`refresh.stops_without_cache_when_b_unreachable`）。
 5. `target_models` 为空数组或缺失：都视为通用卡放行（Task 4 用例 `search.treats_empty_target_models_as_universal`；Task 5 用例 `pack.filters_seedance_target_model` 覆盖反例）。
 
 ---
@@ -142,7 +142,7 @@ git commit -m "feat: add sqlite keyword index and text normalization"
 - Consumes: Task 1 缓存、Task 2 索引、Phase 2 的 `read_sync_state` 与 `list_records`。
 - Produces: `refresh_local_index({ dry_run = true }) -> { dry_run, refreshed_docs[], removed_docs[], unchanged_docs[], index_status, degraded, warnings[] }`。
 
-刷新算法（架构 §7.4）：读 B 的 `SyncState` 全表 → 与本地标记比较（`source_revision`、`last_synced_at`）→ 只拉取变化文档的卡片（`list_records` 按 `source_doc_token` 等值过滤）→ 只更新这些文档在缓存和索引中的数据 → 本地存在但 SyncState 不再存在的文档做删除。B 不可达：有缓存 ⇒ `degraded=true` + warning `KB_B_UNREACHABLE`；无缓存 ⇒ 返回 `KB_B_UNREACHABLE` 错误。`dry_run=true` 时不写缓存和索引。
+刷新算法（架构 §7.4）：读 AI 库的 `SyncState` 全表 → 与本地标记比较（`source_revision`、`last_synced_at`）→ 只拉取变化文档的卡片（`list_records` 按 `source_doc_token` 等值过滤）→ 只更新这些文档在缓存和索引中的数据 → 本地存在但 SyncState 不再存在的文档做删除。AI 库不可达：有缓存 ⇒ `degraded=true` + warning `KB_B_UNREACHABLE`；无缓存 ⇒ 返回 `KB_B_UNREACHABLE` 错误。`dry_run=true` 时不写缓存和索引。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -286,5 +286,5 @@ git commit -m "feat: add knowledge pack loader"
 
 - [ ] 四类过滤（scope/project/category/target_model）各有正例和反例测试。
 - [ ] 排序五级规则有独立用例，重复运行结果稳定。
-- [ ] 索引不可用与 B 不可达两个降级路径都有测试并写 warning。
+- [ ] 索引不可用与 AI 库不可达两个降级路径都有测试并写 warning。
 - [ ] `health` 的 `index` 检查反映真实索引状态。

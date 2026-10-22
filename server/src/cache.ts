@@ -9,7 +9,7 @@ import { resolve_home } from "./config.js";
  *
  * - 缓存文件固定为 `<home>/cache/cards.json`，顶层形状
  *   `{ version: 1, docs: { [source_doc_token]: { source_revision, last_synced_at, cards[] } } }`。
- * - 缓存标记不是同步状态，只用于避免重复下载与重复建索引；知识库 B 的
+ * - 缓存标记不是同步状态，只用于避免重复下载与重复建索引；AI 库的
  *   SyncState 始终是权威（§2.4）。
  * - `load_cache()` 不抛异常：文件缺失返回空缓存；解析失败、结构非法或版本
  *   不受支持时返回 `rebuild_needed: true` 与 warning，绝不自动覆盖文件，
@@ -23,7 +23,7 @@ export const CACHE_FILE_NAME = "cards.json";
 
 const CACHE_DIR_NAME = "cache";
 
-/** 本地缓存标记：与知识库 B 的 SyncState 比对时的最小信息。 */
+/** 本地缓存标记：与 AI 库的 SyncState 比对时的最小信息。 */
 export interface DocMarker {
   source_revision: number;
   last_synced_at: string;

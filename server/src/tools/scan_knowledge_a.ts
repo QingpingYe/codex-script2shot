@@ -12,7 +12,7 @@ import {
  * `scan_knowledge_a` 工具（架构 §4.4、§6.1、§8）。
  *
  * - 只读：全程只发 `wiki nodes list`（Risk=read）的原始 API 调用，不读正文、不写
- *   知识库 A。
+ *   原始库。
  * - 固定 `--page-size 50` 手动翻页 + BFS；不使用 `--page-all`（有上限），也不使用
  *   快捷命令 `wiki +node-list`（输出被裁剪，实测不含 `obj_edit_time`）。
  * - scope / project_id 按架构 §4.4：根节点标题为「通用知识」⇒ scope=general；
@@ -36,7 +36,7 @@ export type ScanSkipCode =
   | "SHORTCUT_NODE_SKIPPED"
   | "UNMAPPED_ROOT_NODE_SKIPPED";
 
-/** 扫描得到的可同步文档；`path` 只用作文档在知识库 A 中的展示路径。 */
+/** 扫描得到的可同步文档；`path` 只用作文档在原始库中的展示路径。 */
 export interface ScannedNode {
   node_token: string;
   obj_token: string;
@@ -131,7 +131,7 @@ export async function scan_knowledge_a(
   const config = loaded.config;
   const space_a = config.lark.space_a;
   if (!has_text(space_a)) {
-    return failure("CONFIG_INVALID", "配置缺少 lark.space_a，无法扫描知识库 A。", {
+    return failure("CONFIG_INVALID", "配置缺少 lark.space_a，无法扫描原始库。", {
       field: "lark.space_a",
       path: path.join(resolve_home(), CONFIG_FILE_NAME),
     });

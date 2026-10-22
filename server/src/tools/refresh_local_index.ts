@@ -33,24 +33,24 @@ import {
 /**
  * `refresh_local_index` MCP Tool（架构 §7.4、§8、§9.3、§13；Task 3 简报）。
  *
- * 算法（架构 §7.4；B 的 SyncState 是唯一权威同步状态，§2.4）：
- * 1. 读 B 的 SyncState 全表，与本地缓存标记逐文档比较 `source_revision` 与
+ * 算法（架构 §7.4；AI 库的 SyncState 是唯一权威同步状态，§2.4）：
+ * 1. 读 AI 库的 SyncState 全表，与本地缓存标记逐文档比较 `source_revision` 与
  *    `last_synced_at`；本地缓存没有该 token 的条目视为新增。
  * 2. 只对变化文档发 `base +record-list --filter-json { logic, conditions }`
  *    （按 `source_doc_token` 等值过滤）拉取知识卡；全部取卡成功后才进入写阶段，
  *    任何一次取卡失败都保持本地状态原样（简报：不做单文档容错）。
  * 3. 写阶段只更新变化文档的缓存与索引行；本地存在但 SyncState 已不存在的文档
  *    从缓存与索引中删除。
- * 4. 缓存损坏（`rebuild_needed`）时把本地状态视为空：所有 B 文档都按新增处理；
- *    索引缺失或损坏时也整体重建。索引是 B 的派生临时数据（§7.4），重建前直接删除
+ * 4. 缓存损坏（`rebuild_needed`）时把本地状态视为空：所有 AI 库文档都按新增处理；
+ *    索引缺失或损坏时也整体重建。索引是 AI 库的派生临时数据（§7.4），重建前直接删除
  *    旧索引文件：既避免残留旧行，也绕开 Windows 上无法用 rename 覆盖损坏文件的问题。
  *
- * `dry_run` 缺省 true（写操作先 dry-run 的全局约定）：只读 B 并算出同样的清单，
- * 不写缓存、不打开/创建索引、不建目录。B 不可达（`KB_B_UNREACHABLE` /
+ * `dry_run` 缺省 true（写操作先 dry-run 的全局约定）：只读 AI 库并算出同样的清单，
+ * 不写缓存、不打开/创建索引、不建目录。AI 库不可达（`KB_B_UNREACHABLE` /
  * `read_sync_state` 归一化后的 `KB_READ_FAILED`）时：有可用缓存则
  * `degraded: true` + warning 继续；没有可用缓存则返回 `KB_B_UNREACHABLE` 错误。
- * 其中 `KB_READ_FAILED` 的降级 warning 固定写「SyncState 读取失败（B 不可达 /
- * 权限 / 表配置）」的措辞，不笼统声称知识库 B 不可达；warning 码保持
+ * 其中 `KB_READ_FAILED` 的降级 warning 固定写「SyncState 读取失败（AI 库不可达 /
+ * 权限 / 表配置）」的措辞，不笼统声称 AI 库不可达；warning 码保持
  * `KB_B_UNREACHABLE`（对外冻结）。
  * 其余 `read_sync_state` 失败码原样传播，不伪装成降级。
  *
@@ -79,7 +79,7 @@ export interface RefreshLocalIndexSuccess {
   unchanged_docs: string[];
   /** 本次运行结束时的索引状态（dry run 为运行前的状态）。 */
   index_status: IndexStatus;
-  /** 只有「B 不可达但有缓存」时为 true。 */
+  /** 只有「AI 库不可达但有缓存」时为 true。 */
   degraded: boolean;
   warnings: RefreshWarning[];
 }
@@ -110,7 +110,7 @@ export interface RefreshLocalIndexInput {
   home_dir?: string;
 }
 
-/** `read_sync_state` 里等价于「知识库 B 不可达」的失败码。 */
+/** `read_sync_state` 里等价于「AI 库不可达」的失败码。 */
 const KB_B_UNREACHABLE_CODES: readonly string[] = ["KB_B_UNREACHABLE", "KB_READ_FAILED"];
 
 export async function refresh_local_index(
@@ -161,7 +161,7 @@ export async function refresh_local_index(
   const index_path = index_file_path();
   const index_before = index_status(index_path);
   // 索引 ready 时把 doc_state 的 token 也纳入删除集：缓存与索引可能不同步
-  // （save_cache 失败、崩溃或缓存文件被删除/恢复），只信缓存会漏删 B 已移除
+    // （save_cache 失败、崩溃或缓存文件被删除/恢复），只信缓存会漏删 AI 库已移除
   // 的文档，让它继续可被检索。读取失败时按索引不可读处理，走整体重建。
   const index_tokens =
     index_before.state === "ready" ? read_index_doc_tokens(index_path) : undefined;
@@ -174,7 +174,7 @@ export async function refresh_local_index(
       if (!usable_cache) {
         return failure(
           "KB_B_UNREACHABLE",
-          `知识库 B 不可达，且本地没有可用缓存：${sync.error.message}`,
+          `AI 库不可达，且本地没有可用缓存：${sync.error.message}`,
           { cause: sync.error.code },
         );
       }
@@ -330,7 +330,7 @@ export async function refresh_local_index(
   }
 
   if (rebuild_index) {
-    // 索引是 B 的派生临时数据：重建时从干净文件开始（旧文件可能损坏或残留旧行）。
+    // 索引是 AI 库的派生临时数据：重建时从干净文件开始（旧文件可能损坏或残留旧行）。
     const remove_error = remove_index_file(index_path);
     if (remove_error !== undefined) {
       return failure(
@@ -452,17 +452,17 @@ function read_index_doc_tokens(index_path: string): string[] | undefined {
 
 /**
  * 降级 warning 的措辞按 `read_sync_state` 的失败码区分：`KB_READ_FAILED` 是
- * SyncState 读不到（知识库 B 不可达 / 权限不足 / SyncState 表配置错误都可能），
- * 不能笼统声称「知识库 B 不可达」；warning 码保持 `KB_B_UNREACHABLE`（冻结）。
+ * SyncState 读不到（AI 库不可达 / 权限不足 / SyncState 表配置错误都可能），
+ * 不能笼统声称「AI 库不可达」；warning 码保持 `KB_B_UNREACHABLE`（冻结）。
  */
 function degraded_sync_message(code: string, detail: string): string {
   if (code === "KB_READ_FAILED") {
     return (
-      "SyncState 读取失败，已按本地缓存继续（可能原因：知识库 B 不可达、" +
+      "SyncState 读取失败，已按本地缓存继续（可能原因：AI 库不可达、" +
       `权限不足或 SyncState 表配置错误）：${detail}`
     );
   }
-  return `知识库 B 不可达，已按本地缓存继续：${detail}`;
+  return `AI 库不可达，已按本地缓存继续：${detail}`;
 }
 
 /**

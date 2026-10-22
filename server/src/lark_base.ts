@@ -476,7 +476,7 @@ async function run_base_command(
   context: CommandContext,
 ): Promise<{ ok: true; payload: unknown } | LarkBaseFailure> {
   if (base.base_token.trim() === "") {
-    return internal_error("base_token 为空，无法访问知识库 B。", {
+    return internal_error("base_token 为空，无法访问 AI 库。", {
       command: context.command,
     });
   }

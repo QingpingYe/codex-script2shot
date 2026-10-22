@@ -2,7 +2,7 @@
 
 状态：Draft
 日期：2026-10-20
-依据：`docs/architecture.md` 第 14 章「最小落地顺序」，以及第 5–13 章、`references/stage-conventions.md`、`docs/knowledge-base-a.md`、`docs/knowledge-base-b.md`
+依据：`docs/architecture.md` 第 14 章「最小落地顺序」，以及第 5–13 章、`references/stage-conventions.md`、`docs/knowledge-base-raw.md`、`docs/knowledge-base-ai.md`
 
 **目标：** 把架构文档第 14 章列出的五个阶段转成可逐任务执行、带验证门槛的落地顺序，并为每个阶段提供独立详细计划。
 
@@ -16,15 +16,15 @@
 
 以下约束来自设计文档，所有阶段任务隐含遵守：
 
-- 知识库 A 由用户维护，插件只读取，不写入（architecture §1.1-10、§4）。
-- 知识库 B 只保留最新版，无草稿、审核、历史版本；知识卡没有 `status` 字段（§2.3、§5.2）。
-- 同步事实来源只能是知识库 B 的 `SyncState`；本地缓存标记只用于性能（§2.4）。
-- 同一时间只有一个人执行知识库 B 同步；插件不实现并发锁和并发协议（§1.1-9、§12）。
+- 原始库由用户维护，插件只读取，不写入（architecture §1.1-10、§4）。
+- AI 库只保留最新版，无草稿、审核、历史版本；知识卡没有 `status` 字段（§2.3、§5.2）。
+- 同步事实来源只能是 AI 库的 `SyncState`；本地缓存标记只用于性能（§2.4）。
+- 同一时间只有一个人执行 AI 库同步；插件不实现并发锁和并发协议（§1.1-9、§12）。
 - 一次 run 只接受一个 `target_model`，只生成一份 `prompts.<model>.md`（§1.1-13、§11.5）。
 - 第一版只做关键词检索和规则排序，不引入向量索引、嵌入模型和模型重排（§1.1-14、§10.2）。
 - 剧本不进入知识库；剧本只在会话和工作区中传递（§1.1-11）。
 - 外部写操作默认先 dry-run；批量同步先生成整批影响清单，用户确认后一次执行整批（§6.2、§8）。
-- 硬规则（时长、画幅、必填、禁止项）只放在 `rules/models/*.json`，知识库不保存硬规则（§11.4、knowledge-base-a §3）。
+- 硬规则（时长、画幅、必填、禁止项）只放在 `rules/models/*.json`，知识库不保存硬规则（§11.4、knowledge-base-raw §3）。
 - 提示词正文统一中文；结构化枚举和字段标识用英文（§11.3）。
 - 时间统一用带时区的 ISO 8601（stage-conventions §1）。
 - 不提交密钥、token 和登录信息；不把它们写入输出文件和日志（AGENTS.md §3）。
@@ -70,13 +70,13 @@ Phase 1 插件骨架与飞书连接
        -> Phase 3 本地检索
            -> Phase 4 阶段技能与提示词生成
                 4a script-breakdown -> 4b shot-planning -> 4c shot-prompting -> 4d 入口编排
-  -> Phase 5 可选增强（依赖 Phase 3；knowledge-inspect 只读知识库 B）
+  -> Phase 5 可选增强（依赖 Phase 3；knowledge-inspect 只读 AI 库）
 ```
 
 | 阶段 | 目标 | 主要交付 | 详细计划 |
 | --- | --- | --- | --- |
 | Phase 1 | 插件能被 Codex 加载，`setup` 和 `health` 完成本地与飞书连接 | `plugin.json`、`mcp.json`、`server/` 骨架、`setup` Skill、`health`、lark-cli 发现与登录检查、能力记录 | `2026-10-20-script2shot-phase1-plugin-bootstrap.md` |
-| Phase 2 | 知识库 A 增量归纳到 B，SyncState 正确维护，替换幂等 | 两个 schema、`scan_knowledge_a`、`fetch_knowledge_a_doc`、`read_sync_state`、`init_knowledge_b`、`replace_doc_cards`、`update_doc_sync_state`、`delete_doc_cards`、`knowledge-sync` Skill | `2026-10-20-script2shot-phase2-knowledge-sync.md` |
+| Phase 2 | 原始库增量归纳到 AI 库，SyncState 正确维护，替换幂等 | 两个 schema、`scan_knowledge_a`、`fetch_knowledge_a_doc`、`read_sync_state`、`init_knowledge_b`、`replace_doc_cards`、`update_doc_sync_state`、`delete_doc_cards`、`knowledge-sync` Skill | `2026-10-20-script2shot-phase2-knowledge-sync.md` |
 | Phase 3 | 本地缓存与 SQLite 关键词索引可用，过滤和排序可验证 | `refresh_local_index`、`search_knowledge`、`load_knowledge_pack` | `2026-10-20-script2shot-phase3-local-retrieval.md` |
 | Phase 4 | 三个创作阶段和入口编排跑通端到端 | `script_analysis`/`shot_plan`/`prompt_ir`/`run` 四个 schema、三个阶段 Skill、`script2shot` Skill、`validate_stage_artifact`、`validate_prompt`、`render_prompt`、`init_run`/`read_run`/`update_run_state`、聚合产物 | `2026-10-20-script2shot-phase4-stage-skills-and-prompting.md` |
 | Phase 5 | 检索诊断与排查技能（可选） | `explain` 输出、`knowledge-inspect` Skill | `2026-10-20-script2shot-phase5-diagnostics.md` |
@@ -87,7 +87,7 @@ Phase 1 插件骨架与飞书连接
 | --- | --- |
 | Phase 1 | 插件通过本地加载检查；对真实环境跑通 `$setup`；`health` 全绿或只剩明确列出的 warning；`docs/lark-cli-capability-notes.md` 记录了版本、日期和实测命令 |
 | Phase 2 | `init_knowledge_b` 建表/校验幂等；一次真实同步完成「新增 + 修改 + 删除」三类处理；未变化文档零正文读取；重复替换不产生重复卡；失败文档不被写入 SyncState |
-| Phase 3 | 索引可从 B 全量构建、可增量刷新；四类过滤各有正例反例；排序规则逐级可验证；索引不可用时有 priority 回退 + warning |
+| Phase 3 | 索引可从 AI 库全量构建、可增量刷新；四类过滤各有正例反例；排序规则逐级可验证；索引不可用时有 priority 回退 + warning |
 | Phase 4 | 样例剧本端到端产出全部 7 个运行产物；`from`/`only` 续跑可用；两个模型渲染快照通过；人工修改上游产物后必须重新校验才能续跑 |
 | Phase 5 | `explain` 默认关闭、行为与 Phase 3 一致；开启时返回命中级别、过滤淘汰原因、来源版本和降级路径；`knowledge-inspect` 只读且能回答两个既定问题 |
 
@@ -179,7 +179,7 @@ Phase 1 插件骨架与飞书连接
 1. **技术栈（R-11）**：已确认 Node.js + TypeScript（2026-10-20），已写入架构 §7.1；计划占位符已展开。
 2. **执行方式**：subagent-driven 还是 native，见 §9 建议。
 3. **shortcut 节点**：`wiki +node-list` 的 `node_type` 可能是 `shortcut`，同一 `obj_token` 可能重复出现，与 `source_doc_token` 主键冲突。首版计划跳过 shortcut 节点并写 warning；Phase 2 Task 2 落地时把该规则写进架构 §6.1。
-4. **知识库 B 不可达**：按 §13 处理——有本地缓存继续 + warning，无缓存停止。Phase 3 落地。
+4. **AI 库不可达**：按 §13 处理——有本地缓存继续 + warning，无缓存停止。Phase 3 落地。
 5. **多集输入规模**：不做自动拆分和硬性镜头上限，入口写 warning 建议按集运行（§11.1）。Phase 4d 落地。
 6. **Phase 4 体量**：4a–4d 在一个计划文件内用四个小节组织；执行到 4b 结束后可按需要拆分为独立文件，拆分时保持接口约定不变。
 

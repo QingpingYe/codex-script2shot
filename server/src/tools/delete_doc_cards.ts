@@ -11,7 +11,7 @@ import { resolve_lark_cli, type LarkCliErrorCode } from "../lark_cli.js";
 /**
  * `delete_doc_cards` MCP Tool（架构 §6.2 第 8 步、§8）。
  *
- * - 删除一个来源文档在知识库 B 中的全部知识卡与它的 SyncState 记录（先卡片、后状态）。
+ * - 删除一个来源文档在 AI 库中的全部知识卡与它的 SyncState 记录（先卡片、后状态）。
  * - 现有记录只按 `source_doc_token` 字段本地过滤（与 read_sync_state 一致，不用
  *   `--filter-json`）；记录不存在时直接返回 0，不发删除调用，重复删除幂等。
  * - `dry_run` 缺省 true：走 `base +record-delete --dry-run` 预览；只有 `dry_run=false`
@@ -30,7 +30,7 @@ export type DeleteDocCardsErrorCode =
   | "INTERNAL";
 
 export interface DeleteDocCardsInput {
-  /** 要删除知识卡与 SyncState 的知识库 A 文档 token。 */
+  /** 要删除知识卡与 SyncState 的原始库文档 token。 */
   source_doc_token: string;
   /** 缺省 true：只预览，不带 `--yes`，不真正删除。 */
   dry_run?: unknown;
@@ -188,7 +188,7 @@ async function list_record_ids_for_token(
     }
     const record_id = record.record_id;
     if (!has_text(record_id)) {
-      return failure("INTERNAL", `知识库 B 第 ${row + 1} 行缺少 Base record_id，无法删除。`, {
+      return failure("INTERNAL", `AI 库第 ${row + 1} 行缺少 Base record_id，无法删除。`, {
         row,
         table_id,
       });

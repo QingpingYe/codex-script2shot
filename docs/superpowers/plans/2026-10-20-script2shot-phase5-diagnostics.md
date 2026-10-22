@@ -1,4 +1,4 @@
-# Phase 5：可选增强（检索诊断） 实施计划
+# Phase 5：可选增强（检索诊断）实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -18,7 +18,7 @@
 - `explain` 只返回给调用方；不写入运行产物、不新增输出文件（§10.4、stage-conventions §5）。
 - 降级情况必须同时写进 warnings，不能只体现在 `explain` 里（§10.4）。
 - 第一版不返回向量或重排诊断（stage-conventions §5）。
-- `knowledge-inspect` 只读知识库 B；不调用任何写工具，也不修改本地缓存和索引（§14 Phase 5）。
+- `knowledge-inspect` 只读 AI 库；不调用任何写工具，也不修改本地缓存和索引（§14 Phase 5）。
 - `knowledge-inspect` 不进入架构 §9 的 Skill 主列表，只在排查知识问题时按需加载（§14 Phase 5）。
 
 ## Review Focus

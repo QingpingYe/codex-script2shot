@@ -2,20 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal：** 把知识库 A 的增量变化（新增/修改/移动或重命名/删除）归纳成结构化知识卡写入知识库 B，并按文档维护 `SyncState`；同一文档重复同步不产生重复卡，失败可自然重试。
+**Goal：** 把原始库的增量变化（新增/修改/移动或重命名/删除）归纳成结构化知识卡写入 AI 库，并按文档维护 `SyncState`；同一文档重复同步不产生重复卡，失败可自然重试。
 
-**Architecture：** MCP Server 负责全部确定性操作：节点扫描、正文读取、知识库 B 建表/校验、卡片替换、状态更新、删除清理。AI 归纳只在 `knowledge-sync` Skill 里发生：Skill 逐文档生成新卡，调用工具完成写入。同步事实只存在知识库 B 的 `SyncState`。
+**Architecture：** MCP Server 负责全部确定性操作：节点扫描、正文读取、AI 库建表/校验、卡片替换、状态更新、删除清理。AI 归纳只在 `knowledge-sync` Skill 里发生：Skill 逐文档生成新卡，调用工具完成写入。同步事实只存在 AI 库的 `SyncState`。
 
 **Tech Stack：** Node.js >= 24 + TypeScript；vitest；构建与启动见架构 §7.1。
 
-**Spec：** `docs/architecture.md` §5（B 的表与字段）、§6（增量更新流程与失败处理）、§8（MCP Tool）、§9.2（knowledge-sync）、§13（失败处理）、§14 Phase 2；`docs/knowledge-base-b.md`（内容要求）。
+**Spec：** `docs/architecture.md` §5（AI 库的表与字段）、§6（增量更新流程与失败处理）、§8（MCP Tool）、§9.2（knowledge-sync）、§13（失败处理）、§14 Phase 2；`docs/knowledge-base-ai.md`（内容要求）。
 
 **前置：** Phase 1 完成（插件骨架、config、lark-cli 适配、health、fixture）。
 
 ## Global Constraints
 
-- 知识库 A 只读；本阶段所有 `lark-cli` 调用不得出现对 A 的写操作（架构 §1.1-10）。
-- 知识库 B 无草稿、审核、历史版本；知识卡没有 `status` 字段（§2.3、§5.2）。
+- 原始库只读；本阶段所有 `lark-cli` 调用不得出现对原始库的写操作（架构 §1.1-10）。
+- AI 库无草稿、审核、历史版本；知识卡没有 `status` 字段（§2.3、§5.2）。
 - 增量判定只看节点元数据；未变化文档不读正文（§2.5、§6.2）。
 - `source_revision` 在读正文后获得，只用于来源追踪和本地缓存刷新，不参与扫描阶段判定（§2.5）。
 - 批量写操作先生成整批 dry-run 清单，用户确认后一次执行整批（§6.2）。
@@ -74,7 +74,7 @@ git commit -m "fix: phase 1 cleanup for phase 2 readiness"
 - Create: `tests/fixtures/sync_state.valid.json`、`sync_state.invalid.missing_required.json`
 
 **Interfaces:**
-- Consumes: 架构 §5.2、§5.3 的字段表；`docs/knowledge-base-b.md` §3–§5。
+- Consumes: 架构 §5.2、§5.3 的字段表；`docs/knowledge-base-ai.md` §3–§5。
 - Produces: `validate_knowledge_card(obj) -> { ok, errors[] }`、`validate_sync_state(obj) -> { ok, errors[] }`（draft 2020-12，`errors[].path` 指向具体字段）；`to_base_fields(card|state) -> BaseFieldMap`、`from_base_record(record) -> obj`。
 
 冻结字段（schema 以此为准）：
@@ -376,7 +376,7 @@ SKILL.md 必须包含的小节：`适用时机`、`输入模式`（扫描模式/
 
 指定文档模式：跳过第 2–3 步扫描，直接对给定文档执行第 4 步（强制重新归纳），状态更新照旧。
 
-`card-authoring.md` 固定内容：十类分类与知识库 A 目录的映射（拆镜方法→`shot_breakdown`；镜头语言词典→`camera_lexicon`；镜头组与组接→`storyboard`；提示词结构→`prompt_technique`；正例反例→`example`；Seedance→`seedance_rule`；角色圣经→`character_bible`；场景说明→`scene_description`；视觉风格→`visual_style`；项目概述/项目术语→`project_rule`）；一张卡只讲一件事；内容必须可执行、可转译成画面；`card_id` 格式 `src:<source_doc_token>:<category>:<三位序号>`，同一文档内不重复；`target_models` 只填两个模型标识，通用留空；来源字段必填（`source_doc_token`、`source_node_token`、`source_path`、`source_title`、`source_revision`、`updated_at`）。
+`card-authoring.md` 固定内容：十类分类与原始库目录的映射（拆镜方法→`shot_breakdown`；镜头语言词典→`camera_lexicon`；镜头组与组接→`storyboard`；提示词结构→`prompt_technique`；正例反例→`example`；Seedance→`seedance_rule`；角色圣经→`character_bible`；场景说明→`scene_description`；视觉风格→`visual_style`；项目概述/项目术语→`project_rule`）；一张卡只讲一件事；内容必须可执行、可转译成画面；`card_id` 格式 `src:<source_doc_token>:<category>:<三位序号>`，同一文档内不重复；`target_models` 只填两个模型标识，通用留空；来源字段必填（`source_doc_token`、`source_node_token`、`source_path`、`source_title`、`source_revision`、`updated_at`）。
 
 - [ ] **Step 1: 写 SKILL.md 与参考文件**
 
@@ -400,7 +400,7 @@ git commit -m "feat: add knowledge sync skill"
 
 **Interfaces:**
 - Consumes: 本阶段全部工具；Phase 1 的 setup 流程。
-- Produces: setup 完整流程 = 查 lark-cli → 登录 → 知识库 A/B 配置 → `init_knowledge_b` dry-run 预览 → 用户确认 → 建表 → table_id 写回 config → 本地目录 → 可选首次 `$knowledge-sync` → `health`。
+- Produces: setup 完整流程 = 查 lark-cli → 登录 → 原始库与 AI 库配置 → `init_knowledge_b` dry-run 预览 → 用户确认 → 建表 → table_id 写回 config → 本地目录 → 可选首次 `$knowledge-sync` → `health`。
 
 - [ ] **Step 1: 更新 `skills/setup/SKILL.md`**
 

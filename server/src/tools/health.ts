@@ -245,14 +245,14 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
       push_check(checks, warnings, {
         id: "space_a_reachable",
         status: "pass",
-        message: `知识库 A 可达（space_id：${space_a}）。`,
+        message: `原始库可达（space_id：${space_a}）。`,
         detail: { space_id: space_a },
       });
     } else {
       push_check(checks, warnings, {
         id: "space_a_reachable",
         status: "fail",
-        message: `知识库 A 不可达（space_id：${space_a}），请检查 space_a 与访问权限。`,
+        message: `原始库不可达（space_id：${space_a}），请检查 space_a 与访问权限。`,
         detail: {
           code: "KB_A_UNREACHABLE",
           space_id: space_a,
@@ -280,7 +280,7 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
       push_check(checks, warnings, {
         id: "base_b_reachable",
         status: "fail",
-        message: `知识库 B 不可达（base token 前缀 ${base_token_prefix}），请检查 base_b 与访问权限。`,
+        message: `AI 库不可达（base token 前缀 ${base_token_prefix}），请检查 base_b 与访问权限。`,
         detail: {
           code: "KB_B_UNREACHABLE",
           base_token_prefix,
@@ -299,7 +299,7 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
         push_check(checks, warnings, {
           id: "base_b_reachable",
           status: "pass",
-          message: `知识库 B 可达；${warning_message}。`,
+          message: `AI 库可达；${warning_message}。`,
           detail: { base_token_prefix, warning: warning_message, tables: table_ids },
         });
       } else {
@@ -309,7 +309,7 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
             id: "base_b_reachable",
             status: "fail",
             message:
-              `知识库 B 缺少配置的数据表：${missing_tables.join("、")}。` +
+              `AI 库缺少配置的数据表：${missing_tables.join("、")}。` +
               `请在 Phase 2 运行 $setup（调用 init_knowledge_b）建表。`,
             detail: {
               code: "KB_B_TABLE_MISSING",
@@ -323,7 +323,7 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
           push_check(checks, warnings, {
             id: "base_b_reachable",
             status: "pass",
-            message: `知识库 B 可达，已校验数据表：${configured_tables.join("、")}。`,
+            message: `AI 库可达，已校验数据表：${configured_tables.join("、")}。`,
             detail: { base_token_prefix, checked_tables: configured_tables },
           });
         }

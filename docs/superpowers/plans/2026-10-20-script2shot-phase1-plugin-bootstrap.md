@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal：** 让插件能被 Codex 本地加载，用户跑通 `$setup` 后 `health` 能完成 lark-cli 路径发现、登录检查、知识库 A/B 连接检查和本地目录初始化。
+**Goal：** 让插件能被 Codex 本地加载，用户跑通 `$setup` 后 `health` 能完成 lark-cli 路径发现、登录检查、原始库与 AI 库连接检查和本地目录初始化。
 
 **Architecture：** 根目录 `plugin.json` + `mcp.json`（可移植布局，官方依据见大纲 §6.5）+ `skills/setup/SKILL.md` + `server/` 下的 MCP Server。MCP Server 通过子进程调用 `lark-cli`，本阶段只实现连接类确定性能力，不写知识库。
 
@@ -15,11 +15,11 @@
 ## Global Constraints
 
 - 不写代码前先确定技术栈并写回 `docs/architecture.md` §7.1（架构 §7.1、设计复盘 R-11）。
-- 插件不写知识库 A；本阶段任何工具都不得出现对 A 的写操作（架构 §1.1-10）。
+- 插件不写原始库；本阶段任何工具都不得出现对原始库的写操作（架构 §1.1-10）。
 - 外部写操作默认 dry-run；本阶段唯一的本地写操作（config.toml、目录创建）也要先展示将写入的内容。
 - 不提交密钥与 token；fixture 中的真实 token 必须替换为占位值（AGENTS.md §3）。
 - 面向人的文档用中文；代码、标识符、路径用英文（AGENTS.md §3）。
-- 本阶段不实现知识库 B 的建表与同步（Phase 2），`health` 对索引状态只报告 `not_built`。
+- 本阶段不实现 AI 库的建表与同步（Phase 2），`health` 对索引状态只报告 `not_built`。
 
 ## Review Focus
 
@@ -272,7 +272,7 @@ git commit -m "feat: add health tool with lark-cli, config and reachability chec
 
 **Interfaces:**
 - Consumes: `health` 工具（Task 5）、配置模块（Task 3）、lark-cli 发现（Task 4）。
-- Produces: 用户可通过 `$setup` 触发的引导流程：查找/确认 lark-cli → 登录检查（未登录给 `lark-cli auth login` 指引）→ 收集知识库 A（Wiki URL 或 space_id，URL 先经 `wiki +node-get`/`+space-list` 解析成数字 space_id）→ 收集 Base B（URL 或 token）→ **预览 config.toml 将写入的内容** → 用户确认后写入 → 创建本地目录 → 再次运行 `health` → 报告结果（含「Phase 2 后可选的首次同步」占位说明）。
+- Produces: 用户可通过 `$setup` 触发的引导流程：查找/确认 lark-cli → 登录检查（未登录给 `lark-cli auth login` 指引）→ 收集原始库（Wiki URL 或 space_id，URL 先经 `wiki +node-get`/`+space-list` 解析成数字 space_id）→ 收集 AI 库（URL 或 token）→ **预览 config.toml 将写入的内容** → 用户确认后写入 → 创建本地目录 → 再次运行 `health` → 报告结果（含「Phase 2 后可选的首次同步」占位说明）。
 
 - [ ] **Step 1: 写失败的清单断言**
 
@@ -289,7 +289,7 @@ Expected: FAIL —— `skills/setup/SKILL.md` 不存在。
 
 - [ ] **Step 3: 写 `skills/setup/SKILL.md`**
 
-frontmatter：`name: setup`、`description`（中文，说明「安装后配置 lark-cli、知识库 A/B 和本地目录」）。正文包含固定小节：`适用时机`、`流程`、`配置项`（与架构 §7.3 字段一一对应）、`失败处理`（引用健康检查的错误码与用户动作）、`安全约定`（不打印 token 全文、写配置前预览、不写知识库 A）。
+frontmatter：`name: setup`、`description`（中文，说明「安装后配置 lark-cli、原始库、AI 库和本地目录」）。正文包含固定小节：`适用时机`、`流程`、`配置项`（与架构 §7.3 字段一一对应）、`失败处理`（引用健康检查的错误码与用户动作）、`安全约定`（不打印 token 全文、写配置前预览、不写原始库）。
 
 - [ ] **Step 4: 运行并确认通过**
 
@@ -319,7 +319,7 @@ git commit -m "feat: add setup skill"
 
 - [ ] **Step 1: 在真实 Codex 会话运行 `$setup`（live）**
 
-用真实 wiki space 与 Base B 跑通 setup 流程；记录每一步的实际输出摘要。若任一步失败，先修实现再重跑，不跳过。
+用真实 wiki space 与 AI 库跑通 setup 流程；记录每一步的实际输出摘要。若任一步失败，先修实现再重跑，不跳过。
 
 - [ ] **Step 2: 录制并脱敏 fixture（live）**
 
@@ -357,7 +357,7 @@ git commit -m "docs: record lark-cli capability verification and add sanitized f
 **Interfaces:**
 - Consumes: Task 3 配置模块、Task 6 `write_config`、Task 7 的 live 实测值。
 - Produces:
-  - `SETUP_DEFAULTS`（`server/src/setup_defaults.ts`）：`{ lark: { profile: "default", space_a: "7695983197091302359", base_b: "WRrVblDbqaEFOSs39P0cFzilnfd", project_roots: [{ node_token: "Ou9Vw0emviJajPklYjQc4fqjnie", project_id: "wufu-linmen" }] }, retrieval: { default_top_k: 12 } }`。A/B 为插件默认知识库，用户可替换。
+  - `SETUP_DEFAULTS`（`server/src/setup_defaults.ts`）：`{ lark: { profile: "default", space_a: "7695983197091302359", base_b: "WRrVblDbqaEFOSs39P0cFzilnfd", project_roots: [{ node_token: "Ou9Vw0emviJajPklYjQc4fqjnie", project_id: "wufu-linmen" }] }, retrieval: { default_top_k: 12 } }`。原始库与 AI 库为插件默认知识库，用户可替换。
   - `config.ts`：`LarkConfig` 增加 `project_roots: Array<{ node_token, project_id }>`，load/save 支持 TOML `[[lark.project_roots]]` 往返。
   - `write_config`：缺省字段用 `SETUP_DEFAULTS` 填充（显式提供值优先），返回值新增 `applied_defaults[]`。
   - `skills/setup/SKILL.md`：默认知识库说明（可直接采用或替换）与 `project_roots` 默认映射说明。
@@ -405,5 +405,5 @@ git commit -m "feat: ship default knowledge bases and local marketplace entry"
 - [x] `docs/lark-cli-capability-notes.md` 已记录版本、日期与偏差。
 - [x] 测试全绿；`rg "<(ext|test-ext|test-cmd|build-cmd|run-cmd)>" docs/superpowers/plans/` 无输出 —— 控制方侧 typecheck + build + 72/72 通过（2026-10-21）。
 - [x] 架构 §7.1 与实现一致（技术栈、目录、运行方式）。
-- [x] 默认知识库（A/B）与 `project_roots` 随插件默认配置提供，测试覆盖「默认应用/显式覆盖」。
+- [x] 默认知识库（原始库与 AI 库）与 `project_roots` 随插件默认配置提供，测试覆盖「默认应用/显式覆盖」。
 - [x] 在本机 Codex 通过 repo marketplace 安装插件并运行 `$setup` / `$health`，`tools/list` 可响应（关闭 Task 2 遗留 ⚠️）—— 2026-10-21 用户实装验证通过。

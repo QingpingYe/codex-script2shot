@@ -13,7 +13,7 @@ import { normalize_text } from "./normalize.js";
  *   不引入原生模块）。`open_index()` 自己创建 `index/` 目录，不假设 setup 跑过。
  * - `cards` 保留原始 title/content，同时写入 `title_norm`/`content_norm`
  *   （统一走 `normalize_text`）；`tags`/`entities`/`target_models` 存 JSON 文本数组。
- * - 索引只是知识库 B 的派生物：`replace_doc_rows` 按文档整体替换，单事务内
+ * - 索引只是 AI 库的派生物：`replace_doc_rows` 按文档整体替换，单事务内
  *   完成「删旧行 -> 插新行 -> upsert doc_state」，失败整体回滚。
  * - `index_status()` 按路径**只读**探测：文件缺失返回 missing；存在但不是普通文件、
  *   0 字节、打不开或缺少 `cards` 表时返回 corrupt；其余返回 ready。绝不抛异常、

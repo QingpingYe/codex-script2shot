@@ -20,7 +20,7 @@ import { resolve_lark_cli, type LarkCliErrorCode } from "../lark_cli.js";
 /**
  * `init_knowledge_b` MCP Tool（架构 §5.1、§8、§9.1）。
  *
- * - 按固定表名在知识库 B 中解析 `KnowledgeCards` 与 `SyncState`；缺表时按固定字段
+ * - 按固定表名在 AI 库中解析 `KnowledgeCards` 与 `SyncState`；缺表时按固定字段
  *   清单创建，已存在时校验字段清单（缺字段 / 类型不符 -> drift，不自动改表；
  *   多余字段 -> warning）。
  * - 表名解析出多个 table_id 时报 `KB_TABLE_AMBIGUOUS` 并要求人工处理。
@@ -161,7 +161,7 @@ export async function init_knowledge_b(
   const config = loaded.config;
   const base_b = config.lark.base_b;
   if (!has_text(base_b)) {
-    return failure("CONFIG_INVALID", "配置缺少 lark.base_b，无法访问知识库 B。", {
+    return failure("CONFIG_INVALID", "配置缺少 lark.base_b，无法访问 AI 库。", {
       field: "lark.base_b",
       path: path.join(resolve_home(), CONFIG_FILE_NAME),
     });
@@ -193,7 +193,7 @@ export async function init_knowledge_b(
     if (ids.length > 1) {
       return failure(
         "KB_TABLE_AMBIGUOUS",
-        `知识库 B 中存在 ${ids.length} 张名为 "${spec.name}" 的数据表，无法确定使用哪一张；` +
+        `AI 库中存在 ${ids.length} 张名为 "${spec.name}" 的数据表，无法确定使用哪一张；` +
           `请人工删除或重命名多余的表后重试。`,
         { table_name: spec.name, table_ids: ids },
       );

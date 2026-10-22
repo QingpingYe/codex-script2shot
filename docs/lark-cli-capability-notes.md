@@ -6,7 +6,7 @@ lark-cli：1.0.98，路径 `D:\lark-cli\lark-cli.exe`
 机器：Windows 桌面端本机会话（Codex Desktop，PowerShell）
 
 本文档记录能力形状与结论，不包含账号凭证类信息。
-Base / 空间 / 数据表标识按需保留，作为插件默认配置依据；A 库文档节点与对象的 token 不在此记录。
+Base / 空间 / 数据表标识按需保留，作为插件默认配置依据；原始库文档节点与对象的 token 不在此记录。
 
 ## 1. 登录与身份
 
@@ -17,9 +17,9 @@ Base / 空间 / 数据表标识按需保留，作为插件默认配置依据；A
   `docx:document:readonly`、`base:table:read`、`base:field:read`、
   `base:record:read`、`base:record:create`、`base:record:delete`。
 
-## 2. 知识库 A 实测
+## 2. 原始库实测
 
-A 库空间：Wiki `7695983197091302359`。
+原始库空间：Wiki `7695983197091302359`。
 
 ### 2.1 结构
 
@@ -67,9 +67,9 @@ A 库空间：Wiki `7695983197091302359`。
   （`Seedance 2.0 系列提示词指南.pdf`）。
 - 第一版处理：跳过非 docx 节点并写 warning（`NON_DOC_NODE_SKIPPED`），不下载、不解析。
 
-## 3. 知识库 B 实测
+## 3. AI 库实测
 
-B 空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空。
+AI 库空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空。
 
 新建 Base（作为 Wiki 节点挂载）：
 
@@ -196,7 +196,7 @@ B 空间：Wiki `7695983325910961131`；探测时该空间根节点列表为空�
 MCP Server 执行；沿用本文件口径，只保留公开知识库标识与数据表 ID，不含账号凭证。
 
 - 演练方式：经本地 MCP Server（`scripts/launch_script2shot_mcp.cmd`）调用工具：
-  `init_knowledge_b` 建表 → 在知识库 A「通用知识」下建 3 条测试文档 → 抓正文 →
+  `init_knowledge_b` 建表 → 在原始库「通用知识」下建 3 条测试文档 → 抓正文 →
   生成 10 张知识卡 → `replace_doc_cards` + `update_doc_sync_state` → 修改 1 条 →
   删除 1 条 → 清理 3 条测试文档。
 - 建表实测：`init_knowledge_b({ dry_run: false })` 返回 `action=created`，新建
@@ -227,7 +227,7 @@ MCP Server 执行；沿用本文件口径，只保留公开知识库标识与数
   失败；需要“写入后核对”的流程应在读回前留出短暂等待，或按 `rev`/写入返回的
   `record_id_list` 判断成功。
 - 演练清理：3 条测试文档节点已删除；`KnowledgeCards` 与 `SyncState` 两张表回到
-  0 条记录；知识库 A 只剩原有 12 个 docx 节点（另有 1 条预期的 PDF 跳过 warning，
+  0 条记录；原始库只剩原有 12 个 docx 节点（另有 1 条预期的 PDF 跳过 warning，
   见 §2.4）。
-- 尚未执行：未把知识库 A 的 12 条真实文档正式同步进知识库 B，因此两张表当前为空
+- 尚未执行：未把原始库的 12 条真实文档正式同步进 AI 库，因此两张表当前为空
   是预期状态而非缺陷。

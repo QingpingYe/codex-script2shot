@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "SyncState",
-  "description": "知识库 B 中 SyncState 表的同步状态记录（docs/architecture.md §5.3）。obj_edit_time 是不透明字符串，不做时间换算；last_synced_at 写入 Base 前由 server/src/base_mapping.ts 按 +08:00 换算。",
+  "description": "AI 库中 SyncState 表的同步状态记录（docs/architecture.md §5.3）。obj_edit_time 是不透明字符串，不做时间换算；last_synced_at 写入 Base 前由 server/src/base_mapping.ts 按 +08:00 换算。",
   "type": "object",
   "additionalProperties": false,
   "required": [

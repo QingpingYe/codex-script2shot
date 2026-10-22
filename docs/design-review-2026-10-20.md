@@ -3,8 +3,8 @@
 状态：Superseded
 后续处理：[最小修正清单](design-remediation-2026-10-20.md)
 复盘对象版本：2026-10-20（本仓库初始设计文档集）
-复盘范围：AGENTS.md、README.md、docs/architecture.md、docs/knowledge-base-a.md、
-docs/knowledge-base-b.md、references/stage-conventions.md
+复盘范围：AGENTS.md、README.md、docs/architecture.md、docs/knowledge-base-raw.md、
+docs/knowledge-base-ai.md、references/stage-conventions.md
 
 问题编号 R-01 到 R-31 供后续修复讨论直接引用。位置引用以章节号为准；行号会随
 文档修改漂移，不作为长期引用依据。
@@ -21,12 +21,12 @@ docs/knowledge-base-b.md、references/stage-conventions.md
 
 ## 2. 总体结论
 
-架构方向成立：知识库 A/B 职责分离、剧本不进知识库、三阶段文件产物交接、
+架构方向成立：原始库与 AI 库职责分离、剧本不进知识库、三阶段文件产物交接、
 确定性操作下沉 MCP Server 的骨架没有原则性问题。问题集中在三层：
 
-1. 同步链路的可靠性假设不成立。设计把知识库 B 定位为唯一同步事实来源，但单文档
+1. 同步链路的可靠性假设不成立。设计把 AI 库定位为唯一同步事实来源，但单文档
    同步是多步非原子写入，没有故障中间态的恢复策略（R-01、R-02），增量判定依据在
-   文档内部就不自洽（R-04）。B 一旦进入不一致状态会静默自锁，无法自愈。
+   文档内部就不自洽（R-04）。AI 库一旦进入不一致状态会静默自锁，无法自愈。
 2. 阶段交接与输出契约存在文档间矛盾。knowledge_refs 归属、script-breakdown 的
    知识依赖、单双模型输出三处在实现时必须先裁决（R-06、R-07、R-09）。
 3. 检索设计相对知识规模偏重，且前提条件（嵌入模型、评分权重）缺失（R-12、R-26）。
@@ -52,7 +52,7 @@ P4 冗余 3 项，P5 过度设计 2 项，P6 风险与验证缺口 4 项，共 3
 #### R-02 SyncState 更新失败导致本地缓存静默过期
 
 - 位置：docs/architecture.md §6.3、§7.4
-- 问题：若新卡写入成功但 SyncState 更新失败，B 中是新卡、SyncState 中是旧值。
+- 问题：若新卡写入成功但 SyncState 更新失败，AI 库中是新卡、SyncState 中是旧值。
   本地缓存刷新以 SyncState 的 last_synced_at 和 content_hash 为判断依据，会永远
   认为该文档没有变化。
 - 影响：检索继续使用过期知识卡，且没有任何告警路径。与 R-01 同源，根因是多步
@@ -78,11 +78,11 @@ P4 冗余 3 项，P5 过度设计 2 项，P6 风险与验证缺口 4 项，共 3
 - 影响：漏同步是静默失败，与「SyncState 是唯一事实来源」的定位不符。增量判定
   语义必须在实现前收敛为一张明确的判定表。
 
-#### R-05 知识库 B 不可达时主流程行为未定义
+#### R-05 AI 库不可达时主流程行为未定义
 
 - 位置：docs/architecture.md §9.3、§11.2、§13
-- 问题：script2shot 每次运行都要先读 B 的 SyncState 刷新本地索引，但 §13 失败
-  处理表没有「B 无法访问」条目，既没有降级路径（用本地缓存继续并写 warnings），
+- 问题：script2shot 每次运行都要先读 AI 库的 SyncState 刷新本地索引，但 §13 失败
+  处理表没有「AI 库无法访问」条目，既没有降级路径（用本地缓存继续并写 warnings），
   也没有明确禁止运行。
 - 影响：飞书抖动即阻塞主流程，且行为未定义会导致各阶段实现各自发挥。
 
@@ -155,7 +155,7 @@ P4 冗余 3 项，P5 过度设计 2 项，P6 风险与验证缺口 4 项，共 3
   均未说明；table_id 写配置还是运行时按表名解析，文档两说并存等于未决定。
 - 影响：Phase 2 建表时字段设计无依据，映射返工成本高。
 
-#### R-14 知识库 B 两张表的创建归属未定义
+#### R-14 AI 库两张表的创建归属未定义
 
 - 位置：docs/architecture.md §14 Phase 2；§9.1、§9.2
 - 问题：Phase 2 提到「建立 KnowledgeCards 和 SyncState」，但 setup 与
@@ -176,7 +176,7 @@ P4 冗余 3 项，P5 过度设计 2 项，P6 风险与验证缺口 4 项，共 3
 
 - 位置：docs/architecture.md §11.3
 - 问题：PromptIR 示例字段值中英文混杂，Seedance 提示词最终用中文还是英文、对白
-  如何处理、knowledge-base-a.md 提到的多语言台词如何落字段，均无约定。
+  如何处理、knowledge-base-raw.md 提到的多语言台词如何落字段，均无约定。
 - 影响：直接影响渲染模板设计与 seedance_rule 卡的内容组织，Phase 4c 前必须定。
 
 #### R-17 content_hash 的计算口径未定义
@@ -225,24 +225,24 @@ P4 冗余 3 项，P5 过度设计 2 项，P6 风险与验证缺口 4 项，共 3
 
 ### 3.4 P4 冗余
 
-#### R-23 knowledge-base-b.md 与 architecture.md 大段重复
+#### R-23 knowledge-base-ai.md 与 architecture.md 大段重复
 
-- 位置：docs/knowledge-base-b.md §1-§3；docs/architecture.md §5
-- 问题：B 的定位、物理形态与分类表几乎逐句重复，无权威源标注。
-- 影响：两处维护必然漂移；应让 knowledge-base-b.md 只保留内容要求，结构与字段
+- 位置：docs/knowledge-base-ai.md §1-§3；docs/architecture.md §5
+- 问题：AI 库的定位、物理形态与分类表几乎逐句重复，无权威源标注。
+- 影响：两处维护必然漂移；应让 knowledge-base-ai.md 只保留内容要求，结构与字段
   只引用 architecture。
 
-#### R-24 知识库 A 与 README 重复承载同一事实，无权威源标注
+#### R-24 原始库与 README 重复承载同一事实，无权威源标注
 
-- 位置：docs/knowledge-base-a.md §2；README.md
-- 问题：目录结构与推导规则在 knowledge-base-a.md 重复 architecture；README 重复
+- 位置：docs/knowledge-base-raw.md §2；README.md
+- 问题：目录结构与推导规则在 knowledge-base-raw.md 重复 architecture；README 重复
   流程与输出清单。
 - 影响：同一事实三处承载；应标注每类信息的唯一权威文档，其余只做摘要加引用。
 
 #### R-25 README 流程图把「刷新本地索引」画成独立步骤
 
 - 位置：README.md「工作原理」
-- 问题：图中刷新本地索引位于知识库 B 与 script2shot 之间，实际是 script2shot
+- 问题：图中刷新本地索引位于 AI 库与 script2shot 之间，实际是 script2shot
   的内部动作。
 - 影响：图与文不一致，读者会误解为存在独立刷新步骤或入口。
 
@@ -251,7 +251,7 @@ P4 冗余 3 项，P5 过度设计 2 项，P6 风险与验证缺口 4 项，共 3
 #### R-26 向量检索不应进入第一版主路径
 
 - 位置：docs/architecture.md §10.2、§14 Phase 3
-- 问题：知识库 A 起步为最小集合，知识卡规模预计在几十到几百张，SQLite 关键词
+- 问题：原始库起步为最小集合，知识卡规模预计在几十到几百张，SQLite 关键词
   检索加 priority 排序已够用；向量检索引入嵌入模型依赖与索引维护成本，只有
   「模型重排」被标为可选，向量索引本体仍在主路径。
 - 影响：第一版复杂度不必要地抬高；建议把向量检索与嵌入依赖整体降为可选增强，
@@ -305,7 +305,7 @@ P4 冗余 3 项，P5 过度设计 2 项，P6 风险与验证缺口 4 项，共 3
 
 - R-01、R-02、R-03、R-04：同步写入顺序改为「生成新卡 → 写入新卡 → 删除旧卡 →
   更新 SyncState」或引入等价的中间态标记；重定义 MCP 写工具边界；收敛增量判定表。
-- R-05：定义 B 不可达时的降级路径或明确禁止。
+- R-05：定义 AI 库不可达时的降级路径或明确禁止。
 - R-06、R-09：裁决 knowledge_refs 写入协议与单双模型输出语义。
 - R-11、R-20：决定 MCP 技术栈，写清 Skill 编排机制。
 

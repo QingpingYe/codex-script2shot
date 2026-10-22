@@ -64,7 +64,7 @@ export function build_sync_plan(
         source_doc_token: node.obj_token,
         message:
           `扫描结果中文档 ${node.obj_token} 出现多次（${previous.path}、${node.path}）；` +
-          `只按第一条分类，请确认知识库 A 中的重复节点。`,
+          `只按第一条分类，请确认原始库中的重复节点。`,
       });
       continue;
     }

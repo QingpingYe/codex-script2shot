@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "KnowledgeCard",
-  "description": "知识库 B 中 KnowledgeCards 表的逻辑知识卡（docs/architecture.md §5.2）。时间字段为带时区偏移的 ISO 8601；写入 Base 前由 server/src/base_mapping.ts 按 +08:00 换算。",
+  "description": "AI 库中 KnowledgeCards 表的逻辑知识卡（docs/architecture.md §5.2）。时间字段为带时区偏移的 ISO 8601；写入 Base 前由 server/src/base_mapping.ts 按 +08:00 换算。",
   "type": "object",
   "additionalProperties": false,
   "required": [

@@ -44,7 +44,7 @@ import {
  * `refresh_local_index`（Task 3）测试。
  *
  * 全部外部调用走 `server/tests/fixtures/fake-lark-cli.*`；测试只用
- * `SCRIPT2SHOT_HOME` 指向的临时目录，绝不触碰真实知识库 B。
+ * `SCRIPT2SHOT_HOME` 指向的临时目录，绝不触碰真实 AI 库。
  */
 
 const FIXTURES_DIR = fileURLToPath(new URL("./fixtures", import.meta.url));
@@ -506,7 +506,7 @@ describe("refresh_local_index", () => {
       cards: [card_row("rec_card_a1", make_card("card-a1", DOC_A))],
     });
     // 索引里有 doc_state 行但缓存没有它（save_cache 失败、崩溃或缓存文件被删除/恢复），
-    // 且 B 的 SyncState 已经没有该 token：必须按索引的 doc_state 把它清掉。
+    // 且 AI 库的 SyncState 已经没有该 token：必须按索引的 doc_state 把它清掉。
     seed_cache([
       { token: DOC_A, marker: marker_of(state_a), cards: [make_card("card-a1", DOC_A)] },
     ]);
@@ -793,13 +793,13 @@ describe("refresh_local_index", () => {
     });
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.code).toBe("KB_B_UNREACHABLE");
-    expect(result.warnings[0]?.message).toContain("知识库 B 不可达");
+    expect(result.warnings[0]?.message).toContain("AI 库不可达");
     expect(statSync(cache_file_path()).mtimeMs, "降级路径不写任何文件").toBe(frozen);
   });
 
   test("refresh degraded warning names the unreadable SyncState for KB_READ_FAILED", async () => {
     // SyncState 表配置指向不存在的表：read_sync_state 归一化为 KB_READ_FAILED，
-    // 降级 warning 必须说「SyncState 读不到」，不能笼统声称知识库 B 不可达。
+    // 降级 warning 必须说「SyncState 读不到」，不能笼统声称 AI 库不可达。
     write_config_file({ sync_state_table: "tbl_missing_state" });
     seed_cache([
       {
@@ -823,8 +823,8 @@ describe("refresh_local_index", () => {
     expect(message, "降级 warning 应指认 SyncState 读取失败").toContain("SyncState 读取失败");
     expect(
       message,
-      "KB_READ_FAILED 不能笼统声称知识库 B 不可达",
-    ).not.toContain("知识库 B 不可达，已按本地缓存继续");
+      "KB_READ_FAILED 不能笼统声称 AI 库不可达",
+    ).not.toContain("AI 库不可达，已按本地缓存继续");
   });
 
   test("refresh stops without cache when b unreachable", async () => {
@@ -857,7 +857,7 @@ describe("refresh_local_index", () => {
         card_row("rec_card_a2", make_card("card-a2", DOC_A, { source_revision: 3 })),
       ],
     });
-    // 旧索引里还留着 B 中已删除的文档行，缓存损坏后必须整体重建。
+    // 旧索引里还留着 AI 库中已删除的文档行，缓存损坏后必须整体重建。
     seed_index([
       {
         token: DOC_GONE,

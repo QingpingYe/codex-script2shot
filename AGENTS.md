@@ -18,8 +18,8 @@
 
 - `README.md`：项目概览与路线图。
 - `docs/architecture.md`：总体设计，设计问题的权威来源。
-- `docs/knowledge-base-a.md`：飞书知识库 A 的内容说明。
-- `docs/knowledge-base-b.md`：飞书知识库 B 的内容说明。
+- `docs/knowledge-base-raw.md`：飞书知识库（原始资料）的内容说明，简称「原始库」。
+- `docs/knowledge-base-ai.md`：飞书知识库（AI）的内容说明，简称「AI 库」。
 - `references/stage-conventions.md`：阶段交接、检索配方和知识引用聚合约定。
 
 ## 2. 文档优先

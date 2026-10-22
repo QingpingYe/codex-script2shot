@@ -1,26 +1,26 @@
 ---
 name: knowledge-sync
-description: 把知识库 A 的变化同步到知识库 B：扫描或指定文档、生成知识卡，整批 dry-run 清单确认后替换卡片并更新 SyncState。
+description: 把原始库的变化同步到 AI 库：扫描或指定文档、生成知识卡，整批 dry-run 清单确认后替换卡片并更新 SyncState。
 ---
 
 # knowledge-sync
 
-把知识库 A（飞书 Wiki）中的知识文档归纳成结构化知识卡，写入知识库 B（飞书 Base）
-的 `KnowledgeCards` 表，并把每个文档的同步状态写入 `SyncState` 表。知识库 A 全程
-只读，写入只发生在知识库 B。
+把原始库（飞书 Wiki）中的知识文档归纳成结构化知识卡，写入 AI 库（飞书 Base）
+的 `KnowledgeCards` 表，并把每个文档的同步状态写入 `SyncState` 表。原始库全程
+只读，写入只发生在 AI 库。
 
 ## 适用时机
 
-- 知识库 A 中的文档新增、修改、移动或改名、删除后，需要把这些变化同步到知识库 B。
-- 首次同步：知识库 B 的 `KnowledgeCards`、`SyncState` 两张表已由 `setup` 建好，
+- 原始库中的文档新增、修改、移动或改名、删除后，需要把这些变化同步到 AI 库。
+- 首次同步：AI 库的 `KnowledgeCards`、`SyncState` 两张表已由 `setup` 建好，
   并把 `table_id` 写回 `~/.codex-script2shot/config.toml`。
 - 只改动了一个文档，或某个文档的 `obj_edit_time` 没有变化但需要强制重新归纳时，
   使用指定文档模式。
 
 ## 输入模式
 
-**扫描模式（缺省）**：用户只说 `$knowledge-sync`。扫描知识库 A 的节点元数据，与
-知识库 B 的 SyncState 对比，生成整批变化清单，确认一次后逐文档执行。
+**扫描模式（缺省）**：用户只说 `$knowledge-sync`。扫描原始库的节点元数据，与
+AI 库的 SyncState 对比，生成整批变化清单，确认一次后逐文档执行。
 
 **指定文档模式**：`$knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>`。
 跳过扫描与整批确认，直接对给定文档强制重新归纳；仍要更新 SyncState。前置条件：
@@ -94,7 +94,7 @@ description: 把知识库 A 的变化同步到知识库 B：扫描或指定文�
 
 生成知识卡时逐条按 `references/card-authoring.md` 执行，要点：
 
-- 十类分类与知识库 A 目录的映射固定，`card_id` 格式固定为
+- 十类分类与原始库目录的映射固定，`card_id` 格式固定为
   `src:<source_doc_token>:<category>:<三位序号>`，同一文档内不重复。
 - 一张卡只讲一件事；内容必须可执行、可转译成画面。
 - `target_models` 只填 `seedance-2.0`、`seedance-2.5` 两个模型标识；通用知识留空。
@@ -122,10 +122,10 @@ description: 把知识库 A 的变化同步到知识库 B：扫描或指定文�
 
 ## 安全约定
 
-- 知识库 A 只读：`scan_knowledge_a`、`fetch_knowledge_a_doc` 都只读；本 Skill 不向
-  知识库 A 写入、修改或删除任何内容。
+- 原始库只读：`scan_knowledge_a`、`fetch_knowledge_a_doc` 都只读；本 Skill 不向
+  原始库写入、修改或删除任何内容。
 - 引用展开同样只读：飞书引用走 `docs +fetch`，网页引用只发 `http` / `https` GET，
-  不提交表单、不带账号凭据，也不把引用内容写回知识库 A。
+  不提交表单、不带账号凭据，也不把引用内容写回原始库。
 - `SyncState.source_title` 取扫描到的节点标题（不是正文标题），否则每次同步都会把
   文档误判成「移动/改名」；卡片自身的 `source_title` 按标题回退链取值。
 - 删除类操作（`delete_doc_cards`）属于不可逆外部写入，必须在整批 dry-run 清单获得

@@ -73,7 +73,7 @@ export interface ReplaceDocCardsWarning {
 }
 
 export interface ReplaceDocCardsInput {
-  /** 要替换卡片的知识库 A 文档 token（知识卡的 `source_doc_token`）。 */
+  /** 要替换卡片的原始库文档 token（知识卡的 `source_doc_token`）。 */
   source_doc_token: string;
   /** 替换模式：该文档的完整新卡集合；与 `metadata_patch` 二选一。 */
   cards?: unknown;
@@ -147,7 +147,7 @@ export async function replace_doc_cards(
   const config_path = path.join(resolve_home(), CONFIG_FILE_NAME);
   const base_b = config.lark.base_b;
   if (!has_text(base_b)) {
-    return failure("CONFIG_INVALID", "配置缺少 lark.base_b，无法访问知识库 B。", {
+    return failure("CONFIG_INVALID", "配置缺少 lark.base_b，无法访问 AI 库。", {
       field: "lark.base_b",
       path: config_path,
     });
@@ -454,7 +454,7 @@ function collect_existing_record_ids(
       if (typeof record_id !== "string" || record_id.trim() === "") {
         return failure(
           "INTERNAL",
-          `知识库 B 第 ${row + 1} 行缺少 Base record_id，无法安全执行替换。`,
+          `AI 库第 ${row + 1} 行缺少 Base record_id，无法安全执行替换。`,
           { row, table_id },
         );
       }
