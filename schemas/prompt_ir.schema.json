@@ -78,6 +78,23 @@
         }
       }
     },
+    "audio": {
+      "type": "object",
+      "description": "本镜头的声音通道，三项均可为空；只从上游已有声音线索（例如雨、脚步、门响）与检索卡片提炼，不得编造原文没有的声音事件。渲染为「声音」节：sfx 每项用 <> 包裹，music 非空时用 () 包裹；三项全空时整行省略。",
+      "additionalProperties": false,
+      "required": ["ambience", "sfx", "music"],
+      "properties": {
+        "ambience": {
+          "$ref": "#/$defs/string_list"
+        },
+        "sfx": {
+          "$ref": "#/$defs/string_list"
+        },
+        "music": {
+          "type": "string"
+        }
+      }
+    },
     "shot": {
       "type": "object",
       "additionalProperties": false,
@@ -98,6 +115,7 @@
         "lighting",
         "color",
         "style",
+        "audio",
         "continuity",
         "negative_prompt",
         "knowledge_refs"
@@ -207,6 +225,9 @@
         },
         "style": {
           "type": "string"
+        },
+        "audio": {
+          "$ref": "#/$defs/audio"
         },
         "continuity": {
           "$ref": "#/$defs/continuity"

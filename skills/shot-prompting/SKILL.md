@@ -40,7 +40,8 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 - `script_analysis.json`：同一 run 的上一阶段产物，用于取回镜头对应的场景与原文单元
   （`location`、`time_of_day`、`characters`、`action_units`、`emotion_units`、
   `dialogue_units`、`shot_group_suggestions` 与 `continuity`），作为 PromptIR 的
-  `subject`、`action`、`emotion`、`dialogue`、`setting`、`time` 的取材来源。只读；本阶段的
+  `subject`、`action`、`emotion`、`dialogue`、`setting`、`time` 与 `audio` 的取材来源。
+  只读；本阶段的
   `knowledge_refs` 只来自本阶段自己的检索，不继承也不改写该文件。使用前必须确认
   它在本 run 内已通过
   `validate_stage_artifact({ stage: "script_breakdown", path })`。
@@ -104,6 +105,11 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
      填写；两者都用中文短词。多人对话逐句标说话人；无对白镜头写空数组（渲染层按
      规则文件的 `empty_dialogue` 输出占位）。台词是原文保真豁免区：不要为通过
      禁止项校验改写、删词或屏蔽台词原文。
+   - `audio` 是必填对象：`{ ambience: string[], sfx: string[], music: string }`，
+     三项均可为空。只从原文已有声音线索（例如雨、脚步、门响）与检索卡片提炼，不得
+     编造原文没有的声音事件；没有依据时 `ambience` / `sfx` 写空数组、`music` 写空
+     字符串。渲染时音效用 `<>` 包裹、音乐用 `()` 包裹；三项全空时渲染层整行省略，
+     不写「无声音」类占位。声音符号约定见 `docs/model-rules-notes.md` §2.4。
    - 引用的 `source_doc_token`、`source_path`、`source_revision`、`last_synced_at`
      用 `card_id` 从第 2 步的知识包里匹配补齐；`scene_id`、`shot_id`、`query` 取本镜头
      自己的上下文（`shot_id` 必须等于所属镜头的 `shot_id`）。
@@ -227,6 +233,7 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 | `lighting` | string | 光线方向与质感，取材于上游信息与检索卡片 |
 | `color` | string | 色调，取材于上游信息与检索卡片 |
 | `style` | string | 视觉风格，取材于检索卡片与项目视觉设定 |
+| `audio` | object | 必填声音通道：`{ ambience: string[], sfx: string[], music: string }`，三项均可为空；只取原文已有声音线索与检索卡片，不得编造声音事件 |
 | `continuity` | object | `previous_shot`（可选，上一镜头 ID 或 `null`）、`character_state`、`environment_state`，后两项为非空字符串 |
 | `negative_prompt` | string[] | 负面约束条目；没有依据时写空数组 |
 | `knowledge_refs` | array | 本镜头的 `knowledge_ref[]` |
@@ -276,7 +283,7 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
   `char_budget: 4000`，且必须传 `target_model`（stage-conventions §3.1、§3.4、§3.5）；
   知识包只用于回填 `dropped_by_budget` 的来源元数据，不作为第二次检索。
 - 不越过上游：PromptIR 的文本字段只取材于上游产物与本阶段检索到的卡片；不新增剧情、
-  角色、事件、动作或台词，也不得把检索结果当成改写镜头计划的理由。
+  角色、事件、动作、台词或声音事件，也不得把检索结果当成改写镜头计划的理由。
 - 不写状态与总账：`run.json` 的阶段状态由入口维护，`knowledge_refs.json` 由入口聚合，
   `warnings.md` 由入口写入；本阶段只写自己主产物里的逐镜头 `knowledge_refs`。
 - 不把模型硬规则复制成 Skill 内的独立权威：必填字段、禁止项、时长与画幅范围以目标

@@ -6,7 +6,8 @@
  *    直接返回，不再进入模型硬规则——结构错位时越界 / 禁止项的结论没有意义。
  * 2. 硬规则层：`duration` 落在规则文件区间、`aspect_ratio` 在规则文件集合内、
  *    逐镜头 `target_model` 与顶层及规则文件一致、禁止项词表不得命中由 Agent 撰写、
- *    可改写的提示词正文字段（`dialogue` 是原文保真豁免区，不参与扫描）。
+ *    可改写的提示词正文字段（`audio` 的三个子字段需逐个扫描；`dialogue` 是原文
+ *    保真豁免区，不参与扫描）。
  *
  * 输出固定为 `{ ok, errors[] }`，`errors[] = { shot_id, field, code, message }`。
  * 校验码是 brief 冻结的四个 —— `MISSING_FIELD` / `OUT_OF_RANGE` / `FORBIDDEN_TERM` /
@@ -75,6 +76,7 @@ const SHOT_FIELD_ORDER = [
   "lighting",
   "color",
   "style",
+  "audio",
   "continuity",
   "negative_prompt",
   "knowledge_refs",
@@ -83,7 +85,8 @@ const SHOT_FIELD_ORDER = [
 /**
  * 禁止项扫描范围：**由 Agent 撰写、可改写的提示词正文字段**（画面 / 动作 / 场景 /
  * 情绪 / 时间 / 机位 / 运镜 / 光影 / 色调 / 风格），另加 `continuity` 的两个状态
- * 字段与 `negative_prompt[]` 条目。`dialogue` 是原文保真豁免区：台词逐字取上游原文，
+ * 字段、`audio.ambience[]` / `audio.sfx[]` / `audio.music`，以及
+ * `negative_prompt[]` 条目。`dialogue` 是原文保真豁免区：台词逐字取上游原文，
  * 不得为通过校验改写、删词或屏蔽，因此不参与扫描（Task A3 裁决，见
  * `docs/model-rules-notes.md` §2.3.2 / §3）。`knowledge_refs` 是知识溯源元数据，
  * 不渲染进正文，不扫描。`shot_size` / `aspect_ratio` 同属冻结枚举且渲染成固定中文
@@ -103,6 +106,8 @@ const FORBIDDEN_SCAN_FIELDS = [
 ] as const;
 
 const CONTINUITY_TEXT_FIELDS = ["character_state", "environment_state"] as const;
+
+const AUDIO_LIST_FIELDS = ["ambience", "sfx"] as const;
 
 /** 文件级问题的占位 `field`：问题出在入参路径本身，而不是某个 PromptIR 字段。 */
 const PROMPT_IR_PATH_FIELD = "prompt_ir_path";
@@ -275,6 +280,37 @@ function validate_hard_rules(
               prefix,
             ),
           );
+        }
+      }
+
+      if (field === "audio") {
+        const audio = shot.audio;
+        if (is_record(audio)) {
+          for (const list_field of AUDIO_LIST_FIELDS) {
+            const entries = audio[list_field];
+            if (!Array.isArray(entries)) {
+              continue;
+            }
+            for (const [entry_index, entry] of entries.entries()) {
+              if (typeof entry !== "string") {
+                continue;
+              }
+              errors.push(
+                ...forbidden_errors(
+                  shot_id,
+                  `audio.${list_field}[${entry_index}]`,
+                  entry,
+                  rules,
+                  prefix,
+                ),
+              );
+            }
+          }
+
+          const music = audio.music;
+          if (typeof music === "string") {
+            errors.push(...forbidden_errors(shot_id, "audio.music", music, rules, prefix));
+          }
         }
       }
 

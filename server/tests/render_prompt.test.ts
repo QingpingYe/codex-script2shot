@@ -319,6 +319,60 @@ describe("prompt rendering", () => {
     );
   });
 
+  test("render formats audio labels with angle and round brackets", () => {
+    const mutated = JSON.parse(
+      readFileSync(path.join(promptFixturesDir, "seedance-2.5.ir.json"), "utf8"),
+    ) as {
+      shots: Array<{
+        audio: { ambience: string[]; sfx: string[]; music: string };
+      }>;
+    };
+    mutated.shots[0].audio = {
+      ambience: ["雨声"],
+      sfx: ["远处雷声"],
+      music: "低沉弦乐",
+    };
+    mutated.shots[1].audio = { ambience: [], sfx: ["远处雷声"], music: "" };
+    const prompt_ir_path = path.join(tempDir, "seedance-2.5.audio.ir.json");
+    writeFileSync(prompt_ir_path, JSON.stringify(mutated, null, 2), "utf8");
+    const output_path = path.join(tempDir, "prompts.seedance-2.5.audio.md");
+
+    const result = render_prompt({ prompt_ir_path, output_path });
+
+    expect(result).toEqual({ ok: true, output_path });
+    const audio_lines = readFileSync(output_path, "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("- 声音："));
+    expect(audio_lines).toEqual([
+      "- 声音：环境声：雨声；音效：<远处雷声>；音乐：(低沉弦乐)",
+      "- 声音：音效：<远处雷声>",
+    ]);
+  });
+
+  test("render omits audio section when all buffers empty", () => {
+    const mutated = JSON.parse(
+      readFileSync(path.join(promptFixturesDir, "seedance-2.5.ir.json"), "utf8"),
+    ) as {
+      shots: Array<{
+        audio: { ambience: string[]; sfx: string[]; music: string };
+      }>;
+    };
+    for (const shot of mutated.shots) {
+      shot.audio = { ambience: [], sfx: [], music: "" };
+    }
+    const prompt_ir_path = path.join(tempDir, "seedance-2.5.no-audio.ir.json");
+    writeFileSync(prompt_ir_path, JSON.stringify(mutated, null, 2), "utf8");
+    const output_path = path.join(tempDir, "prompts.seedance-2.5.no-audio.md");
+
+    const result = render_prompt({ prompt_ir_path, output_path });
+
+    expect(result).toEqual({ ok: true, output_path });
+    const audio_lines = readFileSync(output_path, "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("- 声音："));
+    expect(audio_lines).toEqual([]);
+  });
+
   test("render reports failure when output directory cannot be created", () => {
     // 把 output_path 的父路径做成普通文件：mkdirSync 会失败，写盘未发生。
     const blocked_parent = path.join(tempDir, "blocked-parent");

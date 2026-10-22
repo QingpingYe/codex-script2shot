@@ -30,6 +30,11 @@
       "lighting": "冷调霓虹",
       "color": "青蓝与暗红",
       "style": "阴郁写实电影质感",
+      "audio": {
+        "ambience": ["雨声"],
+        "sfx": ["远处雷声"],
+        "music": "低沉弦乐"
+      },
       "continuity": {
         "previous_shot": null,
         "character_state": "角色A握紧黑色伞柄",
@@ -55,6 +60,11 @@
       "lighting": "灯牌自发光",
       "color": "青蓝与暗红",
       "style": "阴郁写实电影质感",
+      "audio": {
+        "ambience": [],
+        "sfx": [],
+        "music": ""
+      },
       "continuity": {
         "previous_shot": "ep02-sc01-sh01",
         "character_state": "角色A停步仰望",

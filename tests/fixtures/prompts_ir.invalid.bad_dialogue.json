@@ -24,6 +24,11 @@
       "lighting": "low-key neon lighting",
       "color": "cool cyan and red accents",
       "style": "neo-noir cinematic realism",
+      "audio": {
+        "ambience": [],
+        "sfx": [],
+        "music": ""
+      },
       "continuity": {
         "previous_shot": "ep01-sc01-sh00",
         "character_state": "wet coat, holding black umbrella",

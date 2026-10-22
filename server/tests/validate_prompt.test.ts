@@ -28,6 +28,11 @@ interface PromptIrShot {
   lighting: string;
   color: string;
   style: string;
+  audio: {
+    ambience: string[];
+    sfx: string[];
+    music: string;
+  };
   continuity: {
     previous_shot?: string | null;
     character_state: string;
@@ -194,6 +199,37 @@ describe("prompt hard rule validation", () => {
 
     expect(error_keys(result)).toEqual(["ep01-sc01-sh01|emotion|FORBIDDEN_TERM"]);
     expect(result.errors[0]?.message).toContain(forbidden_term);
+  });
+
+  test("validate rejects forbidden term in audio fields", () => {
+    const rules = load_model_rules("seedance-2.5");
+    expect(rules.ok).toBe(true);
+    if (!rules.ok) {
+      throw new Error("expected seedance-2.5 rules to load");
+    }
+    // 非空转：三个词都来自规则文件词表，覆盖 audio 的三个可改写子字段。
+    const forbidden_terms = ["duration", "resolution", "fps"];
+    for (const term of forbidden_terms) {
+      expect(rules.rules.forbidden).toContain(term);
+    }
+
+    const ir = read_prompt_ir("prompts_ir.sample.json");
+    ir.shots[0].audio = {
+      ambience: [`环境声里的 ${forbidden_terms[0]}`],
+      sfx: [`音效里的 ${forbidden_terms[1]}`],
+      music: `音乐里的 ${forbidden_terms[2]}`,
+    };
+    const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
+
+    // 扫描顺序与对象结构一致：ambience[] → sfx[] → music。
+    expect(error_keys(result)).toEqual([
+      "ep01-sc01-sh01|audio.ambience[0]|FORBIDDEN_TERM",
+      "ep01-sc01-sh01|audio.sfx[0]|FORBIDDEN_TERM",
+      "ep01-sc01-sh01|audio.music|FORBIDDEN_TERM",
+    ]);
+    for (const [index, term] of forbidden_terms.entries()) {
+      expect(result.errors[index]?.message).toContain(term);
+    }
   });
 
   test("validate keeps verbatim dialogue even when it contains forbidden terms", () => {

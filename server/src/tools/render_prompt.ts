@@ -8,13 +8,15 @@
  *    且不创建目录、不写文件。避免「校验读一次、渲染再读一次」之间文件被替换。
  * 2. 通过后按目标模型规则文件的 `render` 模板渲染同一份 document。模板只承载
  *    人可见的中文标题、节标签与节顺序；字段到节内容的组装在渲染层。
- * 3. 输出为 Markdown：整篇标题 → 每个镜头一节（分节标题行 + 固定顺序的八条节内容）。
- *    正文不含时间戳 / run 元数据，行尾统一 `\n`，同输入逐字节一致。
+ * 3. 输出为 Markdown：整篇标题 → 每个镜头一节（分节标题行 + 固定顺序的九条节内容；
+ *    空的 `audio` 节整行省略）。正文不含时间戳 / run 元数据，行尾统一 `\n`，同输入
+ *    逐字节一致。
  *
  * 节顺序（与 brief 冻结的 镜头号与时长 → 主体与动作 → 对白 → 环境与时间 →
- * 景别、机位与运镜 → 光线与色彩 → 风格 → 连续性 → 负面约束 一致）：「镜头号与时长」
- * 由分节标题行 `## 镜头 {shot_id}（时长 {duration} 秒，画幅 {aspect_ratio}）` 承载，
- * 其余八节是节内条目，顺序由规则文件 `render.section_order` 给出。
+ * 景别、机位与运镜 → 光线与色彩 → 风格 → 声音 → 连续性 → 负面约束 一致）：
+ * 「镜头号与时长」由分节标题行
+ * `## 镜头 {shot_id}（时长 {duration} 秒，画幅 {aspect_ratio}）` 承载，其余九节是
+ * 节内条目，顺序由规则文件 `render.section_order` 给出。
  *
  * 冻结英文枚举 `shot_size` / `camera_angle` / `camera_movement` 渲染为中文标签（映射表与
  * `schemas/prompt_ir.schema.json` 描述、`schemas/shot_plan.schema.json` 的中文词表
@@ -33,6 +35,9 @@
  * 与同镜头动作线索的可观察外化（取材规则见架构 §9.6、§11.3），渲染层只做拼接：
  * 「主体与动作」节在 `emotion` 非空时追加子标签「情绪：…」，空值沿用 `field()` 的
  * 空值省略语义不输出该子标签，也不补写情绪文本或改写动作文本。
+ *
+ * `audio`（Task B2）取自原文已有声音线索与检索卡片：音效条目渲染时用 `<>` 包裹，
+ * 音乐非空时用 `()` 包裹；空子项省略，三项全空时整行省略，不输出「无声音」类负向暗示。
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -75,6 +80,7 @@ const SECTION_KEYS = [
   "camera",
   "light_color",
   "style",
+  "audio",
   "continuity",
   "negative",
 ] as const;
@@ -239,6 +245,11 @@ interface PromptIrShot {
   lighting: string;
   color: string;
   style: string;
+  audio: {
+    ambience: string[];
+    sfx: string[];
+    music: string;
+  };
   continuity: {
     previous_shot?: string | null;
     character_state: string;
@@ -267,7 +278,10 @@ function render_document(document: PromptIrDocument, rules: ModelRules): string 
     lines.push("", render_shot_heading(template, shot), "");
     for (const key of template.section_order) {
       const label = template.section_labels[key];
-      lines.push(`- ${label}：${render_section(key, shot, template)}`);
+      const content = render_section(key, shot, template);
+      if (content !== undefined) {
+        lines.push(`- ${label}：${content}`);
+      }
     }
   }
 
@@ -321,7 +335,7 @@ function render_section(
   key: RenderSectionKey,
   shot: PromptIrShot,
   template: RenderTemplate,
-): string {
+): string | undefined {
   switch (key) {
     case "subject_action":
       return join_parts([
@@ -346,6 +360,8 @@ function render_section(
       return join_parts([field("光线", shot.lighting), field("色彩", shot.color)]);
     case "style":
       return shot.style;
+    case "audio":
+      return render_audio(shot.audio);
     case "continuity":
       return join_parts([
         field("承接镜头", shot.continuity.previous_shot ?? ""),
@@ -374,6 +390,24 @@ function label_for(labels: Record<string, string>, value: string): string {
 /** 时间词本地化：命中映射取中文，未收录词原样透传（不发明未定义的映射）。 */
 function time_label(value: string): string {
   return TIME_LABELS[value] ?? value;
+}
+
+/**
+ * 声音节渲染（Task B2）：空子项省略，`sfx` 每项用 `<>` 包裹、非空 `music` 用 `()`
+ * 包裹；三项全空时返回 undefined，由渲染循环整行省略，不输出「无声音」类负向暗示。
+ */
+function render_audio(audio: PromptIrShot["audio"]): string | undefined {
+  const ambience = audio.ambience.filter((entry) => entry.trim() !== "");
+  const sfx = audio.sfx
+    .filter((entry) => entry.trim() !== "")
+    .map((entry) => `<${entry}>`);
+  const music = audio.music.trim() === "" ? "" : `(${audio.music})`;
+  const content = join_parts([
+    ambience.length === 0 ? undefined : `环境声：${ambience.join("、")}`,
+    sfx.length === 0 ? undefined : `音效：${sfx.join("、")}`,
+    music === "" ? undefined : `音乐：${music}`,
+  ]);
+  return content === "" ? undefined : content;
 }
 
 /** 空 `negative_prompt`（含全空白条目）不省略节，渲染模板里的稳定占位。 */

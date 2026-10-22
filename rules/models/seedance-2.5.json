@@ -23,6 +23,7 @@
       "camera": "景别、机位与运镜",
       "light_color": "光线与色彩",
       "style": "风格",
+      "audio": "声音",
       "continuity": "连续性",
       "negative": "负面约束"
     },
@@ -33,6 +34,7 @@
       "camera",
       "light_color",
       "style",
+      "audio",
       "continuity",
       "negative"
     ],

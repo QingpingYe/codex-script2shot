@@ -24,6 +24,11 @@
       "lighting": "冷白顶灯",
       "color": "灰蓝低饱和",
       "style": "写实电影质感",
+      "audio": {
+        "ambience": ["前厅的空旷回声"],
+        "sfx": ["铁门被推开"],
+        "music": "低沉弦乐"
+      },
       "continuity": {
         "character_state": "角色A站在门内，手扶铁门",
         "environment_state": "门缝透出冷光"
@@ -48,6 +53,11 @@
       "lighting": "舞台追光",
       "color": "暖黄与深褐",
       "style": "写实电影质感",
+      "audio": {
+        "ambience": [],
+        "sfx": [],
+        "music": ""
+      },
       "continuity": {
         "previous_shot": "ep01-sc01-sh01",
         "character_state": "角色B停在舞台中央",

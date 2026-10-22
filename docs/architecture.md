@@ -879,6 +879,9 @@ $script2shot 只执行 shot-prompting，run_id 是 <run_id>
   `emotion_units.description` 与同镜头已有的 `action_units` 动作线索；无来源支撑时
   `emotion` 留空，禁止由抽象情绪反推未发生的身体动作。写作可参考检索到的
   「情绪具象外化」类卡片。
+- 声音只取 `script_analysis.json` 已有线索（例如原文的雨、脚步、门响）与本阶段检索
+  卡片；`ambience` / `sfx` / `music` 无依据时留空，不得编造原文没有的声音事件。
+  渲染时音效用 `<>` 包裹、音乐用 `()` 包裹（见 `docs/model-rules-notes.md` §2.4）。
 - 调用 `validate_prompt` 校验硬规则，失败时按结构化错误重新生成。
 - 调用 `render_prompt` 渲染目标模型提示词。
 - 依赖提示词技巧、Seedance 2.0 和 2.5 软知识和模型规则文件。
@@ -1069,6 +1072,11 @@ general / project 块重复归类。
   "lighting": "low-key neon lighting",
   "color": "cool cyan and red accents",
   "style": "neo-noir cinematic realism",
+  "audio": {
+    "ambience": ["雨声"],
+    "sfx": ["远处雷声"],
+    "music": "低沉弦乐"
+  },
   "continuity": {
     "previous_shot": "s01-sh02",
     "character_state": "wet coat, holding black umbrella",
@@ -1103,6 +1111,14 @@ general / project 块重复归类。
   `validate_prompt` 的禁止项（`forbidden`）扫描不覆盖 `dialogue`，不得为通过校验
   改写、删词或屏蔽台词原文。禁止项扫描的范围口径见 `docs/model-rules-notes.md`
   §2.3.2 / §3。
+- `audio` 是必填对象（`additionalProperties: false`），结构为
+  `{ ambience: string[], sfx: string[], music: string }`，三项均可为空；位置口径为
+  `style` 之后、`continuity` 之前，schema 的 `properties` / `required` 与
+  `validate_prompt.ts` 的 `SHOT_FIELD_ORDER` 三处一致。`ambience` / `sfx` / `music`
+  只从上游已有声音线索（例如原文的雨、脚步、门响）与检索卡片提炼，不得编造原文没有的
+  声音事件；没有依据时 `ambience` / `sfx` 写空数组、`music` 写空字符串。渲染为「声音」
+  节，子项格式为「环境声：…；音效：<…>；音乐：(…)」；空子项省略，三项全空时整行省略，
+  不输出「无声音」类负向暗示。
 - `shot_size` 取自上游 `shot_plan.json` 的 9 值中文景别枚举，按冻结映射译成英文，
   顺序一一对应：大远景=`extreme-long-shot`、远景=`long-shot`、全景=`full-shot`、
   中全景=`medium-full-shot`、中景=`medium-shot`、中近景=`medium-close-up`、

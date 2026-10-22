@@ -24,6 +24,11 @@
       "lighting": "low-key neon lighting",
       "color": "cool cyan and red accents",
       "style": "neo-noir cinematic realism",
+      "audio": {
+        "ambience": ["雨声"],
+        "sfx": ["远处雷声"],
+        "music": "低沉弦乐"
+      },
       "continuity": {
         "previous_shot": null,
         "character_state": "wet coat, holding black umbrella",

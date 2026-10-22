@@ -71,6 +71,16 @@ describe("prompt ir schema validation", () => {
     expect(error_paths(result)).toEqual(["shots[0].emotion"]);
   });
 
+  test("prompt ir requires audio object per shot", () => {
+    const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
+    delete edited.shots[0].audio;
+
+    const result = validate_prompt_ir(edited);
+
+    expect(result.ok).toBe(false);
+    expect(error_paths(result)).toEqual(["shots[0].audio"]);
+  });
+
   test("prompt ir requires knowledge refs field per shot", () => {
     const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
     delete edited.shots[0].knowledge_refs;
