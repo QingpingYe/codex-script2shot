@@ -11,17 +11,19 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 阶段 key 为 `shot_prompting`，产物文件名固定（`references/stage-conventions.md` §1）。
 
 阶段只通过文件产物交接，不依赖会话上下文（stage-conventions §2）。本 Skill 只调用
-`validate_stage_artifact`、`search_knowledge`、`validate_prompt`、`render_prompt`
-四个 MCP 工具，不自己实现检索、排序、硬规则校验或提示词渲染，也不直接读取模型规则文件。
+`validate_stage_artifact`、`load_knowledge_pack`、`search_knowledge`、`validate_prompt`、
+`render_prompt` 五个 MCP 工具，不自己实现检索、排序、硬规则校验或提示词渲染，也不直接
+读取模型规则文件。
 
 ## 适用时机
 
 - 入口 Skill `script2shot` 跑到 `shot-prompting` 阶段，或用户要求从本阶段重跑。
 - 独立使用：用户自带一份已校验的镜头计划，只要 PromptIR 与目标模型提示词
-  （架构 §9.6 的独立使用场景）。
+  （架构 §9.6 的独立使用场景）；此时仍需要同一 run 里通过校验的
+  `script_analysis.json` 提供画面文本要素，或由调用方提供等价的画面文本要素。
 - 前置：运行目录 `.script2shot/outputs/<run_id>/` 已由入口创建，上游
   `shot_plan.json` 已存在且通过阶段校验；本阶段要取材的 `script_analysis.json`
-  在本 run 内也已通过校验；`aspect_ratio` 已由调用方明确给出。
+  在本 run 内也已通过校验；`aspect_ratio` 可从 `run.json` 读取或由调用方显式给出。
 - 如果任何上游产物被人工修改过，先重新调用对应的 `validate_stage_artifact`，
   通过后才能进入本阶段。
 - 不适用：需要改镜头数量、拆分、时长、景别、机位、运镜、转场或连续性时，回退
@@ -44,10 +46,14 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 - `run.json`：可选运行时上下文，用于核对 `run_id`、`project_id`、`target_model`。
   可读时若与已校验的 `shot_plan.json` 冲突，停止并报告；不可读时以上游产物为准
   继续，不猜缺失字段。
-- `aspect_ratio`：PromptIR 的必填画幅。上游两个产物都不携带该字段，由调用方
-  （入口或用户）在运行本阶段时显式给出；未提供时停止并请求确认，不默认取值。
+- `aspect_ratio`：PromptIR 的必填画幅。上游两个产物都不携带该字段：先读 `run.json`
+  的 `aspect_ratio`（run 级可选字段），没有该字段或 `run.json` 不可读时，要求调用方
+  在运行本阶段时显式提供；仍然缺失时停止并请求确认，不默认取值。
 - 知识：只经 `search_knowledge` 检索本地索引/缓存里的提示词技巧、示例、镜头语言、
   角色、场景、风格与 Seedance 模型知识，内容来自 AI 库；本阶段不直接读原始库或飞书。
+- 知识包：调用一次 `load_knowledge_pack({ project_id, target_model })`（只读），作为
+  回填 `dropped_by_budget` 条目来源元数据的来源；它的 general → project → seedance
+  合并池包含本阶段 `scope: "project"` 的检索池。知识包不可用时停止本阶段。
 - 模型硬规则：必填字段、禁止项、时长与画幅范围由 `rules/models/<target_model>.json`
   定义，经 `validate_prompt` 判定；本阶段不直接读规则文件，也不在 Skill 或产物里
   另写一套规则数值。
@@ -67,9 +73,12 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
      被人工修改后必须重新校验），未通过即停。
    - `target_model` 同时决定 PromptIR 顶层与逐镜头的 `target_model`，以及输出文件名
      `prompts.<target_model>.md`；一次 run 只允许一个目标模型。
-2. **逐镜头检索知识。** 按 `shot_plan.json` 的场景顺序与镜头顺序，对每个镜头调用一次
-   `search_knowledge`，参数取「知识检索配方」的固定值；需要连续性时把相邻镜头的关键
-   状态并进同一次查询。检索结果只用于本镜头的 PromptIR 写作。
+2. **加载知识包并逐镜头检索知识。** 先调用一次
+   `load_knowledge_pack({ project_id, target_model })`（只读，用于第 3 步回填被预算截断
+   卡片的来源元数据；`warnings` 原样交调用方处理）。再按 `shot_plan.json` 的场景顺序与
+   镜头顺序，对每个镜头调用一次 `search_knowledge`，参数取「知识检索配方」的固定值；
+   需要连续性时把相邻镜头的关键状态并进同一次查询。检索结果只用于本镜头的 PromptIR
+   写作。
 3. **组装 PromptIR 并落盘。** 把每个镜头写成一条 PromptIR 镜头对象，按场景顺序与
    镜头顺序展平进 `shots[]`，逐镜头写 `knowledge_refs`（`used` 与
    `dropped_by_budget`），再把完整文档写入
@@ -79,6 +88,9 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
      按「输出」的冻结映射表把上游中文枚举译成英文枚举；`subject`、`action`、
      `setting`、`time` 取材于 `script_analysis.json` 的对应场景与原文单元；
      `lighting`、`color`、`style` 取材于上游信息与检索卡片。
+   - 引用的 `source_doc_token`、`source_path`、`source_revision`、`last_synced_at`
+     用 `card_id` 从第 2 步的知识包里匹配补齐；`scene_id`、`shot_id`、`query` 取本镜头
+     自己的上下文（`shot_id` 必须等于所属镜头的 `shot_id`）。
    - 只重组上游已有信息与检索知识，不新增原文没有的剧情、角色、事件、动作或台词。
    - `continuity.previous_shot` 取上一镜头的 `shot_id`（首个镜头省略该字段或填
      `null`）；`character_state`、`environment_state` 取材于上游镜头 `continuity` 的
@@ -106,8 +118,9 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 
 ## 知识检索配方
 
-依据 stage-conventions §3.4 与 §3.5，本阶段有且只有一种检索，参数照下面固定值传，
-不自行增加过滤条件、分类或预算。粒度：**每个镜头一次**。
+依据 stage-conventions §3.4 与 §3.5，本阶段的检索有且只有一种，参数照下面固定值传，
+不自行增加过滤条件、分类或预算。粒度：**每个镜头一次**；知识包每次运行加载一次，
+只用于回填截断卡片的来源元数据。
 
 ```json
 {
@@ -129,6 +142,12 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 }
 ```
 
+**知识包（每次运行一次，回填专用）**
+
+```json
+{"project_id": "<project_id>", "target_model": "<target_model>"}
+```
+
 - 本阶段所有 `search_knowledge` 调用都必须传 `target_model`；只有 `script-breakdown`
   有不传该参数的豁免（stage-conventions §3.1）。
 - 查询来源是镜头的 `subject`、`action`、`setting`、情绪、光线方向和目标模型；需要
@@ -139,9 +158,13 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
   `card_id`：其中每一条都记入所属镜头的 `knowledge_refs`，`usage` 为
   `dropped_by_budget`，并写全九个必填字段；实际影响 PromptIR 写作的候选卡用
   `usage: "used"`。进入候选但未采用的卡不记录。
-- 引用的来源元数据取工具返回结果。补齐不了来源字段时停止并报告，不伪造
-  `source_doc_token`、`source_path`、`source_revision`、`last_synced_at`，也不通过
-  加大 `max_cards` / `char_budget` 或追加检索绕过预算上限。
+- `load_knowledge_pack` 只读，且只用于回填来源元数据：不扩大 `max_cards` /
+  `char_budget`、不追加 `search_knowledge` 调用。它的 general → project → seedance
+  合并池包含本阶段 `scope: "project"` 的检索池，因此被截断的 `card_id` 能在包里按
+  `card_id` 匹配回 `source_doc_token`、`source_path`、`source_revision`、
+  `last_synced_at` 四元组。
+- 某条 `dropped_by_budget` 的 `card_id` 在知识包里确实不存在时，停止并报告这个真实
+  缺口，不伪造来源字段，也不用扩大预算或追加检索绕过预算上限。
 - `character_bible`、`scene_description`、`visual_style` 保持正文原文，不压缩；
   `prompt_technique`、`example`、`seedance_rule` 可以压缩为要点使用，不逐字复制进
   PromptIR（stage-conventions §3.5）。
@@ -175,7 +198,7 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 | `shot_id` | string | 沿用 `shot_plan.json` 的镜头 ID |
 | `target_model` | string | 与顶层 `target_model` 一致 |
 | `duration` | integer | 整数秒，取自上游 `duration_sec`；范围由 `validate_prompt` 判定 |
-| `aspect_ratio` | string | `16:9`、`4:3`、`1:1`、`3:4`、`9:16`、`21:9`，取调用方给定值 |
+| `aspect_ratio` | string | `16:9`、`4:3`、`1:1`、`3:4`、`9:16`、`21:9`，取自 `run.json` 或调用方显式提供 |
 | `subject` | string | 取自上游场景与角色信息 |
 | `action` | string | 取自上游动作单元与镜头计划 |
 | `setting` | string | 取自上游场景地点与检索到的场景说明 |
@@ -222,11 +245,12 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 - 职责边界：只把镜头计划变成 PromptIR 与提示词。**不修改镜头计划**；需要改镜头数量、
   拆分、时长、景别、机位、运镜、转场或连续性时回到 `shot-planning`（架构 §9.6），
   需要补写原文没有的剧情、角色、事件或对白时回到 `script-breakdown`。
-- 不实现检索、校验或渲染：只调用 `validate_stage_artifact`、`search_knowledge`、
-  `validate_prompt`、`render_prompt`；不自己排序候选、不自己判硬规则、不自己拼
-  提示词正文。
+- 不实现检索、校验或渲染：只调用 `validate_stage_artifact`、`load_knowledge_pack`、
+  `search_knowledge`、`validate_prompt`、`render_prompt`；不自己排序候选、不自己判
+  硬规则、不自己拼提示词正文。
 - 不扩大检索：每个镜头一次固定参数检索，七类分类、`max_cards: 6`、
-  `char_budget: 4000`，且必须传 `target_model`（stage-conventions §3.1、§3.4、§3.5）。
+  `char_budget: 4000`，且必须传 `target_model`（stage-conventions §3.1、§3.4、§3.5）；
+  知识包只用于回填 `dropped_by_budget` 的来源元数据，不作为第二次检索。
 - 不越过上游：PromptIR 的文本字段只取材于上游产物与本阶段检索到的卡片；不新增剧情、
   角色、事件、动作或台词，也不得把检索结果当成改写镜头计划的理由。
 - 不写状态与总账：`run.json` 的阶段状态由入口维护，`knowledge_refs.json` 由入口聚合，
@@ -242,12 +266,13 @@ description: 在 script2shot 第三阶段把已校验的 shot_plan.json 写成 P
 | 上游 `shot_plan.json` 缺失、不可读或 schema 校验失败 | 停止本阶段，报告 `validate_stage_artifact` 返回的 `errors[].path` 和错误码；不生成下游产物 |
 | 上游校验返回 `OUT_OF_RANGE` / `MODEL_RULES_UNAVAILABLE` | 停止本阶段并报告；不改镜头时长或拆分，也不绕过校验 |
 | `script_analysis.json` 在本 run 内未通过校验（例如被人工修改后未重校验） | 先重新调用 `validate_stage_artifact({ stage: "script_breakdown", path })`；仍不通过则停止并报告 |
-| 调用方未提供 `aspect_ratio` | 停止本阶段请求确认；不默认取值、不先写产物 |
+| `run.json` 没有 `aspect_ratio` 且调用方也未提供 | 停止本阶段请求确认；不默认取值、不先写产物 |
 | 文件级错误码 `STAGE_ARTIFACT_MISSING` / `STAGE_ARTIFACT_UNREADABLE` / `STAGE_ARTIFACT_INVALID_JSON` | 分别修正产物路径、文件可读性/权限或 JSON 写入，再重新校验；错误码只用于报告，不写进产物 |
+| `load_knowledge_pack` 返回不可用错误或参数类错误 | 停止本阶段并报告工具错误；不使用会话记忆或其它来源替代知识包，也不跳过回填 |
 | `search_knowledge` 返回参数类错误 | 修正查询或参数后重试；不改分类、不省略 `target_model` |
 | `search_knowledge` 返回 `INDEX_UNAVAILABLE` 且无可用回退 | 停止本阶段并报告索引错误；不伪造候选或引用 |
 | `search_knowledge` 返回 `degraded: true`、warning 或空查询 | 按工具返回结果继续或修正查询重试；warning 文案以工具输出为准，原样交调用方写入 `warnings.md`，不在本 Skill 复述、不写进产物 |
-| `dropped_by_budget` 条目的来源元数据无法补齐 | 停止本阶段并报告；不伪造来源字段，也不扩大预算或追加检索绕过 |
+| `dropped_by_budget` 的 `card_id` 在知识包中不存在 | 停止本阶段并报告缺失的 `card_id`；不伪造来源字段，也不扩大预算或追加检索绕过 |
 | 知识卡与上游冲突 | 以上游产物为准，不采用冲突内容；冲突意味着上游缺失或错误时停止并回报 |
 | `validate_prompt` 返回 `MISSING_FIELD` / `OUT_OF_RANGE` / `FORBIDDEN_TERM` / `MODEL_MISMATCH` | 只重新生成 `errors[].shot_id` 指到的镜头，整体重写 `prompts.ir.json` 后重新校验；最多 2 轮 |
 | 修复 2 轮后仍 `ok: false` | 停止本阶段，保留已生成的 `prompts.ir.json`，报 `HARD_RULE_VIOLATION` 与 `errors[]` 明细；不渲染、不写提示词文件、不更新 `run.json` 阶段状态 |

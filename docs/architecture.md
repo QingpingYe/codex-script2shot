@@ -853,7 +853,9 @@ $script2shot 只执行 shot-prompting，run_id 是 <run_id>
 
 负责把镜头计划变成 PromptIR 和模型提示词。
 
-输入：`shot_plan.json` 和知识包。
+输入：`shot_plan.json`、同 run 的 `script_analysis.json`（只读，提供
+`subject`/`action`/`setting`/`time`/`lighting`/`color`/`style` 等画面文本要素，
+必须先通过 `validate_stage_artifact(script_breakdown)`）和知识包。
 
 输出：`prompts.ir.json` 和 `prompts.<model>.md`。`prompts.ir.json`
 包含按镜头记录的知识引用；`knowledge_refs.json` 由入口最后聚合。
@@ -866,7 +868,8 @@ $script2shot 只执行 shot-prompting，run_id 是 <run_id>
 
 职责边界：不修改镜头计划。需要改镜头时回到 `shot-planning`。
 
-独立使用场景：用户自带镜头计划，只出提示词。
+独立使用场景：用户自带镜头计划，只出提示词；此时仍需要同一 run 里通过校验的
+`script_analysis.json`，或由调用方提供等价的画面文本要素。
 
 ## 10. 检索设计
 
