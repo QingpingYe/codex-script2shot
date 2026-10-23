@@ -1,5 +1,5 @@
 {
-  "name": "script2shot-local",
+  "name": "script2shot-git",
   "interface": { "displayName": "Script2Shot (Local)" },
   "plugins": [
     {
