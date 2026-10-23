@@ -150,6 +150,7 @@ describe("mcp handshake", () => {
       expect(Array.isArray(result.tools)).toBe(true);
       const toolNames = result.tools.map((tool) => tool.name);
       expect(toolNames).toContain("health");
+      expect(toolNames).toContain("read_config");
       expect(toolNames).toContain("write_config");
       expect(toolNames).toContain("init_run");
       expect(toolNames).toContain("read_run");

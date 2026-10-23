@@ -8,6 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { health } from "./tools/health.js";
 import { init_knowledge_b, type InitKnowledgeBInput } from "./tools/init_knowledge_b.js";
+import { read_config } from "./tools/read_config.js";
 import { write_config, type WriteConfigInput } from "./tools/write_config.js";
 import { build_sync_plan } from "./sync_plan.js";
 import type { SyncState } from "./base_mapping.js";
@@ -72,6 +73,13 @@ const TOOLS = [
   {
     name: "health",
     description: "只读检查：lark-cli 路径与版本、登录状态、原始库与 AI 库可达性、本地目录与索引状态。",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "read_config",
+    description:
+      "只读返回 ~/.codex-script2shot/config.toml 是否存在、路径与掩码后的配置快照；" +
+      "base_b 只保留前 6 位加 …（完整 token 不经过对话），供 setup 的「保留既有配置」决策使用；不写任何文件。",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -623,6 +631,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name } = request.params;
   if (name === "health") {
     return tool_json(await health());
+  }
+  if (name === "read_config") {
+    const parsed = parse_empty_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(read_config()) : tool_json(parsed);
   }
   if (name === "write_config") {
     return tool_json(
