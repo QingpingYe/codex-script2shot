@@ -525,6 +525,9 @@ codex-script2shot/
   scripts/
     launch_script2shot_mcp.cmd
     launch_script2shot_mcp
+    setup_bootstrap.cmd
+    setup_bootstrap
+    setup_bootstrap.mjs
   server/
     src/
     tests/
@@ -567,6 +570,47 @@ MCP Server 技术栈（2026-10-20 确认）：
 - 目录补充：`scripts/`（启动脚本）、`server/tests/`（含 fixtures）、
   `tests/fixtures/`（跨模块 fixture）。
 
+**分发与自举（2026-10-23）。** 插件是纯源码分发：`server/dist/` 不入库
+（`.gitignore` 保留 `server/dist/` 与 `server/node_modules/`），市场安装只得到
+git checkout。首次初始化因此由插件自带的 `scripts/setup_bootstrap.mjs` 承担：
+纯 ESM、零依赖，可在 `server/node_modules` 不存在时运行；配套
+`scripts/setup_bootstrap`（POSIX）与 `scripts/setup_bootstrap.cmd`（Windows）
+两个薄包装。包装脚本的 Node 运行时解析顺序与 `launch_script2shot_mcp*` 完全一致
+（`CODEX_MCP_NODE_PATH` -> Codex 资源目录中的 Node -> Codex 缓存 runtime ->
+系统 `node`），解析不到时提示更新 Codex。
+
+子命令（全部输出 JSON 到 stdout；进度与人类可读信息走 stderr；敏感值一律掩码）：
+
+| 子命令 | 作用 | 关键输出 |
+| --- | --- | --- |
+| `doctor` | 只读探测：平台、Node 版本与来源、插件目录可写性、网络可达性、`~/.codex-script2shot` 可写性、lark-cli 路径/版本、配置与 `dist` 是否存在、索引状态 | `checks[]` + `next_actions[]` + `capabilities`（`can_write_home` / `can_write_plugin_dir` / `can_reach_network` / `can_build`） |
+| `ensure-runtime` | 准备构建用 Node：系统 `node` + `npm` 满足 `>= 24` 则复用，否则补装私有运行时 | `node_path` / `npm_path` / `version` / `source`（`system` / `private`）/ `archive_url` / `checksum_source` |
+| `install-cli` | 安装或修复 lark-cli：复用（`>= 1.0.98`）→ 私有 prefix 安装固定 `1.0.98` → 包内 `scripts/install.js` → 官方归档 + 校验后解压；`--allow-global` 才允许系统级安装 | `cli_path` / `version` / `source` |
+| `build-server` | 在插件 `server/` 下 `npm ci`（缓存指向系统临时目录）+ `npm run build`，失败按类别返回，并以 stdio 握手自检 | `dist_path` / `tools_count` |
+| `ensure-app` | 应用守卫：解析 `config show` 的 stdout JSON，有 `appId` 即复用；否则引导一次浏览器内应用创建 | `status`（`reused` / `created` / `pending_human`）/ `app_id` |
+| `auth-login` | 设备码登录编排：`auth login --no-wait --json` 发起、`--device-code` 续跑，以 `identities.user.status == "ready"` 复核身份 | `status`（`pending_human` / `ready`）/ `verification_url` / `user_code` |
+| `profile` | 只读 `profile list`，返回唯一 `active: true` 的 `name` | `profile` |
+| `call-tool <name>` | 以子进程启动已构建的 MCP Server，走 stdio JSON-RPC 调用指定工具；入参默认从 stdin 读取 | 工具的原始 JSON 结果（脚本不把入参内容写进 stdout / stderr / 日志） |
+
+退出码固定为 `0` 成功、`1` 失败（AI 读 `error.code` 处置）、`2` 需要人类动作或
+提权（`APP_REGISTRATION_PENDING` / `AUTH_LOGIN_PENDING` / `NEEDS_ESCALATION`）。
+
+私有运行时与下载：系统 `node` + `npm` 满足 `>= 24` 时复用；否则从
+`https://nodejs.org/dist/index.json` 解析满足 `>= 24` 的最新 LTS，下载同版本
+目录下的平台归档（`win-x64` 用 `.zip`，`darwin-arm64` / `darwin-x64` 用
+`.tar.gz`，其余平台返回 `NPM_UNAVAILABLE`），用同版本目录的 `SHASUMS256.txt`
+校验 sha256 后才解压到 `~/.codex-script2shot/runtime/node-<version>/`。校验
+不符立即中止（`NODE_CHECKSUM_MISMATCH`），不落地半成品；具体版本号与校验值在
+运行期解析并回显到输出。私有运行时只服务于脚本自身与构建，不加入 MCP 启动器
+的候选顺序，`server/dist/server.mjs` 的路径与启动顺序不变。
+
+构建自检：`build-server` 在 `npm ci` + `npm run build` 之后，以 stdio JSON-RPC
+完成 `initialize`（协议版本 `2025-11-25`）→ `notifications/initialized` →
+`tools/list` 握手；工具列表为空返回 `SERVER_HANDSHAKE_FAILED`，插件目录不可写
+返回 `PLUGIN_DIR_READONLY`，构建器安装脚本被宿主策略拦截返回
+`BUILD_TOOL_BLOCKED`（不静默绕过）。启动器脚本只补一句提示：尚未构建时可由
+`scripts/setup_bootstrap build-server` 自动完成。
+
 ### 7.2 本地数据目录
 
 ```text
@@ -601,8 +645,9 @@ MCP Server 技术栈（2026-10-20 确认）：
 1. 环境变量 `LARK_CLI_PATH`。
 2. 用户配置 `~/.codex-script2shot/config.toml`。
 3. 系统 `PATH`。
-4. 常见安装目录。
-5. 找不到时提示用户安装或指定路径。
+4. 常见安装目录，其中包含私有 prefix：
+   `~/.codex-script2shot/cli/node_modules/@larksuite/cli/bin`。
+5. 找不到时由 `$setup` 的 `install-cli` 子命令安装到私有 prefix，不要求用户执行命令。
 
 配置示例：
 
@@ -633,16 +678,17 @@ origin docx 根节点归入 `scope=project`：每项包含 `node_token`（根节
 插件默认配置提供，用户可整体替换。
 
 `lark.profile` 表示插件期望当前生效的 lark-cli 活动 profile，不是每命令参数。
-lark-cli 的 profile 由全局 `lark-cli profile use` 切换，且 CLI 明确要求 AI agents
-不得自行切换或删除 profile；插件只通过只读的 `lark-cli profile list` 读取活动
-profile 并与配置比对，不调用 `profile use` / `profile remove`。不一致时 `health`
-返回 warning，提示用户本人确认后运行 `lark-cli profile use <name>`。
+profile **没有默认值**：setup 先用 `profile` 子命令解析活动 profile，再把结果
+显式传给 `write_config`。lark-cli 的 profile 由全局 `lark-cli profile use` 切换，
+且 CLI 明确要求 AI agents 不得自行切换或删除 profile；插件只通过只读的
+`lark-cli profile list` 读取活动 profile 并与配置比对，不调用 `profile use` /
+`profile remove`。不一致时 `health` 返回 warning（`LARK_PROFILE_MISMATCH`，
+结构化差异），处置是运行 `$setup` 重新解析活动 profile 并更新本地配置值；插件
+不得把任何 profile 切换命令转交给用户。
 
 **默认知识库（2026-10-21）。** 插件自带默认知识库配置，默认值唯一来源是
 `server/src/setup_defaults.ts` 的 `SETUP_DEFAULTS`：
 
-- `lark.profile` = `"cli_aa20f40faa785d11"`（取本机 lark-cli 活动 profile，
-  2026-10-21 核对；更换机器或账号时需相应调整，插件不自动切换）；
 - `lark.space_a` = `"7695983197091302359"`（原始库空间）；
 - `lark.base_b` = `"WRrVblDbqaEFOSs39P0cFzilnfd"`（AI 库的 Base obj_token；
   完整值只出现在源码与配置文件里，运行期输出仍按掩码规则处理）；
@@ -653,14 +699,19 @@ profile 并与配置比对，不调用 `profile use` / `profile remove`。不一
 默认知识库可替换：在 `~/.codex-script2shot/config.toml` 中改对应字段，或在 setup
 时提供新值；setup Skill 与 `write_config` 都引用 `SETUP_DEFAULTS`，不重复硬编码。
 
-`write_config` 的缺省填充语义：`lark.profile`、`lark.space_a`、`lark.base_b`、
-`lark.project_roots`、`retrieval.default_top_k` 为 `undefined` 时套用上述默认值；
-显式提供（包括显式空数组）的值优先。填充后仍校验 `lark.space_a` 与
-`lark.base_b` 非空，返回值通过 `applied_defaults[]` 列出本次实际套用的默认
-键路径。`config` 必须提供且为普通对象；`lark`、`retrieval` 容器出现时也必须是
-普通对象（fail-closed），否则返回 `CONFIG_INVALID` 并在 `details.field` 指明字段。
-`dry_run` 与 `create_local_dirs` 只接受布尔值，字符串或数字均按 `CONFIG_INVALID`
-拒绝；所有字符串字段在写入前 trim。`project_roots` 同样按 trim 后的值校验与保存。
+`write_config` 的缺省填充语义（**显式 > 既有 > 默认**）：显式传入的值（包括
+显式空数组）优先；未显式传入且 `preserve_existing`（缺省 `true`）为真时，磁盘
+配置里该字段的非空值被保留；仍然缺省时套用上述 `SETUP_DEFAULTS`。返回值用
+`applied_defaults[]` 列出本次实际套用默认值的键路径，用 `preserved_existing[]`
+列出被保留的既有键路径。`lark.profile` **没有默认值**：未显式传入且磁盘也没有
+时返回 `CONFIG_INVALID`，`details.missing_keys` 含 `lark.profile`。显式传
+`preserve_existing: false` 时忽略磁盘值、按纯默认语义覆盖（用于显式重写）；磁盘
+配置 TOML 损坏时返回 `CONFIG_INVALID`，不静默丢弃。填充后仍校验 `lark.space_a`
+与 `lark.base_b` 非空。`config` 必须提供且为普通对象；`lark`、`retrieval` 容器
+出现时也必须是普通对象（fail-closed），否则返回 `CONFIG_INVALID` 并在
+`details.field` 指明字段。`dry_run`、`create_local_dirs` 与 `preserve_existing`
+只接受布尔值，字符串或数字均按 `CONFIG_INVALID` 拒绝；所有字符串字段在写入前
+trim。`project_roots` 同样按 trim 后的值校验与保存。
 
 `lark.project_roots` 非法时按 `CONFIG_INVALID` 处理：字段缺省视为 `[]` 且不产生
 warning；条目非表，或 `node_token` / `project_id` 非字符串或为空时，在 `details.field`
@@ -714,13 +765,14 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 
 | Tool | 作用 |
 | --- | --- |
-| `health` | 检查 lark-cli、登录状态、知识库配置和本地索引 |
-| `write_config` | dry-run 预览并写入本地配置、初始化本地目录 |
+| `health` | 检查 lark-cli、登录状态、知识库配置和本地索引；可选 `pending_config` 替代磁盘配置（只读，不受 dry-run 限制） |
+| `read_config` | 只读返回配置是否存在、路径与掩码后的配置快照（`base_b` 只保留前 6 位加 `…`）；供 setup 的「保留既有配置」决策与预览使用，不写任何文件 |
+| `write_config` | dry-run 预览并写入本地配置、初始化本地目录；`preserve_existing`（缺省 `true`）决定是否保留既有非空字段 |
 | `scan_knowledge_a` | 只扫描原始库的节点元数据，不读取文档正文 |
 | `fetch_knowledge_a_doc` | 只读取一个指定文档的正文和 revision；可选展开正文里的飞书文档引用与网页链接，返回 `references[]`（§6.5） |
 | `read_sync_state` | 读取 AI 库的按文档 SyncState |
 | `build_sync_plan` | 纯函数工具：输入 `scan_knowledge_a` 的 `nodes[]` 与 `read_sync_state` 的 `records[]`，输出 `to_add` / `to_update` / `to_move` / `to_delete` / `unchanged` / `warnings` |
-| `init_knowledge_b` | 创建或校验 `KnowledgeCards` 和 `SyncState`，返回固定 table_id |
+| `init_knowledge_b` | 创建或校验 `KnowledgeCards` 和 `SyncState`，返回固定 table_id；可选 `pending_config`（仅 `dry_run: true`）替代磁盘配置 |
 | `replace_doc_cards` | 两种模式（二选一）：①替换模式接收 Skill 生成的新卡，执行顺序固定为「先记录该 `source_doc_token` 现有卡片的 `record_id` 集合 → 写入新卡（每 200 条一批）→ 只删除第 ① 步记录的旧 `record_id`」，写入失败不执行删除；②`metadata_patch` 模式只批量更新现有卡片的来源元数据（`source_path`/`source_title`/`scope`/`project_id`），不写新卡、不删卡 |
 | `update_doc_sync_state` | 只更新一个来源文档的 SyncState 记录 |
 | `delete_doc_cards` | 删除已移除文档对应的知识卡和状态 |
@@ -739,6 +791,30 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 `aggregate_knowledge_refs` 与 `write_warnings` 成功时只带 `output_path` 等字段，**不带
 `ok: true`**；只有失败才返回 `{ ok: false, error }`，调用方按 `error` / `output_path`
 是否存在分支，不要用 `ok` 的真值判断。
+
+**`pending_config` 契约（2026-10-23）。** `health` 与 `init_knowledge_b` 接受
+可选入参 `pending_config`，形状与 `write_config` 的 `config` 完全相同，并复用
+同一个 normalizer（同一份默认值、trim、必填与 `project_roots` 校验），不出现
+第二套规则。
+
+- 替代语义：提供且校验通过时，本次调用**完全不读磁盘配置**；`base_b`、
+  `cli_path`（含 `resolve_lark_cli()` 的路径解析）、`project_roots`、`retrieval`
+  一律取自 `pending_config`。磁盘配置缺失、损坏或无效都不影响本次调用。
+- 模式限制：`init_knowledge_b` 只在 `dry_run: true` 时接受；`dry_run: false`
+  携带 `pending_config` 直接返回 `CONFIG_INVALID`（`details.field` 为
+  `pending_config`），fail-closed，避免"配置没写就先建表"。`health` 是只读
+  工具，不受 dry-run 限制。
+- 必填：`pending_config` 必须显式含 `lark.profile`（profile 已无默认值）；缺失
+  时返回 `CONFIG_INVALID` 与 `details.missing_keys`。
+- 回执：两侧成功结果都带 `config_source`：`init_knowledge_b` 为
+  `"pending" | "disk"`，`health` 为 `"pending" | "disk" | "none"`。
+- schema：两个工具的 `inputSchema.properties` 都声明 `pending_config`
+  （`type: "object"`），并保持 `additionalProperties: false`。
+
+`read_config` 与 `write_config` 一起支撑"重跑不覆盖既有配置"：setup 先
+`read_config` 拿掩码快照用于预览，真正写入时只传显式替换项与本次解析出的
+`profile` / `cli_path`，其余字段由 `preserve_existing` 在服务端保留，`base_b`
+这类只回掩码的字段不经过对话。
 
 写操作默认先 dry-run。批量同步先生成整批影响清单，用户确认后执行整批；
 不逐文档反复确认。
@@ -762,12 +838,51 @@ Skill 是 Codex 读取并执行的流程说明，不是可执行 CLI。用户通
 
 负责：
 
-- 查找本机 `lark-cli`。
-- 检查登录状态。
+- 由 AI 执行确定性自举脚本（`scripts/setup_bootstrap.mjs` 的八个子命令），人类只
+  做浏览器操作与同意 / 拒绝；技能不得要求用户执行终端命令、填写路径或参数。
+- 查找或安装 `lark-cli`、编排设备登录、解析活动 profile。
 - 配置原始库和 AI 库。
 - 创建或校验 `KnowledgeCards` 和 `SyncState`，保存固定 `table_id`。
 - 初始化本地目录。
-- 提示用户可在需要时运行 `$knowledge-sync` 完成首次同步与本地索引构建，不在 setup 内自动执行。
+- 提示用户可在需要时运行 `$knowledge-sync` 完成首次同步与本地索引构建，不在 setup
+  内自动执行。
+
+**执行顺序（2026-10-23）。** `doctor` → `ensure-runtime` → `build-server` →
+`install-cli` → `ensure-app` → `auth-login`（人类只做浏览器操作）→ `profile` →
+组装配置 → `call-tool read_config` 读既有配置 → `call-tool health(pending_config)`
+只读可达性预检 → `write_config` / `init_knowledge_b` 的 dry-run 预览 → **一次写入
+确认** → 执行 → `health` 复查。配置写入与建表都经 `call-tool` 完成，因此本会话
+MCP 连接未建立时 setup 也能走完；构建完成后新开会话即可正常使用其余技能。
+
+**人类动作与验收口径。** 人类动作只有三类：浏览器操作（应用创建、设备授权，常规
+路径 1–2 次）、写入确认（常规路径 1 次）、授权决策（提权申请、允许系统级 npm
+安装、`--force-init` 同意；仅异常路径，按需各 1 次）。常规路径（本机已有应用、
+网络与提权可用、默认知识库可达）下只出现前两类；授权决策只在结构化错误码触发时
+出现，由 AI 发起并附一句话影响说明（改什么、风险是什么、不做的后果），由用户在
+对话里回答，而不是被要求去执行命令。另有一类**可选**的人类输入：默认知识库不可达
+且用户主动要求替换时，用户可粘贴 Wiki / Base 链接（只粘贴链接，不填 token、不填
+路径），由 AI 用 lark-cli 解析并回显确认。
+
+**既有配置优先。** 重跑 setup 时按 **用户显式替换 > 既有非空值（保留）>
+`SETUP_DEFAULTS`（默认）** 决定每个字段，由 `write_config` 的 `preserve_existing`
+在服务端落地：AI 只传显式替换项与解析出的 `profile` / `cli_path`，两个
+`table_id`、`base_b`、`space_a`、`project_roots`、`retrieval.default_top_k` 由工具
+保留，掩码字段不经过对话。预览必须同时展示 `preserved_existing[]` 与
+`applied_defaults[]`。
+
+**默认知识库不可达。** 写入前的只读预检 `health(pending_config)` 先检查可达性；
+报 `KB_A_UNREACHABLE` / `KB_B_UNREACHABLE` 时**不进入写入确认**，走两条合法路径
+之一：权限类（应用未被加入该空间 / Base）停止，用一句话说明"需要管理员把本机自建
+应用加入该资源"以及所需 scope，等用户处理后重跑；用户主动要求替换时，允许用户
+粘贴 Wiki / Base 链接，由 AI 用 lark-cli 解析成 id 并回显确认（token 只显示前 6 位
+加 `…`），然后重新走预览 + 确认。
+
+**禁止项。** 不把命令、路径、参数交给用户代跑；不复述 token；不调用 `profile use` /
+`profile remove`；技能消费 `health` 的 `detail.code`，不得把工具返回里的命令式文案
+转述给用户。`build-server` 需要写插件目录，沙箱内被拒时按 `NEEDS_ESCALATION` 处理
+（申请提权后重跑），不得改成让用户在终端里构建。`health` 报 profile 不一致时，AI
+重新解析活动 profile 并用 `write_config` 更新本地配置值（预览 + 确认），把差异
+消掉。
 
 ### 9.2 knowledge-sync
 
@@ -1215,8 +1330,16 @@ Base 权限，而不是依赖 `project_id` 过滤承担访问控制。
 
 | 场景 | 处理方式 |
 | --- | --- |
-| 找不到 lark-cli | 提示用户安装或配置路径 |
-| 未登录飞书 | 引导用户执行 `lark-cli auth login` |
+| 找不到 lark-cli | AI 运行 `$setup` 的 `install-cli`（私有 prefix 优先），不把安装命令转交给用户 |
+| 未登录飞书 | AI 运行 `$setup` 的 `auth-login` 发起设备码登录，人类只在浏览器里完成授权；退出码与顶层字段都不作为判据 |
+| 自举脚本：Node 缺失 / 下载失败 / 校验不符（`NODE_UNAVAILABLE` / `NODE_DOWNLOAD_FAILED` / `NODE_CHECKSUM_MISMATCH`） | `ensure-runtime` 先复用系统 `node` + `npm`；补装失败时中止且不落地半成品，校验不符不得解压 |
+| 自举脚本：平台 / 架构不受支持（`NPM_UNAVAILABLE`） | 说明当前平台无法自动补装运行时，停止并等用户处理；不降级为把命令交给用户执行 |
+| 自举脚本：需要提权或网络被阻断（`NEEDS_ESCALATION` / `NETWORK_BLOCKED`） | AI 说明影响并申请提权（或列出需放行的域名），等用户允许后重跑；宿主完全不允许提权时是终态，不得降级为让用户手动执行 |
+| 自举脚本：插件目录只读 / npm 源失败 / 构建器被拦截（`PLUGIN_DIR_READONLY` / `NPM_SOURCE_FAILED` / `NPM_INSTALL_FAILED` / `BUILD_TOOL_BLOCKED`） | 分别按目录权限、源可达性、安装脚本策略处理；`BUILD_TOOL_BLOCKED` 不得用 `--ignore-scripts` 之类静默绕过后再宣称成功 |
+| 自举脚本：lark-cli 下载失败 / 校验不符 / 版本过旧（`CLI_DOWNLOAD_FAILED` / `CLI_CHECKSUM_MISMATCH` / `CLI_VERSION_TOO_OLD`） | 复用门槛是 1.0.98、安装版本固定 1.0.98；下载与解压都必须先通过官方校验文件，失败不返回成功 |
+| 自举脚本：应用未配置 / 注册待人类 / 注册失败（`APP_NOT_CONFIGURED` / `APP_REGISTRATION_PENDING` / `APP_REGISTRATION_FAILED`） | 有 `appId` 即复用（只解析 `config show` 的 stdout，`appSecret` 一律丢弃）；需要新建时由人类在浏览器完成，取得明确同意后才用 `--force-init` |
+| 自举脚本：登录待人类 / 登录失败 / profile 不唯一（`AUTH_LOGIN_PENDING` / `AUTH_LOGIN_FAILED` / `PROFILE_AMBIGUOUS`） | 等用户完成浏览器授权后用 `identities.user.status == "ready" && available == true` 复核；profile 不唯一时停止并说明冲突，不自动切换 profile |
+| 自举脚本：构建失败 / 握手失败 / 工具调用失败 / 用法错误（`SERVER_BUILD_FAILED` / `SERVER_HANDSHAKE_FAILED` / `TOOL_CALL_FAILED` / `USAGE_ERROR`） | 构建产物不可用或 `tools/list` 为空时不得宣称成功；`call-tool` 按工具原始 JSON 错误原样透出，不得丢弃 `ok: false` |
 | AI 库不存在 SyncState | 提示先运行 `knowledge-sync` |
 | AI 库不可达 | 有本地缓存时继续运行并写 warning；无缓存时停止 |
 | SyncState 全表为空但本地有文档 | 删除行为不变；产生删除前写 `SYNC_STATE_EMPTY` warning，提示可能是 SyncState 表为空或 `lark.sync_state_table_id` 指向空表 |
