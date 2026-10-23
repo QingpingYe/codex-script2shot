@@ -1368,7 +1368,29 @@ function auth_login_failed(cli_path, identity, hint) {
 }
 
 async function check_identity(deps, cli_path, env) {
-  const result = await run_lark_cli(deps, cli_path, ["auth", "status", "--json"], env, 60000);
+  const plain = await read_identity(deps, cli_path, env, false);
+  if (plain.ready) {
+    return plain;
+  }
+  // lark-cli 1.0.98 会把"访问令牌已过期但可自动刷新"的会话报成
+  // needs_refresh + available=true；用 --verify 触发一次真实刷新后再判定，
+  // 避免把可用会话误判成需要重新授权。
+  if (
+    plain.user_status !== undefined &&
+    plain.user_status !== "missing" &&
+    plain.user_available === true
+  ) {
+    return await read_identity(deps, cli_path, env, true);
+  }
+  return plain;
+}
+
+async function read_identity(deps, cli_path, env, verify) {
+  const args = ["auth", "status", "--json"];
+  if (verify) {
+    args.push("--verify");
+  }
+  const result = await run_lark_cli(deps, cli_path, args, env, 60000);
   const payload = parse_json_object(result.stdout);
   const identities =
     payload !== undefined && is_plain_object(payload.identities) ? payload.identities : undefined;
@@ -1378,10 +1400,15 @@ async function check_identity(deps, cli_path, env) {
     user !== undefined && typeof user.status === "string" ? user.status.trim() : undefined;
   const user_available =
     user !== undefined && typeof user.available === "boolean" ? user.available : undefined;
+  const user_verified =
+    user !== undefined && typeof user.verified === "boolean" ? user.verified : undefined;
   return {
-    ready: user_status === "ready" && user_available === true,
+    ready:
+      (user_status === "ready" && user_available === true) ||
+      (user_available === true && user_verified === true),
     user_status,
     user_available,
+    user_verified,
   };
 }
 

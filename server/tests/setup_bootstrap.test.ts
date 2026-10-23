@@ -77,7 +77,7 @@ interface FakeBehavior {
   run?: (
     command: string,
     args: string[],
-    options?: Record<string, unknown>,
+    options?: { env?: NodeJS.ProcessEnv; cwd?: string; [key: string]: unknown },
   ) => RunResult | Promise<RunResult>;
   fetch_json?: (url: string) => unknown | Promise<unknown>;
   fetch_bytes?: (url: string) => Uint8Array | Promise<Uint8Array>;
@@ -134,7 +134,10 @@ function fake_deps(behavior: FakeBehavior = {}): { deps: FakeDeps; calls: FakeCa
     },
     extract: async (archivePath, format, destination) => {
       calls.extract.push([archivePath, format, destination]);
-      return await (behavior.extract?.(archivePath, format, destination) ?? { ok: true });
+      return (await (behavior.extract?.(archivePath, format, destination) ?? { ok: true })) as Record<
+        string,
+        unknown
+      >;
     },
     can_write: (target) => behavior.can_write?.(target) ?? existsSync(target),
     mcp_session: async (call) => {
@@ -871,6 +874,45 @@ describe("setup_bootstrap", () => {
 
     expect(result.ok).toBe(true);
     expect(result.status).toBe("ready");
+  });
+
+  test("auth-login treats a verified needs_refresh identity as ready", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps, calls } = fake_deps({
+      run: async (_command, args) => {
+        const line = args.join(" ");
+        if (line.startsWith("auth status")) {
+          const verified = line.includes("--verify");
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              identities: {
+                user: {
+                  status: "needs_refresh",
+                  available: true,
+                  ...(verified ? { verified: true } : {}),
+                },
+              },
+            }),
+            stderr: "",
+          };
+        }
+        return { code: 1, stdout: "", stderr: "" };
+      },
+    });
+    const { auth_login } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await auth_login({ home_dir: home, env: {}, deps, cli_path: "lark-cli" });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ready");
+    const status_calls = calls.run.filter((entry) => entry.join(" ").includes("auth status"));
+    expect(status_calls).toHaveLength(2);
+    expect(status_calls[1].join(" ")).toContain("--verify");
+    expect(
+      calls.run.some((entry) => entry.join(" ").includes("auth login")),
+      "可用会话不得重新发起设备授权",
+    ).toBe(false);
   });
 
   test("auth-login fails when the user identity is missing", async () => {
