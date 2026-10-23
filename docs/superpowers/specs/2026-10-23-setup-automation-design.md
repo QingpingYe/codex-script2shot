@@ -1,7 +1,7 @@
 # setup 自动化设计：AI 执行、人类只做授权与确认
 
 日期：2026-10-23（Asia/Shanghai）
-状态：待评审
+状态：已实施（2026-10-23）
 范围：`setup` 首次初始化链路（`skills/setup` + `scripts/` + MCP `health` /
 `write_config` / `init_knowledge_b` + `docs/architecture.md` §7、§8、§9.1、§13）
 

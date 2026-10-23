@@ -339,3 +339,74 @@ warning 原文通过 `update_run_state` 记进 `run.json`。
 - **项目知识只覆盖 `wufu-linmen`**：演练剧本仍是该项目下的原创片段。
 - **未验证**：多集输入在真实会话里的 warning 提醒（离线端到端用例覆盖）、
   `RUN_STATE_RECONCILED` 修正（本轮三次 `read_run` 均未触发）。
+
+---
+
+# setup 自动化回归与 live smoke（2026-10-23）
+
+- 分支：`codex/setup-automation`（实施计划
+  `docs/superpowers/plans/2026-10-23-setup-automation.md`，Task 14）
+- 环境：Windows / Node `v26.8.2` / npm `11.19.1` / lark-cli `1.0.98`
+  （`D:\lark-cli\lark-cli.exe`）
+- 机器状态：已存在自建应用与知识库配置，本次只走"复用"路径；未做应用创建与设备
+  授权
+
+## 1. 回归命令与结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `npm --prefix server test` | 34 个测试文件全过，447 passed / 1 skipped（含 pretest 的 esbuild 构建） |
+| `npm --prefix server run typecheck` | `tsc --noEmit` 无输出，退出码 0 |
+
+说明：pretest 的 esbuild 构建在本会话沙箱内被拒（与复盘 §4.7 同类环境问题），
+改在沙箱外执行；构建步骤已验证通过，未出现"构建步骤未验证"的情况。
+
+## 2. live smoke 读数（一次连续 run）
+
+| # | 步骤 | 读数 |
+| --- | --- | --- |
+| 1 | `doctor` | 9 项 check；`plugin_dir`/`node`/`npm`/`network`/`home`/`config`/`dist` pass，`index` warn（`INDEX_NOT_BUILT`），`lark_cli` warn（本机 lark-cli 不在 PATH 或私有 prefix；用 `LARK_CLI_PATH` 指定后 pass）；`capabilities` 四项全 true |
+| 2 | `ensure-runtime` | `source: "system"`，`version: "26.8.2"`，未发起任何下载 |
+| 3 | 删除 `server/dist` 后 `doctor` | `dist` 变 warn（`DIST_MISSING`），其余不变 |
+| 4 | `build-server` | `ok: true`，`dist_path` 指向重建后的 `server\dist\server.mjs`，`tools_count: 22`（真实 `npm ci` + `npm run build` + `initialize`/`tools/list` 握手） |
+| 5 | `install-cli` | `source: "reuse"`，`version: "1.0.98"`，`cli_path` 为既有 lark-cli |
+| 6 | `ensure-app` | `status: "reused"`，只回 `app_id`（输出与日志不含 `appSecret`） |
+| 7 | `auth-login` | 真实会话的访问令牌已过期、lark-cli 报 `needs_refresh + available`；脚本用 `--verify` 复核后 `status: "ready"`（见 §3） |
+| 8 | `profile` | 唯一 active profile（与配置一致） |
+| 9 | `call-tool read_config` | `exists: true`；`base_b_prefix: "WRrVbl…"`，`cli_path`/`profile`/`space_a`/两个 `table_id`/`project_roots`/`retrieval` 原样返回 |
+| 10 | `call-tool health`（磁盘配置） | `ok: true`；8 pass + `index` warn（`INDEX_NOT_BUILT`，首次同步前属预期） |
+| 11 | `write_config` dry-run | `diff` 为"（无变化）"；`preserved_existing` = `space_a`/`base_b`/两个 `table_id`/`project_roots`/`retrieval.default_top_k`；`applied_defaults` 为空 |
+| 12 | `write_config` 执行 | `written: true`；配置文件 SHA-256 前后一致（`E2468AD7…F3D1`），重跑不覆盖既有自定义配置 |
+| 13 | `init_knowledge_b` dry-run 与执行 | `action: "validated"`，两张表 id 与配置一致，`drift: []` |
+| 14 | `call-tool health` 复查 | 与第 10 步一致（`ok: true`，仅 `index` warn） |
+
+**人类动作计数：** 浏览器操作 0 次（本机已有应用与可用会话）、写入确认 1 次
+（本次由任务指令预先授权，写入为幂等重写）、授权决策 0 次；全程没有出现让用户
+执行命令的要求，所有命令由 AI 执行（沙箱内被拒的写/出网动作改为申请提权后重跑）。
+
+## 3. live smoke 发现并修复的问题
+
+- `auth-login` 把"可自动刷新的会话"误判为需要重新授权：lark-cli 1.0.98 在访问令牌
+  过期但 `available: true` 时返回 `identities.user.status = "needs_refresh"`，
+  只看 `status == "ready"` 会给出新的设备授权链接。修复为：先用
+  `auth status --json` 复核，未 ready 且 `available: true` 时再用
+  `auth status --json --verify` 触发一次真实刷新，`verified: true && available: true`
+  视为 ready；新增 TDD 用例 `auth-login treats a verified needs_refresh identity as
+  ready`（提交 `fa3f27b`）。
+- `server/tests/setup_bootstrap.test.ts` 直接 import `.mjs` 在 `strict` 下报
+  TS7016：补 `scripts/setup_bootstrap.d.mts` 声明脚本的公开契约后 typecheck 全绿。
+
+## 4. 未验证项（照实保留）
+
+- Node 官方分发的具体版本号与 `SHASUMS256.txt` 校验值：本轮网络受限未取回，
+  `ensure-runtime` 按解析规则在运行期确定并回显；本机因系统 Node 满足要求，私有
+  运行时的下载 / 校验 / 解压路径只由 fake 网络用例覆盖（设计 §11 仍标"待复核"）。
+- npm 新版拦截安装脚本对 `@larksuite/cli` 与 `esbuild` 的实际影响：本机未复现
+  （npm 11.19.1 + 网络可用时 `npm ci` 正常）；`BUILD_TOOL_BLOCKED` 分类目前只有
+  fake stderr 用例覆盖，需在真实拦截环境下补一次 live 验证。
+- 真实飞书初始化（应用创建 + 设备授权 + AI 库建表）：本机已处于已配置状态，本次
+  smoke 只覆盖"复用"路径；应用创建、`--force-init` 逃生口与设备授权的人工浏览器
+  环节仍未演练。
+- 私有 prefix 安装与四级回退（npm 安装、包内安装器、官方归档、`--allow-global`）
+  未在真实网络下演练，仅有 fake 用例覆盖。
+- `call-tool --input` 的私有临时文件兜底路径未在真实 run 里演练（本次走 stdin）。
