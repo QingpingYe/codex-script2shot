@@ -7,6 +7,7 @@ set "SCRIPT2SHOT_SERVER=%~dp0..\server\dist\server.mjs"
 if not exist "%SCRIPT2SHOT_SERVER%" (
   echo script2shot MCP Server 尚未构建：找不到 "%SCRIPT2SHOT_SERVER%" 1>&2
   echo 请先运行：npm --prefix server run build 1>&2
+  echo 也可由 scripts/setup_bootstrap build-server 自动完成（安装依赖 + 构建 + 握手自检） 1>&2
   exit /b 1
 )
 

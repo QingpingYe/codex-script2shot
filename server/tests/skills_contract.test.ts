@@ -57,6 +57,54 @@ describe("skills contract", () => {
   );
 });
 
+/**
+ * setup 技能契约（架构 §9.1）：技能只做编排与翻译，确定性步骤交给
+ * `scripts/setup_bootstrap.mjs`；不得把命令转交给用户。
+ */
+describe("setup skill content contract", () => {
+  const setupSkillPath = path.join(skillsRoot, "setup", "SKILL.md");
+  const SETUP_SUBCOMMANDS = [
+    "setup_bootstrap",
+    "doctor",
+    "ensure-runtime",
+    "install-cli",
+    "build-server",
+    "ensure-app",
+    "auth-login",
+    "profile",
+    "call-tool",
+  ];
+
+  test("setup skill references every bootstrap subcommand", () => {
+    const markdown = readFileSync(setupSkillPath, "utf8");
+
+    for (const name of SETUP_SUBCOMMANDS) {
+      expect(markdown, `setup SKILL.md 应引用 ${name}`).toContain(name);
+    }
+  });
+
+  test("setup skill states the three human action classes", () => {
+    const markdown = readFileSync(setupSkillPath, "utf8");
+
+    expect(markdown).toContain("浏览器");
+    expect(markdown).toContain("写入确认");
+    expect(markdown).toContain("授权");
+  });
+
+  test("setup skill documents the write_config input shape", () => {
+    const markdown = readFileSync(setupSkillPath, "utf8");
+
+    expect(markdown).toContain("{ config: { lark, retrieval }");
+  });
+
+  test("setup skill never hands terminal commands to the user", () => {
+    const markdown = readFileSync(setupSkillPath, "utf8");
+
+    expect(markdown).not.toMatch(/请用户运行|请你在终端|自己去终端/);
+    expect(markdown, "不得出现 profile 切换命令").not.toMatch(/profile use/);
+  });
+});
+
 describe("shot-prompting skill content contract", () => {
   // B4：事件脚本化与长镜头阶段化是 shot-prompting 的写作规则。阶段化阈值只以规则
   // 文件字段名引用，具体数值留在 rules/models/<model>.json 的 prompt_guidance 里，
