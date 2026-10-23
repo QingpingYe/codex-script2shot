@@ -410,3 +410,24 @@ warning 原文通过 `update_run_state` 记进 `run.json`。
 - 私有 prefix 安装与四级回退（npm 安装、包内安装器、官方归档、`--allow-global`）
   未在真实网络下演练，仅有 fake 用例覆盖。
 - `call-tool --input` 的私有临时文件兜底路径未在真实 run 里演练（本次走 stdin）。
+
+## 5. 整分支 review 后的修复（同一分支，提交见下）
+
+- `call-tool` 空管道挂死：宿主用"开着、暂无数据"的 stdin 启动 `call-tool read_config`
+  时会一直等数据。现在给首字节（750 ms）与后续间隙（2 s）各留一个窗口，超时按空入参
+  处理；新增真实子进程用例 `call-tool does not hang when stdin is an open pipe with
+  no data`。
+- `AUTH_LOGIN_PENDING` 从未返回：设备码续跑后仍未 ready 时会误报
+  `AUTH_LOGIN_FAILED`（退出码 1），与设计 §5.2 的中间态语义冲突，且可能诱导重新
+  发起设备码。现在身份不是 `missing` 时返回 `AUTH_LOGIN_PENDING`（退出码 2）；新增
+  两个用例覆盖该分支与退出码映射。
+- `write_config` 的 `inputSchema` 漏了 `preserve_existing`：补上布尔属性，并在
+  `skills_contract` 里断言三个 setup 工具公布 `preserve_existing` /
+  `pending_config`。
+- `health` 的登录失败文案仍带 `lark-cli auth login` 命令：改为 `AUTH_REQUIRED` +
+  运行 `$setup`，并更新断言，避免工具层把命令转交给用户。
+- `KB_A_UNREACHABLE` / `KB_B_UNREACHABLE` 的 `detail` 现在都带两条合法路径
+  （权限类 / 用户主动替换）的 `next_steps`，与技能契约对齐。
+
+修复后的回归：`npm --prefix server test` 34 个文件全过（452 passed / 1 skipped），
+`npm --prefix server run typecheck` 无输出。

@@ -181,7 +181,7 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
       push_check(checks, warnings, {
         id: "auth",
         status: "fail",
-        message: `lark-cli 登录状态检查失败，请运行 lark-cli auth login 后重试。`,
+        message: `lark-cli 登录状态检查失败（AUTH_REQUIRED）；运行 $setup 可重新编排设备登录。`,
         detail: { code: auth.error.code, reason: auth.error.message },
       });
     }
@@ -306,6 +306,10 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
           code: "KB_A_UNREACHABLE",
           space_id: space_a,
           exit_code,
+          next_steps: [
+            "权限类：请管理员把本机自建应用加入该空间并授予所需 scope，然后重跑 health。",
+            "用户主动要求替换：用户可粘贴 Wiki 链接，由 AI 用 lark-cli 解析成 id 并回显确认后重走预览 + 确认。",
+          ],
         },
       });
     }
@@ -334,6 +338,10 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
           code: "KB_B_UNREACHABLE",
           base_token_prefix,
           exit_code,
+          next_steps: [
+            "权限类：请管理员把本机自建应用加入该 Base 并授予所需 scope，然后重跑 health。",
+            "用户主动要求替换：用户可粘贴 Base 链接，由 AI 用 lark-cli 解析成 token 并回显确认（只显示前 6 位加 …）后重走预览 + 确认。",
+          ],
         },
       });
     } else {

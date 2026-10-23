@@ -115,6 +115,12 @@ const TOOLS = [
           type: "boolean",
           description: "缺省 true：只返回 diff 与将要创建的目录，不写任何文件、不建目录。",
         },
+        preserve_existing: {
+          type: "boolean",
+          description:
+            "缺省 true：保留磁盘上既有的非空字段；false 时按纯默认语义覆盖（用于显式重写）。" +
+            "回执用 preserved_existing[] 与 applied_defaults[] 分别列出保留项与默认项。",
+        },
       },
       required: ["config"],
       additionalProperties: false,

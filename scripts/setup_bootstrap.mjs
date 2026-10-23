@@ -1278,6 +1278,9 @@ function redact_secrets(text) {
 }
 
 export const AUTH_DOMAINS = "wiki,base,docs,drive";
+/** stdin 首字节等待窗口：超过即视为"本次不需要入参"，避免空管道挂死。 */
+export const STDIN_FIRST_BYTE_TIMEOUT_MS = 750;
+const STDIN_IDLE_TIMEOUT_MS = 2000;
 
 /**
  * `auth-login`：默认发起设备码登录（`--no-wait --json`），`--device-code` 续跑；
@@ -1312,7 +1315,10 @@ export async function auth_login(options = {}) {
     if (identity.ready) {
       return { ok: true, status: "ready" };
     }
-    return auth_login_failed(cli_path, identity, "浏览器授权尚未完成。");
+    if (identity.user_status === undefined || identity.user_status === "missing") {
+      return auth_login_failed(cli_path, identity, "浏览器授权尚未完成或身份缺失。");
+    }
+    return auth_login_pending(cli_path, identity, "设备授权还没在浏览器里完成。");
   }
 
   // 已登录即跳过：同一台机器重复跑 setup 不应重新发起授权。
@@ -1349,7 +1355,28 @@ export async function auth_login(options = {}) {
   if (recheck.ready) {
     return { ok: true, status: "ready" };
   }
-  return auth_login_failed(cli_path, recheck, "未取到设备授权链接。");
+  if (recheck.user_status === undefined || recheck.user_status === "missing") {
+    return auth_login_failed(cli_path, recheck, "未取到设备授权链接。");
+  }
+  return auth_login_pending(cli_path, recheck, "已发出设备授权，等待用户在浏览器完成。");
+}
+
+/** 中间态：设备授权已发起但尚未完成，用退出码 2 告知调用方"等人"。 */
+function auth_login_pending(cli_path, identity, hint) {
+  return failure(
+    "AUTH_LOGIN_PENDING",
+    `登录仍在等待浏览器授权：identities.user.status=${identity.user_status ?? "unknown"}。${hint}`,
+    {
+      details: {
+        cli_path,
+        user_status: identity.user_status,
+        user_available: identity.user_available,
+      },
+      next_actions: [
+        "等用户完成浏览器授权后，用同一个设备码（auth-login --device-code <code>）续跑；不要重新发起新的设备码。",
+      ],
+    },
+  );
 }
 
 function auth_login_failed(cli_path, identity, hint) {
@@ -1639,12 +1666,35 @@ async function read_process_stdin() {
   if (process.stdin.isTTY) {
     return "";
   }
-  let text = "";
-  process.stdin.setEncoding("utf8");
-  for await (const chunk of process.stdin) {
-    text += chunk;
-  }
-  return text;
+  // 宿主可能用"一直开着、暂无数据"的管道启动本脚本（`call-tool read_config` 就是
+  // 典型场景）：这里给首字节和后续间隙各留一个窗口，超时即按空入参处理，避免挂死。
+  return await new Promise((resolve) => {
+    let text = "";
+    let settled = false;
+    let idle;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(idle);
+      process.stdin.off("data", on_data);
+      process.stdin.off("end", finish);
+      process.stdin.off("error", finish);
+      process.stdin.pause();
+      resolve(text);
+    };
+    const on_data = (chunk) => {
+      text += chunk;
+      clearTimeout(idle);
+      idle = setTimeout(finish, STDIN_IDLE_TIMEOUT_MS);
+    };
+    idle = setTimeout(finish, STDIN_FIRST_BYTE_TIMEOUT_MS);
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", on_data);
+    process.stdin.once("end", finish);
+    process.stdin.once("error", finish);
+  });
 }
 
 /**

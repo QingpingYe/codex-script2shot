@@ -915,6 +915,68 @@ describe("setup_bootstrap", () => {
     ).toBe(false);
   });
 
+  test("auth-login reports AUTH_LOGIN_PENDING while the device flow is unfinished", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps } = fake_deps({
+      run: async (_command, args) => {
+        const line = args.join(" ");
+        if (line.startsWith("auth status")) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              identities: { user: { status: "pending", available: false } },
+            }),
+            stderr: "",
+          };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    const { auth_login } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await auth_login({
+      home_dir: home,
+      env: {},
+      deps,
+      cli_path: "lark-cli",
+      device_code: "device-1",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("AUTH_LOGIN_PENDING");
+  });
+
+  test("run_cli maps AUTH_LOGIN_PENDING to exit code 2", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps } = fake_deps({
+      run: async (_command, args) => {
+        const line = args.join(" ");
+        if (line.startsWith("auth status")) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              identities: { user: { status: "pending", available: false } },
+            }),
+            stderr: "",
+          };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    const { run_cli } = await import("../../scripts/setup_bootstrap.mjs");
+    const { io } = collect_io();
+
+    const code = await run_cli(["auth-login", "--device-code", "device-1"], {
+      home_dir: home,
+      env: {},
+      deps,
+      io,
+      cli_path: "lark-cli",
+    });
+
+    expect(code).toBe(2);
+  });
+
   test("auth-login fails when the user identity is missing", async () => {
     const home = path.join(tempRoot, "home");
     const { deps } = fake_deps({
@@ -1181,6 +1243,37 @@ describe("setup_bootstrap", () => {
     expect(code).toBe(0);
     expect(JSON.parse(stdout.join(""))).toMatchObject({ exists: false });
   });
+
+  test(
+    "call-tool does not hang when stdin is an open pipe with no data",
+    async () => {
+      const home = path.join(tempRoot, "home");
+      mkdirSync(home, { recursive: true });
+      const child = spawn(process.execPath, [scriptPath, "call-tool", "read_config"], {
+        cwd: repoRoot,
+        env: { ...process.env, SCRIPT2SHOT_HOME: home },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const stdout: Buffer[] = [];
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+
+      const code = await new Promise<number | null>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          child.kill();
+          reject(new Error("call-tool hung on an open empty stdin pipe"));
+        }, 10000);
+        child.on("close", (exit) => {
+          clearTimeout(timer);
+          resolve(exit);
+        });
+      });
+      child.stdin.destroy();
+
+      expect(code).toBe(0);
+      expect(JSON.parse(Buffer.concat(stdout).toString("utf8"))).toMatchObject({ exists: false });
+    },
+    30000,
+  );
 });
 
 /** esbuild 平台包里的二进制路径（宿主策略拦截 postinstall 时它不会存在）。 */

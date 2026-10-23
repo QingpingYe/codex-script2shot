@@ -89,6 +89,7 @@ export const LARK_CLI_TARGET_VERSION: string;
 export const LARK_CLI_ARCHIVE_BASE: string;
 export const MCP_PROTOCOL_VERSION: string;
 export const AUTH_DOMAINS: string;
+export const STDIN_FIRST_BYTE_TIMEOUT_MS: number;
 
 export function failure(code: string, message: string, extra?: Record<string, unknown>): BootstrapResult;
 export function exit_code_for(result: unknown): number;

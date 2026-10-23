@@ -342,7 +342,11 @@ describe("health", () => {
     expect(result.ok).toBe(false);
     const auth = check(result, "auth");
     expect(auth.status).toBe("fail");
-    expect(auth.message).toContain("lark-cli auth login");
+    expect(
+      auth.message,
+      "health 不得把终端命令转交给用户",
+    ).not.toContain("lark-cli auth login");
+    expect(auth.message).toContain("$setup");
     for (const id of ["space_a_reachable", "base_b_reachable"] as const) {
       const skipped = check(result, id);
       expect(skipped.status).toBe("warn");
@@ -377,10 +381,15 @@ describe("health", () => {
     const result = await run_health("space-unreachable");
 
     expect(result.ok).toBe(false);
-    expect(check(result, "space_a_reachable")).toMatchObject({
+    const space = check(result, "space_a_reachable");
+    expect(space).toMatchObject({
       status: "fail",
       detail: { code: "KB_A_UNREACHABLE" },
     });
+    expect(
+      (space.detail as { next_steps?: unknown }).next_steps,
+      "KB_A_UNREACHABLE 必须给出两条合法路径",
+    ).toHaveLength(2);
     expect(check(result, "base_b_reachable").status).toBe("pass");
   });
 
@@ -391,10 +400,15 @@ describe("health", () => {
     const result = await run_health("base-unreachable");
 
     expect(result.ok).toBe(false);
-    expect(check(result, "base_b_reachable")).toMatchObject({
+    const base_b = check(result, "base_b_reachable");
+    expect(base_b).toMatchObject({
       status: "fail",
       detail: { code: "KB_B_UNREACHABLE" },
     });
+    expect(
+      (base_b.detail as { next_steps?: unknown }).next_steps,
+      "KB_B_UNREACHABLE 必须给出两条合法路径",
+    ).toHaveLength(2);
     expect(check(result, "space_a_reachable").status).toBe("pass");
   });
 

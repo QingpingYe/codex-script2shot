@@ -223,6 +223,35 @@ describe("knowledge-sync mcp tools contract", () => {
     }
   }, 30000);
 
+  test("tools/list advertises the setup-facing config fields", async () => {
+    const { client, errors } = await connect_server();
+    try {
+      const result = await client.listTools();
+      const toolsByName = new Map(result.tools.map((tool) => [tool.name, tool]));
+
+      const write_schema = toolsByName.get("write_config")?.inputSchema as
+        | { properties?: Record<string, unknown> }
+        | undefined;
+      expect(
+        write_schema?.properties?.preserve_existing,
+        "write_config 必须在 schema 里公布 preserve_existing",
+      ).toMatchObject({ type: "boolean" });
+
+      for (const name of ["health", "init_knowledge_b"] as const) {
+        const schema = toolsByName.get(name)?.inputSchema as
+          | { properties?: Record<string, unknown> }
+          | undefined;
+        expect(schema?.properties?.pending_config, `${name} 必须公布 pending_config`).toMatchObject({
+          type: "object",
+        });
+      }
+
+      expect(errors.join(""), "server stderr should stay empty").toBe("");
+    } finally {
+      await client.close();
+    }
+  }, 30000);
+
   test("update_run_state advertises warning details and the non-empty artifact constraint", async () => {
     const { client, errors } = await connect_server();
     try {
