@@ -267,7 +267,7 @@ I2.1 → I2.2 → I2.5 → I2.3 → I2.4 → I3.1 → I3.2。
 | I2.1 情绪 | shot-prompting | prompt_ir.schema.json | render 标签 | render_prompt.ts | 双模型 golden | architecture §11.3 |
 | I2.2 事件脚本 | shot-prompting | —（备选 beats） | 写作指导 | — | fixture 示例 | architecture §9.6 |
 | I2.3 声音 | shot-prompting | prompt_ir.schema.json | 支持开关 | render_prompt.ts、validate_prompt.ts | 双模型 golden | architecture §11.3/11.4 |
-| I2.4 负向策略 | shot-prompting | — | 可选 negative_guidance | — | — | knowledge-base-raw 提示词技巧 |
+| I2.4 负向策略 | shot-prompting | — | 可选 negative_guidance | — | — | knowledge-base-raw 通用知识/Seedance |
 | I2.5 自检清单 | shot-prompting | — | — | — | — | architecture §9.6 |
 | I3.1 写作指导 | shot-planning / shot-prompting | — | prompt_guidance | rules.ts | rules 测试 | model-rules-notes |
 | I3.2 知识卡 | knowledge-sync（执行） | — | — | — | 同步校验 | knowledge-base-raw |

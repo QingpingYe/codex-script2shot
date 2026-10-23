@@ -58,8 +58,11 @@ export interface ValidatePromptResult {
   errors: PromptValidationError[];
 }
 
-/** 镜头字段的固定顺序，与 `schemas/prompt_ir.schema.json` 的 shot 属性顺序一致。 */
-const SHOT_FIELD_ORDER = [
+/**
+ * 镜头字段的固定顺序，与 `schemas/prompt_ir.schema.json` 的 shot 属性顺序一致。
+ * 导出供测试钉住两侧顺序，schema 增删字段而这里未跟随时立刻失败。
+ */
+export const SHOT_FIELD_ORDER = [
   "shot_id",
   "target_model",
   "duration",

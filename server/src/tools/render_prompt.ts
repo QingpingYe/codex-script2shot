@@ -21,7 +21,9 @@
  * 冻结英文枚举 `shot_size` / `camera_angle` / `camera_movement` 渲染为中文标签（映射表与
  * `schemas/prompt_ir.schema.json` 描述、`schemas/shot_plan.schema.json` 的中文词表
  * 一一对应）；`time` 按 `TIME_LABELS` 做中文映射，未收录词原样透传；其余自由文本字段
- * 原样输出，渲染层不翻译、不补写内容。
+ * 原样输出，渲染层不翻译、不补写内容。所有查表都只认自有键（`Object.hasOwn`），
+ * 自由文本取值命中 `Object.prototype` 成员名（如 `constructor` / `__proto__`）时
+ * 仍走「未收录词原样透传」，不会取到继承成员。
  *
  * 空 `negative_prompt` 的裁决：不省略节，稳定输出「负面约束：{empty_negative}」
  * （当前规则文件取值为「无」），保证每个镜头都是同一套节骨架。
@@ -36,8 +38,9 @@
  * 「主体与动作」节在 `emotion` 非空时追加子标签「情绪：…」，空值沿用 `field()` 的
  * 空值省略语义不输出该子标签，也不补写情绪文本或改写动作文本。
  *
- * `audio`（Task B2）取自原文已有声音线索与检索卡片：音效条目渲染时用 `<>` 包裹，
- * 音乐非空时用 `()` 包裹；空子项省略，三项全空时整行省略，不输出「无声音」类负向暗示。
+ * `audio`（Task B2）取自原文已有声音线索与检索卡片：条目输出前去掉首尾空白（与
+ * `dialogue` 路径一致），音效条目渲染时用 `<>` 包裹，音乐非空时用 `()` 包裹；空子项
+ * 省略，三项全空时整行省略，不输出「无声音」类负向暗示。
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -382,26 +385,37 @@ function join_parts(parts: Array<string | undefined>): string {
   return parts.filter((part): part is string => part !== undefined).join("；");
 }
 
-/** 冻结枚举查表；schema 校验保证取值合法，查不到时原样透传（防御式兜底）。 */
+/**
+ * 冻结枚举查表；schema 校验保证取值合法，查不到时原样透传（防御式兜底）。
+ * 只认自有键：`Object.prototype` 上的成员名不得被当作映射值。
+ */
 function label_for(labels: Record<string, string>, value: string): string {
-  return labels[value] ?? value;
-}
-
-/** 时间词本地化：命中映射取中文，未收录词原样透传（不发明未定义的映射）。 */
-function time_label(value: string): string {
-  return TIME_LABELS[value] ?? value;
+  return Object.hasOwn(labels, value) ? labels[value] : value;
 }
 
 /**
- * 声音节渲染（Task B2）：空子项省略，`sfx` 每项用 `<>` 包裹、非空 `music` 用 `()`
- * 包裹；三项全空时返回 undefined，由渲染循环整行省略，不输出「无声音」类负向暗示。
+ * 时间词本地化：命中映射取中文，未收录词原样透传（不发明未定义的映射）。
+ * `time` 是 schema 合法自由文本，同样只认自有键。
+ */
+function time_label(value: string): string {
+  return Object.hasOwn(TIME_LABELS, value) ? TIME_LABELS[value] : value;
+}
+
+/**
+ * 声音节渲染（Task B2）：条目先去掉首尾空白（空值判定与输出用同一个值，与
+ * `dialogue` 的 language / delivery 处理一致），空子项省略，`sfx` 每项用 `<>`
+ * 包裹、非空 `music` 用 `()` 包裹；三项全空时返回 undefined，由渲染循环整行省略，
+ * 不输出「无声音」类负向暗示。
  */
 function render_audio(audio: PromptIrShot["audio"]): string | undefined {
-  const ambience = audio.ambience.filter((entry) => entry.trim() !== "");
+  const ambience = audio.ambience
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
   const sfx = audio.sfx
-    .filter((entry) => entry.trim() !== "")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "")
     .map((entry) => `<${entry}>`);
-  const music = audio.music.trim() === "" ? "" : `(${audio.music})`;
+  const music = audio.music.trim() === "" ? "" : `(${audio.music.trim()})`;
   const content = join_parts([
     ambience.length === 0 ? undefined : `环境声：${ambience.join("、")}`,
     sfx.length === 0 ? undefined : `音效：${sfx.join("、")}`,

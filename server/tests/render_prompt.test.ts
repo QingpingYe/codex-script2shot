@@ -217,6 +217,31 @@ describe("prompt rendering", () => {
     );
   });
 
+  test("render passes through time terms that collide with Object.prototype members", () => {
+    // `time` 是 schema 合法自由文本，查表必须只认自有键：原型链上的成员
+    // （constructor / toString / valueOf / __proto__）不得被当成映射值取用。
+    const mutated = JSON.parse(
+      readFileSync(path.join(promptFixturesDir, "seedance-2.5.ir.json"), "utf8"),
+    ) as { shots: Array<{ time: string }> };
+
+    for (const value of ["constructor", "toString", "valueOf", "__proto__"]) {
+      mutated.shots[0].time = value;
+      const prompt_ir_path = path.join(tempDir, `seedance-2.5.time-${value}.ir.json`);
+      writeFileSync(prompt_ir_path, JSON.stringify(mutated, null, 2), "utf8");
+      const output_path = path.join(tempDir, `prompts.seedance-2.5.time-${value}.md`);
+
+      const result = render_prompt({ prompt_ir_path, output_path });
+
+      expect(result).toEqual({ ok: true, output_path });
+      const setting_time_line = readFileSync(output_path, "utf8")
+        .split("\n")
+        .find((line) => line.startsWith("- 环境与时间："));
+      expect(setting_time_line).toBe(
+        `- 环境与时间：环境：狭窄巷道，湿润砖墙，霓虹灯反射；时间：${value}`,
+      );
+    }
+  });
+
   test("render formats dialogue with optional language and delivery", () => {
     // 固定拼接顺序：`{speaker}用{language}{delivery}说：{text}`（text 用 {} 包裹）；
     // language / delivery 缺失或纯空白串时省略对应片段，条目间用「；」连接。
@@ -324,6 +349,7 @@ describe("prompt rendering", () => {
       readFileSync(path.join(promptFixturesDir, "seedance-2.5.ir.json"), "utf8"),
     ) as {
       shots: Array<{
+        shot_id: string;
         audio: { ambience: string[]; sfx: string[]; music: string };
       }>;
     };
@@ -333,6 +359,16 @@ describe("prompt rendering", () => {
       music: "低沉弦乐",
     };
     mutated.shots[1].audio = { ambience: [], sfx: ["远处雷声"], music: "" };
+    // 第三镜：条目带首尾空白，输出前先 trim（与对白路径一致）；纯空白条目不输出。
+    mutated.shots.push({
+      ...mutated.shots[0],
+      shot_id: "ep02-sc01-sh03",
+      audio: {
+        ambience: [" 雨声 ", "   "],
+        sfx: [" 远处雷声 "],
+        music: " 低沉弦乐 ",
+      },
+    });
     const prompt_ir_path = path.join(tempDir, "seedance-2.5.audio.ir.json");
     writeFileSync(prompt_ir_path, JSON.stringify(mutated, null, 2), "utf8");
     const output_path = path.join(tempDir, "prompts.seedance-2.5.audio.md");
@@ -346,6 +382,7 @@ describe("prompt rendering", () => {
     expect(audio_lines).toEqual([
       "- 声音：环境声：雨声；音效：<远处雷声>；音乐：(低沉弦乐)",
       "- 声音：音效：<远处雷声>",
+      "- 声音：环境声：雨声；音效：<远处雷声>；音乐：(低沉弦乐)",
     ]);
   });
 

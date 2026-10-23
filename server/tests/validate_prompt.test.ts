@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { load_model_rules } from "../src/rules.js";
 import {
+  SHOT_FIELD_ORDER,
   validate_prompt,
   validate_prompt_document,
 } from "../src/tools/validate_prompt.js";
@@ -89,6 +90,20 @@ describe("prompt hard rule validation", () => {
     });
 
     expect(result).toEqual({ ok: true, errors: [] });
+  });
+
+  test("shot field order matches the prompt_ir schema property order", () => {
+    // 防漂移护栏：SHOT_FIELD_ORDER 决定镜头内错误顺序，必须与 schema 的 shot
+    // 属性顺序逐项一致（含顺序，不只是集合）。
+    const schema = JSON.parse(
+      readFileSync(path.join(repoRoot, "schemas", "prompt_ir.schema.json"), "utf8"),
+    ) as { $defs?: { shot?: { properties?: Record<string, unknown> } } };
+    const properties = schema.$defs?.shot?.properties;
+    if (properties === undefined) {
+      throw new Error("schemas/prompt_ir.schema.json 缺少 $defs.shot.properties");
+    }
+
+    expect(SHOT_FIELD_ORDER).toEqual(Object.keys(properties));
   });
 
   test("document-level validation matches path-level validation", () => {
