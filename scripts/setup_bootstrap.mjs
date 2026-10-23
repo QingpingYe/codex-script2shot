@@ -61,6 +61,8 @@ export const USAGE_COMMANDS = [
   "install-cli",
   "build-server",
   "ensure-app",
+  "auth-login",
+  "profile",
 ];
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -1268,6 +1270,190 @@ function redact_secrets(text) {
   );
 }
 
+export const AUTH_DOMAINS = "wiki,base,docs,drive";
+
+/**
+ * `auth-login`：默认发起设备码登录（`--no-wait --json`），`--device-code` 续跑；
+ * **退出码与顶层字段都不作判据**，一律用 `identities.user.status == "ready"` 且
+ * `available == true` 复核身份（架构 §5.2）。
+ */
+export async function auth_login(options = {}) {
+  const deps = resolve_deps(options.deps);
+  const env = options.env ?? process.env;
+  const home_dir = options.home_dir ?? os.homedir();
+  const cli_path = resolve_cli_path(options, env, home_dir);
+  if (cli_path === undefined) {
+    return failure("LARK_CLI_NOT_FOUND", "未找到 lark-cli，无法编排登录。", {
+      next_actions: ["先运行 install-cli 安装 lark-cli。"],
+    });
+  }
+
+  const device_code =
+    typeof options.device_code === "string" && options.device_code.trim() !== ""
+      ? options.device_code.trim()
+      : undefined;
+
+  if (device_code !== undefined) {
+    await run_lark_cli(
+      deps,
+      cli_path,
+      ["auth", "login", "--device-code", device_code, "--domain", AUTH_DOMAINS],
+      env,
+      900000,
+    );
+    const identity = await check_identity(deps, cli_path, env);
+    if (identity.ready) {
+      return { ok: true, status: "ready" };
+    }
+    return auth_login_failed(cli_path, identity, "浏览器授权尚未完成。");
+  }
+
+  // 已登录即跳过：同一台机器重复跑 setup 不应重新发起授权。
+  const initial = await check_identity(deps, cli_path, env);
+  if (initial.ready) {
+    return { ok: true, status: "ready" };
+  }
+
+  const started = await run_lark_cli(
+    deps,
+    cli_path,
+    ["auth", "login", "--no-wait", "--json", "--domain", AUTH_DOMAINS],
+    env,
+    120000,
+  );
+  const payload = parse_json_object(started.stdout) ?? {};
+  const verification_url = pick_first_string(payload, [
+    "verification_url",
+    "verificationUrl",
+    "verification_uri",
+    "verificationUri",
+  ]);
+  const user_code = pick_first_string(payload, ["user_code", "userCode"]);
+  if (verification_url !== undefined || user_code !== undefined) {
+    return {
+      ok: true,
+      status: "pending_human",
+      ...(verification_url === undefined ? {} : { verification_url }),
+      ...(user_code === undefined ? {} : { user_code }),
+    };
+  }
+
+  const recheck = await check_identity(deps, cli_path, env);
+  if (recheck.ready) {
+    return { ok: true, status: "ready" };
+  }
+  return auth_login_failed(cli_path, recheck, "未取到设备授权链接。");
+}
+
+function auth_login_failed(cli_path, identity, hint) {
+  return failure(
+    "AUTH_LOGIN_FAILED",
+    `登录未完成：identities.user.status=${identity.user_status ?? "missing"}。${hint}`,
+    {
+      details: {
+        cli_path,
+        user_status: identity.user_status,
+        user_available: identity.user_available,
+      },
+      next_actions: ["等用户在浏览器完成授权后，用 auth-login --device-code 续跑。"],
+    },
+  );
+}
+
+async function check_identity(deps, cli_path, env) {
+  const result = await run_lark_cli(deps, cli_path, ["auth", "status", "--json"], env, 60000);
+  const payload = parse_json_object(result.stdout);
+  const identities =
+    payload !== undefined && is_plain_object(payload.identities) ? payload.identities : undefined;
+  const user =
+    identities !== undefined && is_plain_object(identities.user) ? identities.user : undefined;
+  const user_status =
+    user !== undefined && typeof user.status === "string" ? user.status.trim() : undefined;
+  const user_available =
+    user !== undefined && typeof user.available === "boolean" ? user.available : undefined;
+  return {
+    ready: user_status === "ready" && user_available === true,
+    user_status,
+    user_available,
+  };
+}
+
+/**
+ * `profile`：只读 `profile list`，要求恰好一个 `active: true`；
+ * 0 个或多个都返回 `PROFILE_AMBIGUOUS`，插件不切换 profile。
+ */
+export async function resolve_profile(options = {}) {
+  const deps = resolve_deps(options.deps);
+  const env = options.env ?? process.env;
+  const home_dir = options.home_dir ?? os.homedir();
+  const cli_path = resolve_cli_path(options, env, home_dir);
+  if (cli_path === undefined) {
+    return failure("LARK_CLI_NOT_FOUND", "未找到 lark-cli，无法解析活动 profile。", {
+      next_actions: ["先运行 install-cli 安装 lark-cli。"],
+    });
+  }
+
+  const listed = await run_lark_cli(deps, cli_path, ["profile", "list"], env, 60000);
+  const profiles = parse_json_array(listed.stdout);
+  if (profiles === undefined) {
+    return failure(
+      "PROFILE_AMBIGUOUS",
+      `无法读取 lark-cli 的 profile 列表（退出码 ${listed.code}）。`,
+      { details: { cli_path, exit_code: listed.code } },
+    );
+  }
+  const active = profiles
+    .filter(is_plain_object)
+    .filter((entry) => entry.active === true)
+    .map((entry) => (typeof entry.name === "string" ? entry.name.trim() : ""))
+    .filter((name) => name !== "");
+  if (active.length !== 1) {
+    return failure("PROFILE_AMBIGUOUS", `无法确定唯一的活动 profile（找到 ${active.length} 个）。`, {
+      details: { cli_path, active_profiles: active },
+      next_actions: ["让用户确认 lark-cli 的活动 profile 后重跑；插件不会自动切换 profile。"],
+    });
+  }
+  return { ok: true, profile: active[0] };
+}
+
+function parse_json_object(text) {
+  if (typeof text !== "string" || text.trim() === "") {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return is_plain_object(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parse_json_array(text) {
+  if (typeof text !== "string" || text.trim() === "") {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function pick_first_string(payload, keys) {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function is_plain_object(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * 子命令入口：输出 JSON 到 stdout，返回进程退出码。
  * 未识别的子命令返回 USAGE_ERROR；其余子命令由后续任务（§7.1）逐个接入。
@@ -1332,6 +1518,23 @@ export async function run_cli(argv = [], options = {}) {
         create: rest.includes("--create"),
         force: rest.includes("--force"),
       });
+    }
+  } else if (command === "auth-login") {
+    const flag = take_flag(argv.slice(1), "--device-code");
+    if (flag.error !== undefined) {
+      result = flag.error;
+    } else if (flag.rest.length > 0) {
+      result = usage_error(`auth-login 不支持的位置参数：${flag.rest.join(" ")}。`, [
+        "--device-code",
+      ]);
+    } else {
+      result = await auth_login({ ...base_options, device_code: flag.value });
+    }
+  } else if (command === "profile") {
+    if (argv.length > 1) {
+      result = usage_error(`profile 不支持的位置参数：${argv.slice(1).join(" ")}。`, ["profile"]);
+    } else {
+      result = await resolve_profile(base_options);
     }
   } else if (command === undefined) {
     result = usage_error("缺少子命令。", USAGE_COMMANDS);

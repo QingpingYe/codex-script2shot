@@ -729,6 +729,187 @@ describe("setup_bootstrap", () => {
     expect(forwarded.join("")).not.toContain("SENSITIVE-APP-SECRET");
     expect(JSON.stringify(result)).not.toContain("SENSITIVE-APP-SECRET");
   });
+
+  test("auth-login starts a device flow for the wiki/base/docs/drive domains", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps, calls } = fake_deps({
+      run: async (_command, args) => {
+        const line = args.join(" ");
+        if (line.startsWith("auth status")) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              identities: { user: { status: "missing", available: false } },
+            }),
+            stderr: "",
+          };
+        }
+        if (line.startsWith("auth login")) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              verification_url: "https://accounts.feishu.cn/device",
+              user_code: "ABCD-1234",
+              device_code: "device-1",
+            }),
+            stderr: "",
+          };
+        }
+        return { code: 1, stdout: "", stderr: "" };
+      },
+    });
+    const { auth_login } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await auth_login({ home_dir: home, env: {}, deps, cli_path: "lark-cli" });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("pending_human");
+    expect(result.verification_url).toBe("https://accounts.feishu.cn/device");
+    expect(result.user_code).toBe("ABCD-1234");
+    const login_call = calls.run.find((entry) => entry.join(" ").includes("auth login"));
+    expect(login_call).toBeDefined();
+    expect(login_call?.join(" ")).toContain("--no-wait");
+    expect(login_call?.join(" ")).toContain("--domain");
+    expect(login_call?.join(" ")).toContain("wiki,base,docs,drive");
+  });
+
+  test("auth-login confirms ready identities after a device code continuation", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps } = fake_deps({
+      run: async (_command, args) => {
+        const line = args.join(" ");
+        if (line.startsWith("auth status")) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              identities: { user: { status: "ready", available: true } },
+            }),
+            stderr: "",
+          };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    const { auth_login } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await auth_login({
+      home_dir: home,
+      env: {},
+      deps,
+      cli_path: "lark-cli",
+      device_code: "device-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ready");
+  });
+
+  test("auth-login ignores a non-zero login exit code and trusts the identity recheck", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps } = fake_deps({
+      run: async (_command, args) => {
+        const line = args.join(" ");
+        if (line.startsWith("auth login")) {
+          return { code: 3, stdout: "", stderr: "some domains were skipped\n" };
+        }
+        if (line.startsWith("auth status")) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              identities: { bot: { status: "ready" }, user: { status: "ready", available: true } },
+            }),
+            stderr: "",
+          };
+        }
+        return { code: 1, stdout: "", stderr: "" };
+      },
+    });
+    const { auth_login } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await auth_login({
+      home_dir: home,
+      env: {},
+      deps,
+      cli_path: "lark-cli",
+      device_code: "device-9",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ready");
+  });
+
+  test("auth-login fails when the user identity is missing", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps } = fake_deps({
+      run: async (_command, args) => {
+        const line = args.join(" ");
+        if (line.startsWith("auth status")) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              identities: { bot: { status: "ready" }, user: { status: "missing" } },
+            }),
+            stderr: "",
+          };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    const { auth_login } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await auth_login({
+      home_dir: home,
+      env: {},
+      deps,
+      cli_path: "lark-cli",
+      device_code: "device-x",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("AUTH_LOGIN_FAILED");
+  });
+
+  test("resolve-profile requires exactly one active profile", async () => {
+    const home = path.join(tempRoot, "home");
+    const ambiguous = fake_deps({
+      run: async () => ({
+        code: 0,
+        stdout: JSON.stringify([
+          { name: "cli_a", active: true },
+          { name: "cli_b", active: true },
+        ]),
+        stderr: "",
+      }),
+    });
+    const { resolve_profile } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const failed = await resolve_profile({
+      home_dir: home,
+      env: {},
+      deps: ambiguous.deps,
+      cli_path: "lark-cli",
+    });
+    expect(failed.ok).toBe(false);
+    expect(failed.error.code).toBe("PROFILE_AMBIGUOUS");
+
+    const unique = fake_deps({
+      run: async () => ({
+        code: 0,
+        stdout: JSON.stringify([
+          { name: "cli_a", active: false },
+          { name: "cli_active", active: true },
+        ]),
+        stderr: "",
+      }),
+    });
+    const succeeded = await resolve_profile({
+      home_dir: home,
+      env: {},
+      deps: unique.deps,
+      cli_path: "lark-cli",
+    });
+    expect(succeeded).toEqual({ ok: true, profile: "cli_active" });
+  });
 });
 
 /** esbuild 平台包里的二进制路径（宿主策略拦截 postinstall 时它不会存在）。 */
