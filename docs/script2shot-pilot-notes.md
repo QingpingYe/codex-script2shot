@@ -239,3 +239,103 @@ node ".script2shot\drill-4d-3\verify-drill.mjs"
 - **未验证**：多集输入在真实会话里的 warning 提醒（离线端到端用例覆盖了
   `MULTIPLE_EPISODES` 的持久化与 `warnings.md` 汇总）；`run.json` 与产物不一致时的
   `RUN_STATE_RECONCILED` 修正（本次三次 `read_run` 都没有触发）。
+
+## 8. 技能迭代全量回归（Task C2，2026-10-23）
+
+本节记录 sd25-pe 迭代（I1–I3）落地后的全量回归：测试命令与结果、双模型 golden
+人工核对、真机演练重跑读数与未验证项。执行计划见
+`docs/superpowers/plans/2026-10-22-script2shot-skill-iteration.md`，方案状态见
+`docs/sd25-pe-optimization-plan-2026-10-22.md`（已采纳 / Accepted）。
+
+### 8.1 测试与类型检查
+
+| 命令 | 结果 |
+| --- | --- |
+| `npm --prefix server test`（沙箱内） | 失败在 pretest 构建：`esbuild ... dist/server.mjs: Access is denied`（沙箱禁写 `server/dist`），未进入用例阶段 |
+| `npm --prefix server test`（同命令在沙箱外执行） | PASS：32 个测试文件，393 passed / 1 skipped（394） |
+| `npm --prefix server run typecheck` | PASS（`tsc --noEmit` 无输出） |
+
+构建产物 `server/dist/server.mjs` 为 gitignored 派生文件，本次回归没有改动它的跟踪状态。
+
+### 8.2 双模型 golden 人工核对
+
+逐行核对 `tests/fixtures/prompts/seedance-2.0.golden.md` 与
+`tests/fixtures/prompts/seedance-2.5.golden.md`（两份快照在
+`server/tests/render_prompt.test.ts` 里按字节断言，全量套件已通过）：
+
+| 核对项 | Seedance 2.0 golden | Seedance 2.5 golden |
+| --- | --- | --- |
+| 景别行（景别 / 机位 / 运镜） | 有：`景别：全景`、`景别：中全景`；机位、运镜逐项中文 | 有：`景别：中景`、`景别：中近景` |
+| 对白行：language / delivery 拼接 | `角色A说：{这地方还有人吗}`（language / delivery 均省略的短路径） | `角色A说：{你一个外人}；角色B用日语轻声说：{もう大丈夫です}`（language + delivery 拼接，条目间「；」连接） |
+| 对白行：空对白占位 | `无对白；人物自然闭口，无旁白`（sh02） | 同左（sh02） |
+| 情绪子标签 | 有（sh01 `情绪：推门的手停了一下，目光扫过空荡的前厅`）；空字符串时子标签省略（sh02） | 有（sh01）；空值省略（sh02） |
+| 声音行 | 有：`音效：<铁门被推开>；音乐：(低沉弦乐)`；三项全空时整行省略（sh02） | 同左（sfx `<远处雷声>`、music `(低沉弦乐)`） |
+| 时间中文化 | `夜晚`、`清晨`，无英文时间词 | `夜晚`；`time` 为空时不生成「时间」子标签（sh02） |
+| 反向核对 | `rg "night\|day\|dawn\|dusk\|morning\|evening\|无声音"` 两份 golden 均无命中 | 同左 |
+
+结论：两份 golden 与各节冻结口径一致（`docs/model-rules-notes.md` §4.2–§4.3），没有
+需要迁就实现的偏差。
+
+### 8.3 真机演练重跑（`run-20261023-095430`）
+
+`.script2shot/drill-4d-3/` 的驱动资产仍在，按本文件 §2 的 12 步请求序列就地重跑；
+起草于新字段落地前的 gitignored 草稿脚本已就地补齐（不提交）：
+`build-prompt-ir{,-rerun,-only}.mjs` 增加 schema 必填的
+`shot_size` / `emotion` / `dialogue` / `audio`（取值遵循 `skills/shot-prompting/SKILL.md`：
+台词取上游 `dialogue_units` 原文、情绪只用可观察线索、声音无依据时三项留空）；
+`make-broken.mjs` 与 `verify-drill.mjs` 改为从 `init_run` 返回解析 run 目录；
+`requests/04–12` 的 `run_id` 指向新 run；`requests/02` 按入口 Skill 第 3 步把索引降级
+warning 原文通过 `update_run_state` 记进 `run.json`。
+
+本轮与上一轮（`run-20261022-152310`）读数对照：
+
+| 项 | 上一轮 | 本轮 |
+| --- | --- | --- |
+| 本地索引 `card_count` | 107 | 114 |
+| 知识包 `load_knowledge_pack` | 104（general 74 / project 14 / seedance 16） | 111（general 80 / project 14 / seedance 17） |
+| `refresh_local_index`（`dry_run: true`） | `ready`，无 warning | `ready` + `degraded: true`，`KB_B_UNREACHABLE` |
+| 聚合读数（首轮） | 16 / 18 / 15 | 16 / 18 / 15 |
+| 聚合读数（`from shot-planning` 重跑后） | 16 / 18 / 8 | 16 / 18 / 8 |
+| 聚合读数（`only shot-prompting` 重跑后） | 16 / 18 / 15 | 16 / 18 / 15 |
+| `warnings.md` 条数 | 2（`missing_info`） | 3（降级 warning + 2 条 `missing_info`） |
+| 七个产物 | 7 个，无多余文件 | 7 个，无多余文件 |
+
+检索读数与上一轮完全一致：`02` 4 次查询 2 / 0 / 0 / 0；`03` 7 / 6 / 0 / 1；
+`04`（`max_cards: 8`）6 / 3 / 5 / 7 / 0；`05`（`max_cards: 6`, `char_budget: 4000`）
+3 / 5 / 6 张（1 条 `dropped_by_budget`）；`07` 6 / 3 / 5 / 7；`08` 5 / 1 / 2；
+`10` 3 / 5 / 6 张（1 条 `dropped_by_budget`）。
+
+校验与产物：
+
+- 三个阶段校验全部 `ok: true`（`validate_stage_artifact` × 多次、`validate_prompt` × 3）；
+  `run.json` 三阶段 `done`、三个产物 `valid: true`、`warnings: []`（无对账冲突）。
+- 本轮实跑覆盖了此前未跑的降级路径：AI 库（SyncState）不可达时按本地缓存继续，
+  `KB_B_UNREACHABLE` 原文经 `update_run_state` 持久化并出现在 `warnings.md` 第 1 条。
+- 本轮渲染产物新增覆盖：景别行（全景 / 中近景）、对白行（`侍女轻声说：{时辰到了。}`
+  与两条空对白占位）、情绪子标签（有值 / 空值省略两条路径）、时间中文化；三个镜头
+  `audio` 三项全空，渲染层整行省略且未出现「无声音」占位。
+- 人工破坏产物后的重校验（§6 第 `12` 步）错误码与上一轮逐条一致：
+  `OUT_OF_RANGE /scenes/0/shots/0/duration_sec`、`enum /scenes/0/shots/1/shot_size`、
+  `MISSING_FIELD`（`ep12-sc01-sh01.subject`）；失败校验前后 `run.json` 三阶段
+  `updated_at` 不变，七个产物 SHA-256 逐字节一致（`out/verify-before-hand-edit.json`
+  与 `out/verify-after-hand-edit.json` 哈希无差异）。
+
+### 8.4 C1 外部同步之后的索引读数
+
+本轮读数落在 C1（AI 库同步）之后：本地索引 `card_count` 107 → 114，知识包
+104 → 111（general 74 → 80、project 14、seedance 16 → 17），与 C1 记录的
+「7 张新卡 + 2 个容器页、SyncState 全部创建」一致；「台词」「阶段化」
+「情绪可观察化」检索命中新卡不在本轮演练查询里，本轮只核对数量与演练链路。
+
+### 8.5 未验证项与顾虑
+
+- **写路径刷新未验证**：`refresh_local_index` 仍只跑 `dry_run: true`；本轮沙箱环境无
+  外网，SyncState 读取失败才走了降级分支，`dry_run: false` 的真实写路径与
+  「远端与本地一致时零变化」的干净读数本轮没有复现。
+- **人机交互部分未覆盖**：仍由会话模型扮演用户与 `$script2shot`；
+  `project_id`、`target_model`、`aspect_ratio` 为预选值，只核对 `run.json` 能恢复。
+- **长查询命中 0**：与 §3.3 的观察相同（多词长查询命中率低，单实体关键词正常）；
+  本轮未改检索实现。
+- **项目知识只覆盖 `wufu-linmen`**：演练剧本仍是该项目下的原创片段。
+- **未验证**：多集输入在真实会话里的 warning 提醒（离线端到端用例覆盖）、
+  `RUN_STATE_RECONCILED` 修正（本轮三次 `read_run` 均未触发）。

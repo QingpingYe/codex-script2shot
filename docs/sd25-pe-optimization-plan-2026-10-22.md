@@ -1,7 +1,9 @@
 # 借鉴 sd25-pe 的提示词链路优化迭代方案（2026-10-22）
 
-状态：提案（Proposed，未落地）
+状态：已采纳（Accepted）
 日期：2026-10-22
+执行计划：`docs/superpowers/plans/2026-10-22-script2shot-skill-iteration.md`
+（落地情况：I1–I3 已按执行计划完成并通过全量回归；**I4 为已采纳方向、待各自计划裁决**）
 参照技能：`sd25-pe`（Seedance 2.5 Prompt Optimizer，火山方舟
 `arkdocs.tos-cn-beijing.volces.com/skills/` 技能源，v0.1.1，2026-10-22 装入
 `.agents/skills/sd25-pe/`）
@@ -21,8 +23,9 @@
   在同一次改动内完成（`AGENTS.md` §2、§3）。
 - 外部事实（模型对台词 / 声音的支持、素材上限等）必须核对官方文档后写入
   `docs/model-rules-notes.md`，带来源与核对日期；未核实前不写入规则文件。
-- 本方案是提案：不引入新生产依赖，不替项目选定新组件；落地前由控制方按现状
-  设计流程裁决。
+- 本方案不引入新生产依赖、不替项目选定新组件；I1–I3 的落地由执行计划
+  `docs/superpowers/plans/2026-10-22-script2shot-skill-iteration.md` 排期并逐项评审，
+  I4 为已采纳方向、待各自计划裁决。
 
 ## 1. 结论摘要
 
