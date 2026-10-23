@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "tables": [
+      {
+        "id": "tblEXAMPLE0001",
+        "name": "Table",
+        "records_count": 10,
+        "rev": 0
+      }
+    ],
+    "total": 1
+  }
+}

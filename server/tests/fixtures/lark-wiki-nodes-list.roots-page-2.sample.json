@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "has_more": false,
+    "items": [
+      {
+        "creator": "ouEXAMPLE0001",
+        "has_child": true,
+        "node_create_time": "1760014400",
+        "node_token": "wikcnSAMPLEFREE00",
+        "node_type": "origin",
+        "obj_create_time": "1760014400",
+        "obj_edit_time": "1760014400",
+        "obj_token": "doccnSAMPLEFREE00",
+        "obj_type": "docx",
+        "origin_node_token": "wikcnSAMPLEFREE00",
+        "origin_space_id": "EXAMPLESPACE0001",
+        "owner": "ouEXAMPLE0001",
+        "parent_node_token": "",
+        "space_id": "EXAMPLESPACE0001",
+        "title": "未映射项目知识",
+        "url": "https://example.feishu.cn/wiki/wikcnSAMPLEFREE00"
+      }
+    ],
+    "page_token": "",
+    "total": 3
+  }
+}

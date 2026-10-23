@@ -1,0 +1,19 @@
+{
+  "card_id": "src:doccnDEMO0001:visual_style:001",
+  "scope": "project",
+  "project_id": "demo-project",
+  "category": "visual_style",
+  "title": "雨夜视觉风格",
+  "content": "低照度、冷色反光、湿润材质、手持跟拍。",
+  "tags": ["night", "rain", "neo-noir"],
+  "entities": ["角色A", "旧城区"],
+  "target_models": ["seedance-2.0", "seedance-2.5"],
+  "priority": 80,
+  "source_doc_token": "doccnDEMO0001",
+  "source_node_token": "wikcnDEMO0001",
+  "source_path": "项目知识/demo-project/视觉风格/雨夜风格",
+  "source_title": "雨夜视觉风格",
+  "source_revision": 12,
+  "source_block_id": "blockDEMO0001",
+  "updated_at": "2026-10-20T12:00:00+08:00"
+}

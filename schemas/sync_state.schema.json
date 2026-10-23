@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SyncState",
+  "description": "AI 库中 SyncState 表的同步状态记录（docs/architecture.md §5.3）。obj_edit_time 是不透明字符串，不做时间换算；last_synced_at 写入 Base 前由 server/src/base_mapping.ts 按 +08:00 换算。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_doc_token",
+    "source_node_token",
+    "source_path",
+    "source_title",
+    "scope",
+    "project_id",
+    "obj_edit_time",
+    "source_revision",
+    "card_count",
+    "last_synced_at",
+    "last_sync_user",
+    "last_run_id"
+  ],
+  "properties": {
+    "source_doc_token": {
+      "type": "string"
+    },
+    "source_node_token": {
+      "type": "string"
+    },
+    "source_path": {
+      "type": "string"
+    },
+    "source_title": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["general", "project"]
+    },
+    "project_id": {
+      "type": ["string", "null"]
+    },
+    "obj_edit_time": {
+      "type": "string"
+    },
+    "source_revision": {
+      "type": "integer"
+    },
+    "card_count": {
+      "type": "integer"
+    },
+    "last_synced_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "last_sync_user": {
+      "type": "string"
+    },
+    "last_run_id": {
+      "type": "string"
+    }
+  }
+}

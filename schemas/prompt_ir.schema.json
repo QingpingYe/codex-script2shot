@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PromptIR",
+  "description": "shot-prompting 阶段产物 prompts.ir.json 的冻结结构（docs/architecture.md §11.3，references/stage-conventions.md §4）。字段值用英文枚举/术语；渲染阶段再输出中文正文。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "target_model",
+    "shots",
+    "generated_at"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^run-\\d{8}-\\d{6}$"
+    },
+    "target_model": {
+      "type": "string",
+      "enum": ["seedance-2.0", "seedance-2.5"]
+    },
+    "shots": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/shot"
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    }
+  },
+  "$defs": {
+    "string_list": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "dialogue_unit": {
+      "type": "object",
+      "description": "台词条目。speaker / text 为非空字符串；language / delivery 是可选的中文短词，只在有依据时填写（language 仅当台词文本为非中文且语种可由文字直接判定）。台词只取上游 dialogue_units.text 原文，不扩写、不改写。",
+      "additionalProperties": false,
+      "required": ["speaker", "text"],
+      "properties": {
+        "speaker": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "type": "string"
+        },
+        "delivery": {
+          "type": "string"
+        }
+      }
+    },
+    "continuity": {
+      "type": "object",
+      "description": "本镜头的连续性。previous_shot 为上一镜头的 shot_id（首个镜头省略该字段或填 null）；character_state 与 environment_state 是镜头结束时的角色与环境状态，均为非空字符串。",
+      "additionalProperties": false,
+      "required": ["character_state", "environment_state"],
+      "properties": {
+        "previous_shot": {
+          "type": ["string", "null"]
+        },
+        "character_state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "environment_state": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "audio": {
+      "type": "object",
+      "description": "本镜头的声音通道，三项均可为空；只从上游已有声音线索（例如雨、脚步、门响）与检索卡片提炼，不得编造原文没有的声音事件。渲染为「声音」节：sfx 每项用 <> 包裹，music 非空时用 () 包裹；三项全空时整行省略。",
+      "additionalProperties": false,
+      "required": ["ambience", "sfx", "music"],
+      "properties": {
+        "ambience": {
+          "$ref": "#/$defs/string_list"
+        },
+        "sfx": {
+          "$ref": "#/$defs/string_list"
+        },
+        "music": {
+          "type": "string"
+        }
+      }
+    },
+    "shot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shot_id",
+        "target_model",
+        "duration",
+        "aspect_ratio",
+        "shot_size",
+        "subject",
+        "action",
+        "emotion",
+        "dialogue",
+        "setting",
+        "time",
+        "camera_angle",
+        "camera_movement",
+        "lighting",
+        "color",
+        "style",
+        "audio",
+        "continuity",
+        "negative_prompt",
+        "knowledge_refs"
+      ],
+      "properties": {
+        "shot_id": {
+          "type": "string"
+        },
+        "target_model": {
+          "type": "string",
+          "enum": ["seedance-2.0", "seedance-2.5"]
+        },
+        "duration": {
+          "type": "integer",
+          "description": "整数秒。上下限由目标模型规则文件（rules/models/*.json）在 validate_prompt 硬规则校验中判定。"
+        },
+        "aspect_ratio": {
+          "type": "string",
+          "description": "画幅比例；六个取值与 rules/models/*.json 的 aspect_ratios 一致。",
+          "enum": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"]
+        },
+        "shot_size": {
+          "type": "string",
+          "description": "景别英文枚举，与 schemas/shot_plan.schema.json 的中文枚举一一对应：大远景=extreme-long-shot、远景=long-shot、全景=full-shot、中全景=medium-full-shot、中景=medium-shot、中近景=medium-close-up、近景=close-shot、特写=close-up、插入镜头=insert-shot。取值取自上游 shot_plan 的冻结枚举，渲染为「景别：{中文}」。",
+          "enum": [
+            "extreme-long-shot",
+            "long-shot",
+            "full-shot",
+            "medium-full-shot",
+            "medium-shot",
+            "medium-close-up",
+            "close-shot",
+            "close-up",
+            "insert-shot"
+          ]
+        },
+        "subject": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "emotion": {
+          "type": "string",
+          "description": "情绪的可观察外化短句。只取材上游 emotion_units.tone / emotion_units.description 与同镜头已有 action_units 的动作线索（例如视线、停顿、手部动作）；没有这些来源支撑时留空字符串，禁止由抽象情绪反推未发生的身体动作。渲染时在「主体与动作」节追加子标签「情绪：…」，空值省略该子标签。"
+        },
+        "dialogue": {
+          "type": "array",
+          "description": "本镜头的台词条目，必填但可为空数组（无对白镜头留空）。台词只取上游 dialogue_units.text 原文，不扩写、不改写；dialogue 是原文保真豁免区，禁止项（forbidden）扫描不覆盖该字段。渲染为「对白」节：条目格式 {speaker}用{language}{delivery}说：{text}（text 用 {} 包裹，language / delivery 缺失或为纯空白串时省略对应片段），条目间用「；」连接，空数组渲染为规则文件 render.empty_dialogue 的占位。",
+          "items": {
+            "$ref": "#/$defs/dialogue_unit"
+          }
+        },
+        "setting": {
+          "type": "string"
+        },
+        "time": {
+          "type": "string",
+          "description": "英文时间术语（例如 night、day、dawn、dusk）。"
+        },
+        "camera_angle": {
+          "type": "string",
+          "description": "机位角度英文枚举，与 schemas/shot_plan.schema.json 的中文枚举一一对应：平视=eye-level、仰视=low-angle、俯视=high-angle、鸟瞰=bird's-eye、虫视=worm's-eye、荷兰角=dutch-angle、过肩=over-the-shoulder、主观视角=point-of-view、反打=reverse-angle、侧面=side-view、四分之三侧面=three-quarter-view、背身=back-view、双人镜头=two-shot。",
+          "enum": [
+            "eye-level",
+            "low-angle",
+            "high-angle",
+            "bird's-eye",
+            "worm's-eye",
+            "dutch-angle",
+            "over-the-shoulder",
+            "point-of-view",
+            "reverse-angle",
+            "side-view",
+            "three-quarter-view",
+            "back-view",
+            "two-shot"
+          ]
+        },
+        "camera_movement": {
+          "type": "string",
+          "description": "运镜英文枚举，与 schemas/shot_plan.schema.json 的中文枚举一一对应：固定=static、横摇=pan、竖摇=tilt、推近=push-in、拉远=pull-out、平移=truck、升降=boom、摇臂=crane、变焦=zoom、跟拍=tracking、环绕=orbit、手持=handheld、稳定器=gimbal、甩镜=whip-pan、滑动变焦=dolly-zoom、跟焦=follow-focus。",
+          "enum": [
+            "static",
+            "pan",
+            "tilt",
+            "push-in",
+            "pull-out",
+            "truck",
+            "boom",
+            "crane",
+            "zoom",
+            "tracking",
+            "orbit",
+            "handheld",
+            "gimbal",
+            "whip-pan",
+            "dolly-zoom",
+            "follow-focus"
+          ]
+        },
+        "lighting": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "style": {
+          "type": "string"
+        },
+        "audio": {
+          "$ref": "#/$defs/audio"
+        },
+        "continuity": {
+          "$ref": "#/$defs/continuity"
+        },
+        "negative_prompt": {
+          "$ref": "#/$defs/string_list"
+        },
+        "knowledge_refs": {
+          "type": "array",
+          "description": "本镜头引用的知识卡，条目字段与 references/stage-conventions.md §4 一致；shot_id 为必填字符串，等于所属镜头的 shot_id。",
+          "items": {
+            "$ref": "#/$defs/knowledge_ref"
+          }
+        }
+      }
+    },
+    "knowledge_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "card_id",
+        "scene_id",
+        "shot_id",
+        "query",
+        "usage",
+        "source_doc_token",
+        "source_path",
+        "source_revision",
+        "last_synced_at"
+      ],
+      "properties": {
+        "card_id": {
+          "type": "string"
+        },
+        "scene_id": {
+          "type": "string"
+        },
+        "shot_id": {
+          "type": "string",
+          "description": "所属镜头的 shot_id；PromptIR 内不允许 null（shot_plan 阶段允许）。"
+        },
+        "query": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "string",
+          "enum": ["used", "dropped_by_budget"]
+        },
+        "source_doc_token": {
+          "type": "string"
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "source_revision": {
+          "type": "integer"
+        },
+        "last_synced_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+        }
+      }
+    }
+  }
+}

@@ -1,93 +1,114 @@
 # codex-script2shot
 
+把剧本变成 AI 视频提示词的 Codex 插件。
 
+用户提交一段剧本、一集剧本或多集剧本，插件通过剧本解析、镜头规划和知识检索，
+为 Seedance 2.0 或 Seedance 2.5 生成视频提示词。
 
-## Getting started
+当前状态：设计阶段。仓库中已有架构设计和通用知识文档，插件代码尚未实现。
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 工作原理
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+系统由三部分组成：
 
-## Add your files
+- 飞书知识库（原始资料）（简称「原始库」）：用户维护的原始知识，包括通用知识和项目知识。
+  插件只读取，不写入。
+- 飞书知识库（AI）（简称「AI 库」）：一个飞书多维表格（Base），保存插件从原始库归纳出的结构化知识卡
+  （`KnowledgeCards`）和同步状态（`SyncState`）。只保留最新版，不保存历史，
+  不提供人工阅读页面。
+- 本地 Codex 插件：六个 Skill 和本地 MCP Server，负责知识同步、本地关键词
+  索引、检索、阶段产物校验和提示词渲染。
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+文档中的「原始库 / AI 库」分别对应工具和配置里的 `space_a` / `base_b` 标识。
 
+主流程：
+
+```text
+原始库
+  -> knowledge-sync（增量归纳，只处理变化文档）
+  -> AI 库
+  -> script2shot 入口
+       -> 刷新本地索引
+       -> script-breakdown（剧本 -> 结构化解析）
+       -> shot-planning（解析结果 + 项目知识 -> 镜头计划）
+       -> shot-prompting（镜头计划 + 知识 -> PromptIR）
+  -> 校验 Seedance 硬规则 -> 渲染提示词
 ```
-cd existing_repo
-git remote add origin https://gcode.iwgame.com/ai/agent/codex-script2shot.git
-git branch -M main
-git push -uf origin main
+
+设计原则：原始库与 AI 库职责分离、剧本不进知识库、同步状态以 AI 库为准、
+增量同步优先、插件不在服务端运行。
+
+## 主要能力（规划）
+
+插件提供六个 Skill，其中 `script2shot` 是薄入口，创作工作由三个阶段 Skill 承担：
+
+| Skill | 职责 |
+| --- | --- |
+| `setup` | 查找 `lark-cli`、检查登录状态、配置原始库和 AI 库、初始化本地目录 |
+| `knowledge-sync` | 扫描原始库的节点元数据，只读取变化文档，生成知识卡并更新 AI 库的 `SyncState` |
+| `script2shot` | 入口编排：刷新索引、创建运行目录、依次执行三个阶段、校验硬规则、聚合输出 |
+| `script-breakdown` | 剧本 -> 结构化解析（场次、节拍、动作、情绪、对白、镜头组建议） |
+| `shot-planning` | 解析结果 + 项目知识 -> 镜头计划（景别、机位、运镜、时长、连贯性） |
+| `shot-prompting` | 镜头计划 + 知识包 -> PromptIR -> 校验 -> Seedance 提示词 |
+
+本地 MCP Server 只负责确定性操作，包括扫描知识库、读写知识卡、
+刷新索引、检索知识、管理运行目录、校验阶段产物和 PromptIR、渲染提示词。
+LLM 归纳放在 Skill 中完成。
+
+在 Codex 中可以用自然语言指定单个文档同步：
+
+```text
+$knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
 ```
 
-## Integrate with your tools
+`script2shot` 的运行产物输出到工作区：
 
-- [ ] [Set up project integrations](https://gcode.iwgame.com/ai/agent/codex-script2shot/-/settings/integrations)
+```text
+.script2shot/outputs/<run_id>/
+  run.json
+  script_analysis.json
+  shot_plan.json
+  prompts.ir.json
+  prompts.<model>.md
+  knowledge_refs.json
+  warnings.md
+```
 
-## Collaborate with your team
+每次运行必须指定 `project_id` 和一个目标模型。三个阶段之间只通过文件产物交接，
+`run.json` 记录输入模式、项目、目标模型和阶段状态。
+`shot_plan.json` 可以人工修改后再继续，也可以从任意阶段续跑：
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+```text
+$script2shot 从 shot-planning 继续，run_id 是 <run_id>
+$script2shot 只执行 shot-prompting，run_id 是 <run_id>
+```
 
-## Test and Deploy
+## 快速开始（规划）
 
-Use the built-in continuous integration in GitLab.
+1. 安装并登录 `lark-cli`。
+2. 运行 `$setup`，配置原始库、AI 库、Base 表和本地目录。
+3. 运行 `$knowledge-sync`，把原始库归纳到 AI 库。
+4. 在 Codex 会话中提交剧本，指定 `project_id` 和目标模型，
+   `$script2shot` 默认按顺序跑完三个阶段。
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+具体命令以插件实现后的文档为准。
 
-***
+## 文档
 
-# Editing this README
+- [架构设计](docs/architecture.md)：总体架构、知识卡与同步状态模型、检索和生成流程。
+- [阶段约定](references/stage-conventions.md)：阶段交接、检索配方和知识引用聚合规则。
+- [飞书知识库（原始资料）内容说明](docs/knowledge-base-raw.md)：简称「原始库」，说明应包含的目录、文档和内容。
+- [飞书知识库（AI）内容说明](docs/knowledge-base-ai.md)：简称「AI 库」，说明应包含的表、字段和内容。
+- [设计复盘最小修正清单](docs/design-remediation-2026-10-20.md)：本轮设计收敛项。
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+## 路线图
 
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+1. Phase 1：插件骨架、`setup`、`health`、飞书连接。
+2. Phase 2：AI 库建表、增量同步、`knowledge-sync`。
+3. Phase 3：本地缓存、SQLite 关键词索引和规则排序。
+4. Phase 4：阶段技能与提示词生成。
+   - 4a：`script-breakdown` 与 `script_analysis` schema。
+   - 4b：`shot-planning` 与 `shot_plan` schema。
+   - 4c：`shot-prompting`、PromptIR、Seedance 规则文件和渲染。
+   - 4d：`script2shot` 入口编排、续跑和输出聚合。
+5. Phase 5（可选）：检索诊断 `explain` 输出和 `knowledge-inspect` 诊断技能。

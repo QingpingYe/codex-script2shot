@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ShotPlan",
+  "description": "shot-planning 阶段产物 shot_plan.json 的冻结结构（docs/architecture.md §9.5、§11.2，references/stage-conventions.md §1、§4）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "project_id",
+    "target_model",
+    "scenes",
+    "knowledge_refs",
+    "generated_at"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^run-\\d{8}-\\d{6}$"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "target_model": {
+      "type": "string",
+      "enum": ["seedance-2.0", "seedance-2.5"]
+    },
+    "scenes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scene"
+      }
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/knowledge_ref"
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    }
+  },
+  "$defs": {
+    "string_list": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "continuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enter_state", "exit_state"],
+      "properties": {
+        "enter_state": {
+          "type": "string"
+        },
+        "exit_state": {
+          "type": "string"
+        }
+      }
+    },
+    "shot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shot_id",
+        "order",
+        "duration_sec",
+        "shot_size",
+        "camera_angle",
+        "camera_movement",
+        "transition",
+        "continuity",
+        "source_shot_group_ids"
+      ],
+      "properties": {
+        "shot_id": {
+          "type": "string"
+        },
+        "order": {
+          "type": "integer"
+        },
+        "duration_sec": {
+          "type": "number",
+          "description": "规划时长，整数秒；取值由 validate_stage_artifact 按目标模型规则的范围校验。"
+        },
+        "shot_size": {
+          "type": "string",
+          "enum": [
+            "大远景",
+            "远景",
+            "全景",
+            "中全景",
+            "中景",
+            "中近景",
+            "近景",
+            "特写",
+            "插入镜头"
+          ]
+        },
+        "camera_angle": {
+          "type": "string",
+          "enum": [
+            "平视",
+            "仰视",
+            "俯视",
+            "鸟瞰",
+            "虫视",
+            "荷兰角",
+            "过肩",
+            "主观视角",
+            "反打",
+            "侧面",
+            "四分之三侧面",
+            "背身",
+            "双人镜头"
+          ]
+        },
+        "camera_movement": {
+          "type": "string",
+          "enum": [
+            "固定",
+            "横摇",
+            "竖摇",
+            "推近",
+            "拉远",
+            "平移",
+            "升降",
+            "摇臂",
+            "变焦",
+            "跟拍",
+            "环绕",
+            "手持",
+            "稳定器",
+            "甩镜",
+            "滑动变焦",
+            "跟焦"
+          ]
+        },
+        "transition": {
+          "type": "string",
+          "enum": ["切", "叠化", "淡入淡出", "无"]
+        },
+        "continuity": {
+          "$ref": "#/$defs/continuity"
+        },
+        "source_shot_group_ids": {
+          "$ref": "#/$defs/string_list"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scene_id", "shots"],
+      "properties": {
+        "scene_id": {
+          "type": "string"
+        },
+        "shots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shot"
+          }
+        }
+      }
+    },
+    "knowledge_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "card_id",
+        "scene_id",
+        "shot_id",
+        "query",
+        "usage",
+        "source_doc_token",
+        "source_path",
+        "source_revision",
+        "last_synced_at"
+      ],
+      "properties": {
+        "card_id": {
+          "type": "string"
+        },
+        "scene_id": {
+          "type": "string"
+        },
+        "shot_id": {
+          "type": ["string", "null"]
+        },
+        "query": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "string",
+          "enum": ["used", "dropped_by_budget"]
+        },
+        "source_doc_token": {
+          "type": "string"
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "source_revision": {
+          "type": "integer"
+        },
+        "last_synced_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+        }
+      }
+    }
+  }
+}

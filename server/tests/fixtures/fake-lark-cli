@@ -1,0 +1,4 @@
+#!/bin/sh
+# POSIX 包装：调用同目录下的同名 .mjs。
+set -eu
+exec node "$(dirname "$0")/$(basename "$0").mjs" "$@"

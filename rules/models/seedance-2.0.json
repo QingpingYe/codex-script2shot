@@ -1,0 +1,57 @@
+{
+  "model": "seedance-2.0",
+  "label": "Seedance 2.0",
+  "duration": {
+    "min_sec": 4,
+    "max_sec": 15,
+    "default_sec": 5
+  },
+  "aspect_ratios": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+  "shot_split": {
+    "prefer_max_sec": 15,
+    "multi_action_rule": "每段提示词只安排一个主要动作或一个主要情绪，避免把多个独立事件压进同一段；内容超过单段上限（15 秒）时拆成多个独立提示词再剪辑组接；不为填满时长添加原文没有的动作、台词或事件。"
+  },
+  "required_fields": ["shot_size", "subject", "action", "setting", "camera_movement", "lighting", "color", "style"],
+  "forbidden": ["--ar", "aspect_ratio", "duration", "fps", "resolution", "run_id", "seedance"],
+  "render": {
+    "title": "# Seedance 2.0 提示词",
+    "shot_heading": "## 镜头 {shot_id}（时长 {duration} 秒，画幅 {aspect_ratio}）",
+    "section_labels": {
+      "subject_action": "主体与动作",
+      "dialogue": "对白",
+      "setting_time": "环境与时间",
+      "camera": "景别、机位与运镜",
+      "light_color": "光线与色彩",
+      "style": "风格",
+      "audio": "声音",
+      "continuity": "连续性",
+      "negative": "负面约束"
+    },
+    "section_order": [
+      "subject_action",
+      "dialogue",
+      "setting_time",
+      "camera",
+      "light_color",
+      "style",
+      "audio",
+      "continuity",
+      "negative"
+    ],
+    "empty_negative": "无",
+    "empty_dialogue": "无对白；人物自然闭口，无旁白"
+  },
+  "prompt_guidance": {
+    "long_shot_staging_threshold_sec": 15,
+    "shot_structure": "单段提示词只安排一个主要动作或一个主要情绪，按动作先后顺序写清；信息越集中越稳定，不把多个独立事件压进同一段，不写时间戳；超过单段上限时拆成多个独立提示词再剪辑组接。",
+    "dialogue": "台词语言以中文、英语为主且需统一，避免中英文混用（专有名词除外）；小语种台词必须标注语种，例如「用日语说道{こんにちは}」。",
+    "sound": "音效用 <> 包裹、音乐用 () 包裹，台词用 {}；用固定符号区分信息类型，帮助模型准确理解声音与台词的归属。",
+    "negative": "负面约束只写已核实的官方句式：避免字幕与文字写「保持无字幕」「避免生成任何文字或字幕」，避免 Logo 写「不要生成 Logo」，避免水印写「不要生成水印」；画面瑕疵类约束按正向短语写（如「画面流畅无卡顿」），不发明固定模板词；字幕无法保证 100% 避免，不把这类约束当硬保证。"
+  },
+  "source": [
+    "https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh",
+    "https://docs.volcengine.com/docs/ark/seedance-2-0?lang=zh",
+    "https://docs.volcengine.com/docs/ark/seedance-2-0-prompt-guide?lang=zh"
+  ],
+  "checked_at": "2026-10-22"
+}

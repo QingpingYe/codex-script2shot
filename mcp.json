@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "script2shot": {
+      "type": "stdio",
+      "command": "./scripts/launch_script2shot_mcp",
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}
