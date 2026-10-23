@@ -55,7 +55,7 @@ export const CHECK_IDS = [
 ];
 
 /** 已实现的子命令清单（后续任务逐个补齐，见架构 §7.1）。 */
-export const USAGE_COMMANDS = ["doctor", "ensure-runtime", "install-cli"];
+export const USAGE_COMMANDS = ["doctor", "ensure-runtime", "install-cli", "build-server"];
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PLUGIN_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -166,11 +166,14 @@ async function default_extract(archive_path, format, destination, deps) {
   return { ok: true, archive_path, destination };
 }
 
-function default_deps() {
+/** 默认依赖：真实子进程 / 网络 / 解压 / 可写性探测 / MCP 会话。 */
+export function create_default_deps() {
   const deps = {
     run: run_process,
     fetch_json: default_fetch_json,
     fetch_bytes: default_fetch_bytes,
+    can_write: is_writable_path,
+    mcp_session: default_mcp_session,
     now: () => Date.now(),
   };
   deps.extract = (archive_path, format, destination) =>
@@ -179,7 +182,7 @@ function default_deps() {
 }
 
 function resolve_deps(injected) {
-  return { ...default_deps(), ...(injected ?? {}) };
+  return { ...create_default_deps(), ...(injected ?? {}) };
 }
 
 function check(id, status, message, detail) {
@@ -879,6 +882,249 @@ function command_call(command, args) {
   return { command, args: [...args] };
 }
 
+export const MCP_PROTOCOL_VERSION = "2025-11-25";
+
+/**
+ * `build-server`：插件 `server/` 不可写 → `PLUGIN_DIR_READONLY`；npm 失败按
+ * stderr 关键字分类（提权 / 网络 / 源）；构建器二进制或 dist 缺失 →
+ * `BUILD_TOOL_BLOCKED`；最后做 `initialize` + `tools/list` 握手自检（架构 §7.1）。
+ */
+export async function build_server(options = {}) {
+  const deps = resolve_deps(options.deps);
+  const env = options.env ?? process.env;
+  const plugin_root = options.plugin_root ?? DEFAULT_PLUGIN_ROOT;
+  const server_dir = path.join(plugin_root, "server");
+  const dist_path = path.join(server_dir, "dist", "server.mjs");
+  const npm_path = options.npm_path ?? "npm";
+  const node_path = options.node_path ?? "node";
+
+  if (!deps.can_write(server_dir)) {
+    return failure("PLUGIN_DIR_READONLY", `插件 server 目录不可写：${server_dir}。`, {
+      details: { server_dir },
+      next_actions: ["申请提权（构建需要写插件目录）后重跑 build-server。"],
+    });
+  }
+
+  const cache_dir = path.join(os.tmpdir(), "script2shot-npm-cache");
+  const ci_call = npm_invocation(["ci", "--cache", cache_dir], npm_path);
+  const ci = await deps.run(ci_call.command, ci_call.args, {
+    cwd: server_dir,
+    env,
+    timeout_ms: 900000,
+  });
+  if (ci.code !== 0) {
+    return classify_npm_failure(ci, { step: "npm ci", server_dir });
+  }
+
+  const build_call = npm_invocation(["run", "build"], npm_path);
+  const build = await deps.run(build_call.command, build_call.args, {
+    cwd: server_dir,
+    env,
+    timeout_ms: 900000,
+  });
+  if (build.code !== 0) {
+    return classify_npm_failure(build, { step: "npm run build", server_dir });
+  }
+
+  const builder_path = find_esbuild_binary(server_dir);
+  if (builder_path === undefined || !is_file(dist_path)) {
+    return failure(
+      "BUILD_TOOL_BLOCKED",
+      builder_path === undefined
+        ? "构建器 esbuild 的二进制缺失（宿主策略可能拦截了它的安装脚本）。"
+        : "构建完成后仍未生成 server/dist/server.mjs。",
+      {
+        details: { server_dir, dist_path, builder_path },
+        next_actions: [
+          "只有用户决定允许该安装脚本（或换到允许脚本的环境）后才能继续；不得用 --ignore-scripts 静默绕过。",
+        ],
+      },
+    );
+  }
+
+  const handshake = await deps.mcp_session({
+    node_path,
+    server_path: dist_path,
+    cwd: plugin_root,
+    env,
+    timeout_ms: 30000,
+    requests: [{ method: "tools/list", params: {} }],
+  });
+  if (!handshake.ok) {
+    return failure("SERVER_HANDSHAKE_FAILED", `MCP Server 握手自检失败：${handshake.error.message}`, {
+      details: { dist_path, reason_code: handshake.error.code },
+    });
+  }
+  const tools = handshake.results[0]?.tools;
+  const tools_count = Array.isArray(tools) ? tools.length : 0;
+  if (tools_count === 0) {
+    return failure("SERVER_HANDSHAKE_FAILED", "MCP Server 的 tools/list 返回空清单。", {
+      details: { dist_path },
+    });
+  }
+  return { ok: true, dist_path, tools_count };
+}
+
+function classify_npm_failure(result, context) {
+  const text = `${result.stderr ?? ""}\n${result.stdout ?? ""}`;
+  const details = {
+    ...context,
+    exit_code: result.code,
+    stderr: (result.stderr ?? "").slice(0, 500),
+  };
+  if (/EPERM|EACCES/.test(text)) {
+    return failure("NEEDS_ESCALATION", `${context.step} 被权限拒绝（EPERM / EACCES）。`, {
+      details,
+      next_actions: ["向用户申请提权后重跑 build-server。"],
+    });
+  }
+  if (/ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNREFUSED|ECONNRESET/.test(text)) {
+    return failure("NETWORK_BLOCKED", `${context.step} 网络不可达。`, {
+      details,
+      next_actions: ["放行 registry.npmjs.org（或企业镜像域名）后重试。"],
+    });
+  }
+  if (/ERESOLVE|E404|404 Not Found/.test(text)) {
+    return failure("NPM_SOURCE_FAILED", `${context.step} 依赖源解析失败。`, {
+      details,
+      next_actions: ["核对 npm 源配置与锁文件后重试。"],
+    });
+  }
+  return failure("SERVER_BUILD_FAILED", `${context.step} 失败（退出码 ${result.code}）。`, {
+    details,
+  });
+}
+
+/** 构建器二进制：优先平台包 `@esbuild/<platform>-<arch>`，再退回 esbuild 包内 wrapper。 */
+function find_esbuild_binary(server_dir) {
+  const platform_package = `${process.platform}-${process.arch}`;
+  const platform_binary =
+    process.platform === "win32"
+      ? path.join(server_dir, "node_modules", "@esbuild", platform_package, "esbuild.exe")
+      : path.join(server_dir, "node_modules", "@esbuild", platform_package, "bin", "esbuild");
+  const candidates = [
+    platform_binary,
+    path.join(server_dir, "node_modules", "esbuild", "bin", "esbuild"),
+  ];
+  return candidates.find(is_file);
+}
+
+/** 真实 MCP stdio 会话：initialize → notifications/initialized → 逐个请求。 */
+async function default_mcp_session(call) {
+  return await new Promise((resolve) => {
+    const requests = Array.isArray(call.requests) ? call.requests : [];
+    const timeout_ms = call.timeout_ms ?? 30000;
+    let child;
+    try {
+      child = spawn(call.node_path, [call.server_path], {
+        cwd: call.cwd,
+        env: call.env ?? process.env,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+    } catch (error) {
+      resolve(mcp_failure(describe_error(error)));
+      return;
+    }
+
+    let buffer = "";
+    let stderr = "";
+    let settled = false;
+    let next_index = 0;
+    const results = [];
+
+    const finish = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      try {
+        child.kill();
+      } catch {
+        // 子进程可能已退出。
+      }
+      resolve(value);
+    };
+    const timer = setTimeout(
+      () => finish(mcp_failure(`MCP Server 握手超时（${timeout_ms} ms）。`)),
+      timeout_ms,
+    );
+    const send = (message) => {
+      child.stdin.write(`${JSON.stringify(message)}\n`);
+    };
+    const request_next = () => {
+      if (next_index >= requests.length) {
+        finish({ ok: true, results });
+        return;
+      }
+      send({
+        jsonrpc: "2.0",
+        id: next_index + 1,
+        method: requests[next_index].method,
+        params: requests[next_index].params ?? {},
+      });
+    };
+
+    send({
+      jsonrpc: "2.0",
+      id: 0,
+      method: "initialize",
+      params: {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: "setup_bootstrap", version: "0.1.0" },
+      },
+    });
+
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+        if (line === "") {
+          continue;
+        }
+        let message;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (message.id === 0) {
+          send({ jsonrpc: "2.0", method: "notifications/initialized" });
+          request_next();
+          continue;
+        }
+        if (typeof message.id === "number" && message.id >= 1) {
+          if (message.error !== undefined) {
+            finish(mcp_failure(`工具调用失败：${JSON.stringify(message.error)}`));
+            return;
+          }
+          results.push(message.result ?? {});
+          next_index += 1;
+          request_next();
+        }
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr = `${stderr}${chunk.toString("utf8")}`.slice(-2000);
+    });
+    child.on("error", (error) => finish(mcp_failure(describe_error(error))));
+    child.on("close", (code) => {
+      finish(
+        mcp_failure(`MCP Server 提前退出（code ${code}）：${stderr.slice(0, 500)}`),
+      );
+    });
+  });
+}
+
+function mcp_failure(message) {
+  return { ok: false, error: { code: "SERVER_HANDSHAKE_FAILED", message } };
+}
+
 /**
  * 子命令入口：输出 JSON 到 stdout，返回进程退出码。
  * 未识别的子命令返回 USAGE_ERROR；其余子命令由后续任务（§7.1）逐个接入。
@@ -921,6 +1167,14 @@ export async function run_cli(argv = [], options = {}) {
         cli_version: version_flag.value,
         allow_global,
       });
+    }
+  } else if (command === "build-server") {
+    if (argv.length > 1) {
+      result = usage_error(`build-server 不支持的位置参数：${argv.slice(1).join(" ")}。`, [
+        "build-server",
+      ]);
+    } else {
+      result = await build_server(base_options);
     }
   } else if (command === undefined) {
     result = usage_error("缺少子命令。", USAGE_COMMANDS);
@@ -979,11 +1233,13 @@ function take_flag(args, flag) {
  * npm 在 Windows 上是 `.cmd`，Node 不允许直接 spawn（EINVAL），必须经 cmd.exe；
  * 这里显式拼命令行并按 cmd 规则转义参数，不依赖 `shell: true`。
  */
-function npm_invocation(args) {
-  if (process.platform !== "win32") {
-    return { command: "npm", args: [...args] };
+function npm_invocation(args, npm_path = "npm") {
+  const windows_cmd =
+    process.platform === "win32" && (npm_path === "npm" || /\.(cmd|bat)$/i.test(npm_path));
+  if (!windows_cmd) {
+    return { command: npm_path, args: [...args] };
   }
-  const line = ["npm", ...args.map(quote_cmd_argument)].join(" ");
+  const line = [quote_cmd_argument(npm_path), ...args.map(quote_cmd_argument)].join(" ");
   return { command: "cmd.exe", args: ["/d", "/s", "/c", line] };
 }
 

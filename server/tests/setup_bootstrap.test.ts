@@ -37,8 +37,23 @@ interface FakeDeps {
     format: string,
     destination: string,
   ) => Promise<Record<string, unknown>>;
+  can_write: (target: string) => boolean;
+  mcp_session: (call: McpSessionCall) => Promise<McpSessionResult>;
   now: () => number;
 }
+
+interface McpSessionCall {
+  node_path: string;
+  server_path: string;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  timeout_ms?: number;
+  requests: Array<{ method: string; params?: unknown }>;
+}
+
+type McpSessionResult =
+  | { ok: true; results: Array<Record<string, unknown>> }
+  | { ok: false; error: { code: string; message: string } };
 
 interface FakeCalls {
   run: string[][];
@@ -46,6 +61,7 @@ interface FakeCalls {
   fetch_json: string[];
   fetch_bytes: string[];
   extract: string[][];
+  mcp_session: McpSessionCall[];
 }
 
 interface FakeBehavior {
@@ -61,6 +77,8 @@ interface FakeBehavior {
     format: string,
     destination: string,
   ) => unknown | Promise<unknown>;
+  can_write?: (target: string) => boolean;
+  mcp_session?: (call: McpSessionCall) => McpSessionResult | Promise<McpSessionResult>;
 }
 
 let tempRoot = "";
@@ -84,6 +102,7 @@ function fake_deps(behavior: FakeBehavior = {}): { deps: FakeDeps; calls: FakeCa
     fetch_json: [],
     fetch_bytes: [],
     extract: [],
+    mcp_session: [],
   };
   const deps: FakeDeps = {
     run: async (command, args, options) => {
@@ -106,6 +125,14 @@ function fake_deps(behavior: FakeBehavior = {}): { deps: FakeDeps; calls: FakeCa
     extract: async (archivePath, format, destination) => {
       calls.extract.push([archivePath, format, destination]);
       return await (behavior.extract?.(archivePath, format, destination) ?? { ok: true });
+    },
+    can_write: (target) => behavior.can_write?.(target) ?? existsSync(target),
+    mcp_session: async (call) => {
+      calls.mcp_session.push(call);
+      return await (behavior.mcp_session?.(call) ?? {
+        ok: true,
+        results: call.requests.map(() => ({ tools: [] })),
+      });
     },
     now: () => 1760000000000,
   };
@@ -465,7 +492,139 @@ describe("setup_bootstrap", () => {
     expect(install_line).toContain("--prefix");
     expect(install_line).toContain(prefix);
   });
+
+  test("build-server stops with PLUGIN_DIR_READONLY before running npm", async () => {
+    const home = path.join(tempRoot, "home");
+    const plugin_root = path.join(tempRoot, "plugin");
+    mkdirSync(path.join(plugin_root, "server"), { recursive: true });
+    const { deps, calls } = fake_deps({ can_write: () => false });
+    const { build_server } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await build_server({ home_dir: home, env: {}, deps, plugin_root });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("PLUGIN_DIR_READONLY");
+    expect(calls.run, "权限预检失败时不得启动 npm").toEqual([]);
+  });
+
+  test("build-server classifies npm failures", async () => {
+    const home = path.join(tempRoot, "home");
+    const plugin_root = path.join(tempRoot, "plugin");
+    mkdirSync(path.join(plugin_root, "server"), { recursive: true });
+    const { build_server } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const cases: Array<[string, string]> = [
+      ["npm error code EPERM\nnpm error syscall mkdir", "NEEDS_ESCALATION"],
+      ["npm error code EACCES\nnpm error path /x", "NEEDS_ESCALATION"],
+      ["npm error code ENOTFOUND\nnpm error network request to https://registry.npmjs.org", "NETWORK_BLOCKED"],
+      ["npm error code EAI_AGAIN\ngetaddrinfo", "NETWORK_BLOCKED"],
+      ["npm error code ERESOLVE\nunable to resolve dependency tree", "NPM_SOURCE_FAILED"],
+      ["npm error 404 Not Found - GET https://registry.npmjs.org/esbuild", "NPM_SOURCE_FAILED"],
+    ];
+
+    for (const [stderr, expected] of cases) {
+      const { deps } = fake_deps({
+        run: async () => ({ code: 1, stdout: "", stderr }),
+      });
+      const result = await build_server({ home_dir: home, env: {}, deps, plugin_root });
+      expect(result.ok).toBe(false);
+      expect(result.error.code, stderr).toBe(expected);
+    }
+  });
+
+  test("build-server reports BUILD_TOOL_BLOCKED when the builder or dist is missing", async () => {
+    const home = path.join(tempRoot, "home");
+    const plugin_root = path.join(tempRoot, "plugin");
+    mkdirSync(path.join(plugin_root, "server"), { recursive: true });
+    const { deps } = fake_deps({
+      run: async () => ({ code: 0, stdout: "", stderr: "" }),
+    });
+    const { build_server } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await build_server({ home_dir: home, env: {}, deps, plugin_root });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("BUILD_TOOL_BLOCKED");
+  });
+
+  test("build-server builds, checks the builder and completes the tools/list handshake", async () => {
+    const home = path.join(tempRoot, "home");
+    const plugin_root = path.join(tempRoot, "plugin");
+    const server_dir = path.join(plugin_root, "server");
+    const dist_path = path.join(server_dir, "dist", "server.mjs");
+    const esbuild_path = esbuild_binary_path(server_dir);
+    mkdirSync(server_dir, { recursive: true });
+
+    const { deps, calls } = fake_deps({
+      run: async (command, args) => {
+        const line = [command, ...args].join(" ");
+        if (line.includes("run build")) {
+          mkdirSync(path.dirname(dist_path), { recursive: true });
+          writeFileSync(dist_path, "// minimal server", "utf8");
+          mkdirSync(path.dirname(esbuild_path), { recursive: true });
+          writeFileSync(esbuild_path, "binary", "utf8");
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      mcp_session: async () => ({
+        ok: true,
+        results: [{ tools: [{ name: "health" }, { name: "read_config" }] }],
+      }),
+    });
+    const { build_server } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await build_server({ home_dir: home, env: {}, deps, plugin_root });
+
+    expect(result.ok).toBe(true);
+    expect(result.dist_path).toBe(dist_path);
+    expect(result.tools_count).toBe(2);
+    expect(calls.run_options.some((options) => options?.cwd === server_dir)).toBe(true);
+    expect(calls.mcp_session).toHaveLength(1);
+    expect(calls.mcp_session[0]).toMatchObject({
+      server_path: dist_path,
+      requests: [{ method: "tools/list", params: {} }],
+    });
+  });
+
+  test(
+    "build-server completes a real initialize + tools/list handshake against the built dist",
+    async () => {
+      const { build_server, create_default_deps } = await import("../../scripts/setup_bootstrap.mjs");
+      const real_deps = create_default_deps();
+      const { deps } = fake_deps({
+        // npm ci / npm run build 空跑：直接复用 pretest 已经构建好的 dist。
+        run: async () => ({ code: 0, stdout: "", stderr: "" }),
+      });
+
+      const result = await build_server({
+        plugin_root: repoRoot,
+        env: process.env,
+        deps: { ...deps, mcp_session: real_deps.mcp_session },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.tools_count).toBeGreaterThan(0);
+    },
+    30000,
+  );
 });
+
+/** esbuild 平台包里的二进制路径（宿主策略拦截 postinstall 时它不会存在）。 */
+function esbuild_binary_path(server_dir: string): string {
+  if (isWindows) {
+    const platform = process.arch === "arm64" ? "win32-arm64" : "win32-x64";
+    return path.join(server_dir, "node_modules", "@esbuild", platform, "esbuild.exe");
+  }
+  const platform =
+    process.platform === "darwin"
+      ? process.arch === "arm64"
+        ? "darwin-arm64"
+        : "darwin-x64"
+      : process.arch === "arm64"
+        ? "linux-arm64"
+        : "linux-x64";
+  return path.join(server_dir, "node_modules", "@esbuild", platform, "bin", "esbuild");
+}
 
 /** 私有 prefix 里的 lark-cli 路径（架构 §5.2 的固定布局）。 */
 function private_cli_path(home: string): string {
