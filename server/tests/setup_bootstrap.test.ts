@@ -607,6 +607,128 @@ describe("setup_bootstrap", () => {
     },
     30000,
   );
+
+  test("ensure-app reuses an existing appId without running config init", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps, calls } = fake_deps({
+      run: async (_command, args) =>
+        args[0] === "config" && args[1] === "show"
+          ? {
+              code: 0,
+              stdout: JSON.stringify({
+                appId: "cli_app_existing",
+                appSecret: "SENSITIVE-APP-SECRET",
+              }),
+              stderr: "config path: C:\\Users\\demo\\.lark-cli\\config.json\n",
+            }
+          : { code: 0, stdout: "", stderr: "" },
+    });
+    const { ensure_app } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await ensure_app({ home_dir: home, env: {}, deps, cli_path: "lark-cli" });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("reused");
+    expect(result.app_id).toBe("cli_app_existing");
+    expect(
+      calls.run.map((entry) => entry.join(" ")).join(" | "),
+      "有 appId 时不得触发应用创建",
+    ).not.toContain("config init");
+    expect(JSON.stringify(result)).not.toContain("SENSITIVE-APP-SECRET");
+  });
+
+  test("ensure-app reports APP_NOT_CONFIGURED when config show has no appId", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps } = fake_deps({
+      run: async () => ({ code: 0, stdout: '{"appSecret":"x"}', stderr: "path\n" }),
+    });
+    const { ensure_app } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await ensure_app({ home_dir: home, env: {}, deps, cli_path: "lark-cli" });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("APP_NOT_CONFIGURED");
+    expect(result.error.next_actions.join(" ")).toContain("同意");
+  });
+
+  test("ensure-app asks for explicit consent when the cli refuses in an agent context", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps } = fake_deps({
+      run: async (_command, args) => {
+        const line = args.join(" ");
+        if (line.startsWith("config show")) {
+          return { code: 0, stdout: "{}", stderr: "" };
+        }
+        if (line.startsWith("config init")) {
+          return {
+            code: 1,
+            stdout: "",
+            stderr:
+              "error: running inside an agent context; app registration is disabled. " +
+              "use `lark-cli config bind` or run `config init --new --force-init` after user consent.\n",
+          };
+        }
+        return { code: 1, stdout: "", stderr: "" };
+      },
+    });
+    const { ensure_app } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await ensure_app({
+      home_dir: home,
+      env: {},
+      deps,
+      cli_path: "lark-cli",
+      create: true,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("APP_REGISTRATION_PENDING");
+    expect(result.error.next_actions.join(" ")).toContain("--force");
+  });
+
+  test("ensure-app forwards progress without leaking appSecret while creating an app", async () => {
+    const home = path.join(tempRoot, "home");
+    const forwarded: string[] = [];
+    let show_count = 0;
+    const { deps } = fake_deps({
+      run: async (_command, args) => {
+        const line = args.join(" ");
+        if (line.startsWith("config show")) {
+          show_count += 1;
+          return show_count === 1
+            ? { code: 0, stdout: "{}", stderr: "config path\n" }
+            : { code: 0, stdout: '{"appId":"cli_app_created"}', stderr: "config path\n" };
+        }
+        if (line.startsWith("config init")) {
+          return {
+            code: 0,
+            stdout: "",
+            stderr:
+              "请访问 https://accounts.feishu.cn/app/create?xx=1 完成授权\n" +
+              'debug: {"appSecret":"SENSITIVE-APP-SECRET"}\n',
+          };
+        }
+        return { code: 1, stdout: "", stderr: "" };
+      },
+    });
+    const { ensure_app } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await ensure_app({
+      home_dir: home,
+      env: {},
+      deps,
+      cli_path: "lark-cli",
+      create: true,
+      io: { stdout: () => {}, stderr: (text: string) => forwarded.push(text) },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("created");
+    expect(result.app_id).toBe("cli_app_created");
+    expect(forwarded.join("")).toContain("https://accounts.feishu.cn/app/create");
+    expect(forwarded.join("")).not.toContain("SENSITIVE-APP-SECRET");
+    expect(JSON.stringify(result)).not.toContain("SENSITIVE-APP-SECRET");
+  });
 });
 
 /** esbuild 平台包里的二进制路径（宿主策略拦截 postinstall 时它不会存在）。 */

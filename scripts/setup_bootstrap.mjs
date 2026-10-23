@@ -55,7 +55,13 @@ export const CHECK_IDS = [
 ];
 
 /** 已实现的子命令清单（后续任务逐个补齐，见架构 §7.1）。 */
-export const USAGE_COMMANDS = ["doctor", "ensure-runtime", "install-cli", "build-server"];
+export const USAGE_COMMANDS = [
+  "doctor",
+  "ensure-runtime",
+  "install-cli",
+  "build-server",
+  "ensure-app",
+];
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PLUGIN_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -1126,6 +1132,143 @@ function mcp_failure(message) {
 }
 
 /**
+ * `ensure-app`：解析 `config show` 的 **stdout JSON**，有 `appId` 即复用（只取
+ * `appId`，其余字段一律丢弃，尤其是 `appSecret`）；没有时按需引导一次浏览器内的
+ * 应用创建；lark-cli 在 agent 上下文拒绝时必须先取得用户同意再用 `--force-init`。
+ */
+export async function ensure_app(options = {}) {
+  const deps = resolve_deps(options.deps);
+  const io = { ...default_io(), ...(options.io ?? {}) };
+  const env = options.env ?? process.env;
+  const home_dir = options.home_dir ?? os.homedir();
+  const cli_path = resolve_cli_path(options, env, home_dir);
+  if (cli_path === undefined) {
+    return failure("LARK_CLI_NOT_FOUND", "未找到 lark-cli，无法检查飞书应用配置。", {
+      next_actions: ["先运行 install-cli 安装 lark-cli，再重跑 ensure-app。"],
+    });
+  }
+
+  const shown = await run_lark_cli(deps, cli_path, ["config", "show"], env, 120000);
+  const app_id = extract_app_id(shown);
+  if (app_id !== undefined) {
+    return { ok: true, status: "reused", app_id };
+  }
+
+  if (options.create !== true) {
+    return failure("APP_NOT_CONFIGURED", "本机还没有飞书自建应用（config show 里没有 appId）。", {
+      details: { cli_path },
+      next_actions: [
+        "需要用户同意后创建应用：取得同意后用 --create 重跑；创建过程在浏览器里完成。",
+      ],
+    });
+  }
+
+  const init_args = ["config", "init", "--new", "--lang", "zh"];
+  if (options.force === true) {
+    init_args.push("--force-init");
+  }
+  const init = await run_lark_cli(deps, cli_path, init_args, env, 900000);
+  // deps.run 是一次性执行、拿不到流式输出：完成后立刻把可公开的进度（授权链接）
+  // 转发到 stderr，并剥掉任何 appSecret 之类的敏感片段。
+  forward_progress(io, `${init.stdout}\n${init.stderr}`);
+
+  const recheck = await run_lark_cli(deps, cli_path, ["config", "show"], env, 120000);
+  const created_app_id = extract_app_id(recheck);
+  if (created_app_id !== undefined) {
+    return { ok: true, status: "created", app_id: created_app_id };
+  }
+
+  const combined = `${init.stdout}\n${init.stderr}`;
+  if (init.code !== 0 && /agent context|agent 上下文|config bind/i.test(combined)) {
+    return failure(
+      "APP_REGISTRATION_PENDING",
+      "lark-cli 在 agent 上下文里拒绝了应用创建，需要用户明确同意后再继续。",
+      {
+        details: {
+          cli_path,
+          exit_code: init.code,
+          stderr: redact_secrets(init.stderr).slice(0, 500),
+        },
+        next_actions: [
+          "先向用户说明影响并取得明确同意，再用 ensure-app --create --force（force-init）重跑。",
+        ],
+      },
+    );
+  }
+
+  return failure("APP_REGISTRATION_FAILED", `应用注册未完成（退出码 ${init.code}）。`, {
+    details: {
+      cli_path,
+      exit_code: init.code,
+      stderr: redact_secrets(init.stderr).slice(0, 500),
+    },
+    next_actions: ["确认浏览器操作是否完成；必要时由用户决定是否重试 ensure-app --create。"],
+  });
+}
+
+function resolve_cli_path(options, env, home_dir) {
+  if (typeof options.cli_path === "string" && options.cli_path.trim() !== "") {
+    return options.cli_path;
+  }
+  return find_lark_cli(env, home_dir)?.path;
+}
+
+async function run_lark_cli(deps, cli_path, args, env, timeout_ms) {
+  const call = command_call(cli_path, args);
+  return await deps.run(call.command, call.args, { env, timeout_ms });
+}
+
+/** 只从 stdout 的 JSON 里取 appId；stdout 不是 JSON 时按"未配置"处理。 */
+function extract_app_id(result) {
+  if (typeof result.stdout !== "string" || result.stdout.trim() === "") {
+    return undefined;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(result.stdout);
+  } catch {
+    return undefined;
+  }
+  return find_app_id(payload);
+}
+
+function find_app_id(payload) {
+  if (payload === null || typeof payload !== "object") {
+    return undefined;
+  }
+  for (const key of ["appId", "app_id"]) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+  for (const key of ["data", "app", "config", "profiles"]) {
+    const nested = find_app_id(payload[key]);
+    if (nested !== undefined) {
+      return nested;
+    }
+  }
+  return undefined;
+}
+
+/** 转发人类可读进度；`appSecret` 一类敏感字面量一律掩码。 */
+function forward_progress(io, text) {
+  const lines = redact_secrets(text)
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "");
+  if (lines.length > 0) {
+    io.stderr(`${lines.join("\n")}\n`);
+  }
+}
+
+function redact_secrets(text) {
+  return String(text ?? "").replace(
+    /("?(?:appSecret|app_secret|secret|token)"?\s*[:=]\s*)"?[^",\s}]+"?/gi,
+    '$1"<masked>"',
+  );
+}
+
+/**
  * 子命令入口：输出 JSON 到 stdout，返回进程退出码。
  * 未识别的子命令返回 USAGE_ERROR；其余子命令由后续任务（§7.1）逐个接入。
  */
@@ -1175,6 +1318,20 @@ export async function run_cli(argv = [], options = {}) {
       ]);
     } else {
       result = await build_server(base_options);
+    }
+  } else if (command === "ensure-app") {
+    const rest = argv.slice(1);
+    const allowed = ["--create", "--force"];
+    const unknown = rest.filter((entry) => !allowed.includes(entry));
+    if (unknown.length > 0) {
+      result = usage_error(`ensure-app 不支持的参数：${unknown.join(" ")}。`, allowed);
+    } else {
+      result = await ensure_app({
+        ...base_options,
+        io,
+        create: rest.includes("--create"),
+        force: rest.includes("--force"),
+      });
     }
   } else if (command === undefined) {
     result = usage_error("缺少子命令。", USAGE_COMMANDS);
