@@ -17,6 +17,7 @@ import {
   type RunCliResult,
 } from "../lark_cli.js";
 import { index_file_path, index_status } from "../index_store.js";
+import { normalize_config } from "./write_config.js";
 
 /**
  * 健康检查工具（架构 §8、§13）。
@@ -54,6 +55,8 @@ export interface HealthWarning {
 
 export interface HealthResult {
   ok: boolean;
+  /** 本次配置来源：`pending`（入参提供）/ `disk`（config.toml）/ `none`。 */
+  config_source: "pending" | "disk" | "none";
   checks: HealthCheck[];
   warnings: HealthWarning[];
 }
@@ -63,6 +66,11 @@ export interface HealthOptions {
   env?: NodeJS.ProcessEnv;
   /** 默认 os.homedir()；用于 lark-cli 常见安装目录探测。 */
   home_dir?: string;
+  /**
+   * 可选：与 `write_config` 的 `config` 同形状；提供即替代磁盘配置（只读预检）。
+   * 校验失败时直接返回只含 `config` fail check 的结果。
+   */
+  pending_config?: unknown;
 }
 
 const LOCAL_DIR_NAMES = ["cache", "index", "logs"] as const;
@@ -74,8 +82,42 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
   const env = options.env;
   const home = resolve_home();
 
-  const config_result = load_config();
-  const config = loaded_config(config_result);
+  // 配置来源收敛为一处：pending_config 提供时完全不读磁盘；校验失败 fail-fast，
+  // 只返回 config fail check（架构 §8）。
+  const pending =
+    options.pending_config === undefined
+      ? undefined
+      : normalize_config(options.pending_config, { preserve_existing: false });
+  if (pending !== undefined && "error" in pending) {
+    return {
+      ok: false,
+      config_source: "none",
+      checks: [
+        {
+          id: "config",
+          status: "fail",
+          message: pending.error.message,
+          detail: {
+            code: "CONFIG_INVALID",
+            ...(Array.isArray(pending.error.details?.missing_keys)
+              ? { missing_keys: pending.error.details.missing_keys }
+              : {}),
+          },
+        },
+      ],
+      warnings: [],
+    };
+  }
+
+  const config_result = pending === undefined ? load_config() : undefined;
+  const config =
+    pending !== undefined
+      ? pending.config
+      : config_result === undefined
+        ? undefined
+        : loaded_config(config_result);
+  const config_source: HealthResult["config_source"] =
+    pending !== undefined ? "pending" : config === undefined ? "none" : "disk";
 
   const cli = resolve_lark_cli(config, { env, home_dir: options.home_dir });
   const cli_path = cli.ok ? cli.path : undefined;
@@ -145,14 +187,21 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
     }
   }
 
-  if ("error" in config_result) {
+  if (pending !== undefined) {
+    push_check(checks, warnings, {
+      id: "config",
+      status: "pass",
+      message: "配置已通过 pending_config 校验（本次不读磁盘配置）。",
+      detail: { source: "pending" },
+    });
+  } else if (config_result !== undefined && "error" in config_result) {
     push_check(checks, warnings, {
       id: "config",
       status: "fail",
       message: config_result.error.message,
       detail: { code: "CONFIG_INVALID", path: config_result.error.details.path },
     });
-  } else if (!config_result.exists) {
+  } else if (config_result !== undefined && !config_result.exists) {
     const config_path = config_result.path;
     push_check(checks, warnings, {
       id: "config",
@@ -160,7 +209,7 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
       message: `未找到配置文件：${config_path}。请先运行 $setup 完成初始化。`,
       detail: { code: "CONFIG_MISSING", path: config_path, hint: "先运行 $setup 生成配置。" },
     });
-  } else {
+  } else if (config_result !== undefined) {
     const config_path = path.join(home, CONFIG_FILE_NAME);
     const missing_keys: string[] = [];
     if (!has_text(config?.lark.space_a)) {
@@ -214,7 +263,7 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
           status: "warn",
           message:
             `配置期望活动 profile 为 "${expected_profile}"，当前为 "${active_profile.profile}"。` +
-            `请运行 \`lark-cli profile use ${expected_profile}\`（需你本人确认）；插件不会自动切换 profile。`,
+            `运行 $setup 可自动对齐配置（插件不会调用 profile use 切换）。`,
           detail: {
             code: "LARK_PROFILE_MISMATCH",
             expected_profile,
@@ -403,12 +452,12 @@ export async function health(options: HealthOptions = {}): Promise<HealthResult>
   }
 
   // config 层 warnings（字段缺失 / 使用了默认值）同样对调用方可见，附在 check 自身的 warning 之后。
-  if (!("error" in config_result) && config_result.exists) {
+  if (config_result !== undefined && !("error" in config_result) && config_result.exists) {
     merge_config_warnings(warnings, config_result.warnings);
   }
 
   const ok = checks.every((entry) => entry.status !== "fail");
-  return { ok, checks, warnings };
+  return { ok, config_source, checks, warnings };
 }
 
 function loaded_config(result: LoadConfigResult): Script2ShotConfig | undefined {

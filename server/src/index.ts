@@ -6,7 +6,7 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
-import { health } from "./tools/health.js";
+import { health, type HealthOptions } from "./tools/health.js";
 import { init_knowledge_b, type InitKnowledgeBInput } from "./tools/init_knowledge_b.js";
 import { read_config } from "./tools/read_config.js";
 import { write_config, type WriteConfigInput } from "./tools/write_config.js";
@@ -72,8 +72,21 @@ const server = new Server(
 const TOOLS = [
   {
     name: "health",
-    description: "只读检查：lark-cli 路径与版本、登录状态、原始库与 AI 库可达性、本地目录与索引状态。",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    description:
+      "只读检查：lark-cli 路径与版本、登录状态、原始库与 AI 库可达性、本地目录与索引状态；" +
+      "可选 pending_config 替代磁盘配置做写入前预检（不写盘）。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pending_config: {
+          type: "object",
+          description:
+            "可选：与 write_config 的 config 同形状的待写入配置；提供时本次检查完全不读磁盘配置，" +
+            "成功结果带 config_source=pending，校验失败时只返回 config fail check。",
+        },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: "read_config",
@@ -636,7 +649,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name } = request.params;
   if (name === "health") {
-    return tool_json(await health());
+    const parsed = parse_health_arguments(request.params.arguments);
+    return parsed.ok ? tool_json(await health(parsed.value)) : tool_json(parsed);
   }
   if (name === "read_config") {
     const parsed = parse_empty_arguments(request.params.arguments);
@@ -788,6 +802,25 @@ function parse_empty_arguments(raw: unknown): Parsed<Record<string, never>> {
   }
   const unknown_key = reject_unknown_keys(parsed.value, []);
   return unknown_key === undefined ? { ok: true, value: {} } : unknown_key;
+}
+
+/** health 只接受可选的 `pending_config`；其余字段 fail-closed。 */
+function parse_health_arguments(raw: unknown): Parsed<HealthOptions> {
+  const parsed = parse_arguments_object(raw);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const unknown_key = reject_unknown_keys(parsed.value, ["pending_config"]);
+  if (unknown_key !== undefined) {
+    return unknown_key;
+  }
+  const pending_config = parsed.value.pending_config;
+  if (pending_config !== undefined && !is_record(pending_config)) {
+    return invalid_arguments('入参字段 "pending_config" 期望对象。', {
+      field: "pending_config",
+    });
+  }
+  return { ok: true, value: pending_config === undefined ? {} : { pending_config } };
 }
 
 function parse_fetch_doc_arguments(

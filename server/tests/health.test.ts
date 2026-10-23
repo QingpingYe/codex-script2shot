@@ -219,6 +219,7 @@ describe("health", () => {
     const result = await run_health("ok", { FAKE_LOG_FILE: log_file });
 
     expect(result.ok).toBe(true);
+    expect(result.config_source).toBe("disk");
     expect(result.checks.map((entry) => entry.id)).toEqual(CHECK_ORDER);
     expect(check(result, "lark_cli").status).toBe("pass");
     expect(check(result, "lark_cli_version")).toMatchObject({
@@ -265,8 +266,11 @@ describe("health", () => {
     expect(result.ok).toBe(true);
     const profile = check(result, "lark_profile");
     expect(profile.status).toBe("warn");
-    expect(profile.message).toContain("lark-cli profile use expected-profile");
-    expect(profile.message).toContain("需你本人确认");
+    expect(
+      profile.message,
+      "不得把 profile 切换命令转交给用户",
+    ).not.toContain("lark-cli profile use");
+    expect(profile.message).toContain("$setup");
     expect(profile.detail).toMatchObject({
       code: "LARK_PROFILE_MISMATCH",
       expected_profile: "expected-profile",
@@ -277,6 +281,55 @@ describe("health", () => {
     const calls = read_calls(log_file).map((call) => call.args);
     expect(calls).toContainEqual(["profile", "list"]);
     expect(calls).not.toContainEqual(["profile", "use", "expected-profile"]);
+  });
+
+  test("health reports a pending config as the config source without reading the disk", async () => {
+    create_local_dirs();
+    const log_file = path.join(tempRoot, "calls.jsonl");
+
+    const result = await health({
+      env: fake_env("ok", { FAKE_LOG_FILE: log_file }),
+      home_dir: fakeHomeDir,
+      pending_config: {
+        lark: { cli_path: fakeCli, profile: "default", space_a: SPACE_A, base_b: BASE_B },
+      },
+    });
+
+    expect(result.config_source).toBe("pending");
+    expect(result.ok).toBe(true);
+    expect(check(result, "config")).toMatchObject({
+      status: "pass",
+      detail: { source: "pending" },
+    });
+    const calls = read_calls(log_file).map((call) => call.args);
+    expect(calls).toContainEqual([
+      "wiki",
+      "+node-list",
+      "--space-id",
+      SPACE_A,
+      "--page-size",
+      "1",
+      "--as",
+      "user",
+    ]);
+    expect(calls).toContainEqual(["base", "+table-list", "--base-token", BASE_B]);
+  });
+
+  test("health fails fast when the pending config is invalid", async () => {
+    const result = await health({
+      env: fake_env("ok"),
+      home_dir: fakeHomeDir,
+      pending_config: { lark: { profile: "default", space_a: SPACE_A, base_b: "" } },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.config_source).toBe("none");
+    const config_check = check(result, "config");
+    expect(config_check.status).toBe("fail");
+    expect(config_check.detail).toMatchObject({
+      code: "CONFIG_INVALID",
+      missing_keys: ["lark.base_b"],
+    });
   });
 
   test("health fails with login hint when auth missing", async () => {
