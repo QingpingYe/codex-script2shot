@@ -42,13 +42,18 @@ interface FakeDeps {
 
 interface FakeCalls {
   run: string[][];
+  run_options: Array<Record<string, unknown> | undefined>;
   fetch_json: string[];
   fetch_bytes: string[];
   extract: string[][];
 }
 
 interface FakeBehavior {
-  run?: (command: string, args: string[]) => RunResult | Promise<RunResult>;
+  run?: (
+    command: string,
+    args: string[],
+    options?: Record<string, unknown>,
+  ) => RunResult | Promise<RunResult>;
   fetch_json?: (url: string) => unknown | Promise<unknown>;
   fetch_bytes?: (url: string) => Uint8Array | Promise<Uint8Array>;
   extract?: (
@@ -73,11 +78,18 @@ afterEach(() => {
  * `behavior` 只替换动作本身，调用记录始终保留。
  */
 function fake_deps(behavior: FakeBehavior = {}): { deps: FakeDeps; calls: FakeCalls } {
-  const calls: FakeCalls = { run: [], fetch_json: [], fetch_bytes: [], extract: [] };
+  const calls: FakeCalls = {
+    run: [],
+    run_options: [],
+    fetch_json: [],
+    fetch_bytes: [],
+    extract: [],
+  };
   const deps: FakeDeps = {
-    run: async (command, args) => {
+    run: async (command, args, options) => {
       calls.run.push([command, ...args]);
-      return await (behavior.run?.(command, args) ?? {
+      calls.run_options.push(options);
+      return await (behavior.run?.(command, args, options) ?? {
         code: 0,
         stdout: "v26.8.2\n",
         stderr: "",
@@ -343,7 +355,144 @@ describe("setup_bootstrap", () => {
     expect(result.ok).toBe(false);
     expect(result.error.code).toBe("NPM_UNAVAILABLE");
   });
+
+  test("install-cli reuses a private cli at or above the minimum version", async () => {
+    const home = path.join(tempRoot, "home");
+    const cli_path = private_cli_path(home);
+    mkdirSync(path.dirname(cli_path), { recursive: true });
+    writeFileSync(cli_path, "fake", "utf8");
+    const { deps, calls } = fake_deps({
+      run: async (_command, args) =>
+        args[0] === "--version"
+          ? { code: 0, stdout: "lark-cli version 1.0.98\n", stderr: "" }
+          : { code: 0, stdout: "", stderr: "" },
+    });
+    const { install_cli } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await install_cli({ home_dir: home, env: {}, deps });
+
+    expect(result.ok).toBe(true);
+    expect(result.source).toBe("reuse");
+    expect(result.cli_path).toBe(cli_path);
+    expect(result.version).toBe("1.0.98");
+    expect(
+      calls.run.map((entry) => entry.join(" ")).join(" | "),
+      "复用路径不得触发 npm 安装",
+    ).not.toContain("install");
+  });
+
+  test("install-cli falls back to the packaged installer when the binary is missing", async () => {
+    const home = path.join(tempRoot, "home");
+    const cli_path = private_cli_path(home);
+    const { deps, calls } = fake_deps({
+      run: async (command, args, options) => {
+        const line = [command, ...args].join(" ");
+        if (line.includes("install.js")) {
+          expect(options?.env?.LARK_CLI_RUN).toBe("1");
+          mkdirSync(path.dirname(cli_path), { recursive: true });
+          writeFileSync(cli_path, "fake", "utf8");
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        if (line.includes("@larksuite/cli@1.0.98")) {
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        return { code: 1, stdout: "", stderr: "not found" };
+      },
+    });
+    const { install_cli } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await install_cli({ home_dir: home, env: {}, deps });
+
+    expect(result.ok).toBe(true);
+    expect(result.source).toBe("package-installer");
+    expect(result.cli_path).toBe(cli_path);
+    const installer_calls = calls.run.filter((entry) =>
+      entry.some((part) => part.includes("install.js")),
+    );
+    expect(installer_calls).toHaveLength(1);
+    expect(installer_calls[0][1]).toBe(private_install_script(home));
+  });
+
+  test("install-cli reports NPM_INSTALL_FAILED when npm and the installer both fail", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps } = fake_deps({
+      run: async () => ({ code: 1, stdout: "", stderr: "boom" }),
+    });
+    const { install_cli } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await install_cli({ home_dir: home, env: {}, deps });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("NPM_INSTALL_FAILED");
+  });
+
+  test("install-cli upgrades a private cli below the minimum version", async () => {
+    const home = path.join(tempRoot, "home");
+    const cli_path = private_cli_path(home);
+    const prefix = path.join(home, ".codex-script2shot", "cli");
+    mkdirSync(path.dirname(cli_path), { recursive: true });
+    writeFileSync(cli_path, "old", "utf8");
+    let installed = false;
+    const { deps, calls } = fake_deps({
+      run: async (command, args) => {
+        const line = [command, ...args].join(" ");
+        if (args[0] === "--version") {
+          return {
+            code: 0,
+            stdout: installed ? "lark-cli version 1.0.98\n" : "lark-cli version 1.0.97\n",
+            stderr: "",
+          };
+        }
+        if (line.includes("@larksuite/cli@1.0.98")) {
+          installed = true;
+          writeFileSync(cli_path, "new", "utf8");
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        return { code: 1, stdout: "", stderr: "" };
+      },
+    });
+    const { install_cli } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await install_cli({ home_dir: home, env: {}, deps });
+
+    expect(result.ok).toBe(true);
+    expect(result.source).toBe("npm-prefix");
+    expect(result.version).toBe("1.0.98");
+    expect(result.cli_path).toBe(cli_path);
+    const install_line = calls.run
+      .map((entry) => entry.join(" "))
+      .find((line) => line.includes("@larksuite/cli@1.0.98"));
+    expect(install_line).toContain("--prefix");
+    expect(install_line).toContain(prefix);
+  });
 });
+
+/** 私有 prefix 里的 lark-cli 路径（架构 §5.2 的固定布局）。 */
+function private_cli_path(home: string): string {
+  return path.join(
+    home,
+    ".codex-script2shot",
+    "cli",
+    "node_modules",
+    "@larksuite",
+    "cli",
+    "bin",
+    isWindows ? "lark-cli.exe" : "lark-cli",
+  );
+}
+
+function private_install_script(home: string): string {
+  return path.join(
+    home,
+    ".codex-script2shot",
+    "cli",
+    "node_modules",
+    "@larksuite",
+    "cli",
+    "scripts",
+    "install.js",
+  );
+}
 
 /** Windows 不能直接 spawn .cmd，必须经 cmd.exe（与启动器测试同一口径）。 */
 function launcher_command(script_path: string, extra: string[]): { command: string; args: string[] } {

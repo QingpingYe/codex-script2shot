@@ -15,6 +15,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -54,7 +55,7 @@ export const CHECK_IDS = [
 ];
 
 /** 已实现的子命令清单（后续任务逐个补齐，见架构 §7.1）。 */
-export const USAGE_COMMANDS = ["doctor", "ensure-runtime"];
+export const USAGE_COMMANDS = ["doctor", "ensure-runtime", "install-cli"];
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PLUGIN_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -587,6 +588,297 @@ function find_extracted_root(runtime_dir, version) {
   return entries.length === 1 ? path.join(runtime_dir, entries[0].name) : undefined;
 }
 
+export const LARK_CLI_PACKAGE = "@larksuite/cli";
+/** 安装版本固定（架构 §5.2 裁决），不取 latest，避免不同机器拿到不同版本。 */
+export const LARK_CLI_TARGET_VERSION = "1.0.98";
+export const LARK_CLI_ARCHIVE_BASE = "https://github.com/larksuite/cli/releases/download";
+
+/**
+ * lark-cli 发布归档的命名与下载 URL。
+ * 来源：本机 `lark-cli` 1.0.98 包内 `scripts/install.js` 与 `checksums.txt`
+ * （2026-10-23 核对，见设计 §11）。
+ */
+const CLI_ARCHIVE_SPECS = {
+  "win32-x64": { platform: "windows", arch: "amd64", extension: "zip", format: "zip" },
+  "win32-arm64": { platform: "windows", arch: "arm64", extension: "zip", format: "zip" },
+  "darwin-x64": { platform: "darwin", arch: "amd64", extension: "tar.gz", format: "tar.gz" },
+  "darwin-arm64": { platform: "darwin", arch: "arm64", extension: "tar.gz", format: "tar.gz" },
+  "linux-x64": { platform: "linux", arch: "amd64", extension: "tar.gz", format: "tar.gz" },
+  "linux-arm64": { platform: "linux", arch: "arm64", extension: "tar.gz", format: "tar.gz" },
+};
+
+/**
+ * `install-cli`：复用 → 私有 prefix 安装 → 包内安装器 → 官方归档（Node fetch +
+ * 官方 checksums.txt 校验）→ `--allow-global` 显式授权后的系统级安装（架构 §5.2）。
+ */
+export async function install_cli(options = {}) {
+  const deps = resolve_deps(options.deps);
+  const env = options.env ?? process.env;
+  const home_dir = options.home_dir ?? os.homedir();
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  const target_version =
+    typeof options.cli_version === "string" && options.cli_version.trim() !== ""
+      ? options.cli_version.trim()
+      : LARK_CLI_TARGET_VERSION;
+  const prefix = path.join(home_dir, HOME_DIR_NAME, "cli");
+
+  // ① 复用：环境变量 / PATH / 私有 prefix 里已存在且版本 >= 目标版本。
+  const discoverable = find_lark_cli(env, home_dir);
+  if (discoverable !== undefined) {
+    const probed = await probe_cli_version(deps, discoverable.path, env);
+    if (probed !== undefined && is_at_least(probed, target_version)) {
+      return { ok: true, source: "reuse", cli_path: discoverable.path, version: probed };
+    }
+  }
+
+  const failures = {};
+
+  // ② npm 安装到私有 prefix；缓存指向系统临时目录，避开 home 内不可写的 npm 缓存。
+  const cache_dir = path.join(os.tmpdir(), "script2shot-npm-cache");
+  const npm_call = npm_invocation([
+    "install",
+    "--prefix",
+    prefix,
+    "--cache",
+    cache_dir,
+    `${LARK_CLI_PACKAGE}@${target_version}`,
+  ]);
+  const npm_result = await deps.run(npm_call.command, npm_call.args, {
+    env,
+    timeout_ms: 600000,
+  });
+  if (npm_result.code !== 0) {
+    failures.npm = summarize_run(npm_result);
+  }
+  const after_npm = find_private_cli(prefix);
+  if (after_npm !== undefined) {
+    const probed = await probe_cli_version(deps, after_npm, env);
+    return {
+      ok: true,
+      source: "npm-prefix",
+      cli_path: after_npm,
+      version: probed ?? target_version,
+    };
+  }
+
+  // ③ npm 脚本被拦截或 postinstall 失败导致二进制缺失时，直接跑包内安装器。
+  const install_script = path.join(
+    prefix,
+    "node_modules",
+    "@larksuite",
+    "cli",
+    "scripts",
+    "install.js",
+  );
+  const installer_result = await deps.run("node", [install_script], {
+    env: { ...env, LARK_CLI_RUN: "1" },
+    timeout_ms: 600000,
+  });
+  if (installer_result.code !== 0) {
+    failures.package_installer = summarize_run(installer_result);
+  }
+  const after_installer = find_private_cli(prefix);
+  if (after_installer !== undefined) {
+    const probed = await probe_cli_version(deps, after_installer, env);
+    return {
+      ok: true,
+      source: "package-installer",
+      cli_path: after_installer,
+      version: probed ?? target_version,
+    };
+  }
+
+  // ④ 官方归档回退：只有拿得到官方校验文件时才下载（fail-closed）。
+  const archive_attempt = await try_cli_archive_fallback(
+    deps,
+    prefix,
+    target_version,
+    platform,
+    arch,
+  );
+  if (archive_attempt.cli_path !== undefined) {
+    return {
+      ok: true,
+      source: "archive",
+      cli_path: archive_attempt.cli_path,
+      version: target_version,
+    };
+  }
+  if (archive_attempt.failure !== undefined) {
+    failures.archive = archive_attempt.failure.error;
+    if (archive_attempt.failure.error.code === "CLI_CHECKSUM_MISMATCH") {
+      return archive_attempt.failure;
+    }
+  }
+
+  // ⑤ 系统级安装只在用户显式授权（--allow-global）后作为回退。
+  if (options.allow_global === true) {
+    const global_call = npm_invocation(["install", "-g", `${LARK_CLI_PACKAGE}@${target_version}`]);
+    const global_result = await deps.run(global_call.command, global_call.args, {
+      env,
+      timeout_ms: 600000,
+    });
+    if (global_result.code !== 0) {
+      failures.global = summarize_run(global_result);
+    } else {
+      const prefix_call = npm_invocation(["prefix", "-g"]);
+      const prefix_result = await deps.run(prefix_call.command, prefix_call.args, { env });
+      if (prefix_result.code === 0) {
+        const global_prefix = prefix_result.stdout.trim();
+        const global_cli = find_private_cli(global_prefix);
+        if (global_cli !== undefined) {
+          return {
+            ok: true,
+            source: "global",
+            cli_path: global_cli,
+            version: target_version,
+          };
+        }
+      }
+      failures.global = { code: 0, stdout: "", stderr: "全局安装后仍未找到 lark-cli" };
+    }
+  }
+
+  return failure("NPM_INSTALL_FAILED", "lark-cli 安装失败：npm 与包内安装器都没能产出二进制。", {
+    details: { prefix, target_version, platform, arch, failures },
+    next_actions: [
+      "检查 npm 源与磁盘权限后重跑 install-cli；如宿主完全不允许安装脚本，需用户决定是否允许。",
+    ],
+  });
+}
+
+async function try_cli_archive_fallback(deps, prefix, target_version, platform, arch) {
+  const spec = CLI_ARCHIVE_SPECS[`${platform}-${arch}`];
+  const package_dir = path.join(prefix, "node_modules", "@larksuite", "cli");
+  const checksums_path = path.join(package_dir, "checksums.txt");
+  if (spec === undefined || !is_file(checksums_path)) {
+    return {};
+  }
+
+  const archive_name = `lark-cli-${target_version}-${spec.platform}-${spec.arch}.${spec.extension}`;
+  const archive_url = `${LARK_CLI_ARCHIVE_BASE}/v${target_version}/${archive_name}`;
+  let archive_bytes;
+  try {
+    archive_bytes = await deps.fetch_bytes(archive_url, { timeout_ms: 600000 });
+  } catch (error) {
+    return {
+      failure: failure("CLI_DOWNLOAD_FAILED", `下载 lark-cli 归档失败：${describe_error(error)}。`, {
+        details: { archive_url },
+      }),
+    };
+  }
+
+  let checksum_text;
+  try {
+    checksum_text = readFileSync(checksums_path, "utf8");
+  } catch (error) {
+    return {
+      failure: failure("CLI_DOWNLOAD_FAILED", `读取包内 checksums.txt 失败：${describe_error(error)}。`, {
+        details: { checksums_path },
+      }),
+    };
+  }
+  const expected_sha256 = find_sha256(checksum_text, archive_name);
+  if (expected_sha256 === undefined) {
+    return {
+      failure: failure(
+        "CLI_CHECKSUM_MISMATCH",
+        `官方 checksums.txt 里没有 ${archive_name} 的 sha256 记录。`,
+        { details: { checksums_path } },
+      ),
+    };
+  }
+  const actual_sha256 = sha256_of(archive_bytes);
+  if (actual_sha256 !== expected_sha256) {
+    return {
+      failure: failure("CLI_CHECKSUM_MISMATCH", `lark-cli 归档 sha256 校验失败：${archive_name}。`, {
+        details: { archive_url, checksums_path, expected_sha256, actual_sha256 },
+      }),
+    };
+  }
+
+  const bin_dir = path.join(package_dir, "bin");
+  mkdirSync(bin_dir, { recursive: true });
+  const archive_path = path.join(bin_dir, archive_name);
+  writeFileSync(archive_path, archive_bytes);
+  try {
+    await deps.extract(archive_path, spec.format, bin_dir);
+  } catch (error) {
+    return {
+      failure: failure("CLI_DOWNLOAD_FAILED", `解压 lark-cli 归档失败：${describe_error(error)}。`, {
+        details: { archive_url },
+      }),
+    };
+  }
+  try {
+    unlinkSync(archive_path);
+  } catch {
+    // 归档删除失败不影响安装结果。
+  }
+
+  const cli_path = find_private_cli(prefix);
+  if (cli_path === undefined) {
+    return {
+      failure: failure("CLI_DOWNLOAD_FAILED", "解压后仍未找到 lark-cli 二进制。", {
+        details: { bin_dir },
+      }),
+    };
+  }
+  return { cli_path };
+}
+
+function find_private_cli(prefix) {
+  const bin_dir = path.join(prefix, "node_modules", "@larksuite", "cli", "bin");
+  const names = process.platform === "win32" ? ["lark-cli.exe", "lark-cli.cmd"] : ["lark-cli"];
+  for (const name of names) {
+    const candidate = path.join(bin_dir, name);
+    if (is_file(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+async function probe_cli_version(deps, cli_path, env) {
+  const call = command_call(cli_path, ["--version"]);
+  const result = await deps.run(call.command, call.args, { env, timeout_ms: 30000 });
+  if (result.code !== 0) {
+    return undefined;
+  }
+  const match = /(\d+\.\d+\.\d+)/.exec((result.stdout || result.stderr).trim());
+  return match === null ? undefined : match[1];
+}
+
+function is_at_least(version, minimum) {
+  const left = version.split(".").map(Number);
+  const right = minimum.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const diff = (left[index] ?? 0) - (right[index] ?? 0);
+    if (diff !== 0) {
+      return diff > 0;
+    }
+  }
+  return true;
+}
+
+function summarize_run(result) {
+  return {
+    code: result.code,
+    stderr: (result.stderr ?? "").slice(0, 500),
+    stdout: (result.stdout ?? "").slice(0, 500),
+  };
+}
+
+/** `.cmd` / `.bat` 在 Windows 上必须经 cmd.exe；其余命令直接 spawn。 */
+function command_call(command, args) {
+  if (process.platform === "win32" && /\.(cmd|bat)$/i.test(command)) {
+    const line = [quote_cmd_argument(command), ...args.map(quote_cmd_argument)].join(" ");
+    return { command: "cmd.exe", args: ["/d", "/s", "/c", line] };
+  }
+  return { command, args: [...args] };
+}
+
 /**
  * 子命令入口：输出 JSON 到 stdout，返回进程退出码。
  * 未识别的子命令返回 USAGE_ERROR；其余子命令由后续任务（§7.1）逐个接入。
@@ -611,6 +903,24 @@ export async function run_cli(argv = [], options = {}) {
       );
     } else {
       result = await ensure_runtime({ ...base_options, node_version: flag.value });
+    }
+  } else if (command === "install-cli") {
+    const version_flag = take_flag(argv.slice(1), "--cli-version");
+    const allow_global = version_flag.rest.includes("--allow-global");
+    const rest = version_flag.rest.filter((entry) => entry !== "--allow-global");
+    if (version_flag.error !== undefined) {
+      result = version_flag.error;
+    } else if (rest.length > 0) {
+      result = usage_error(`install-cli 不支持的位置参数：${rest.join(" ")}。`, [
+        "--cli-version",
+        "--allow-global",
+      ]);
+    } else {
+      result = await install_cli({
+        ...base_options,
+        cli_version: version_flag.value,
+        allow_global,
+      });
     }
   } else if (command === undefined) {
     result = usage_error("缺少子命令。", USAGE_COMMANDS);
