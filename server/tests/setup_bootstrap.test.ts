@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -39,6 +47,7 @@ interface FakeDeps {
   ) => Promise<Record<string, unknown>>;
   can_write: (target: string) => boolean;
   mcp_session: (call: McpSessionCall) => Promise<McpSessionResult>;
+  remove_file: (target: string) => void;
   now: () => number;
 }
 
@@ -79,6 +88,7 @@ interface FakeBehavior {
   ) => unknown | Promise<unknown>;
   can_write?: (target: string) => boolean;
   mcp_session?: (call: McpSessionCall) => McpSessionResult | Promise<McpSessionResult>;
+  remove_file?: (target: string) => void;
 }
 
 let tempRoot = "";
@@ -134,6 +144,13 @@ function fake_deps(behavior: FakeBehavior = {}): { deps: FakeDeps; calls: FakeCa
         results: call.requests.map(() => ({ tools: [] })),
       });
     },
+    remove_file: (target) => {
+      if (behavior.remove_file !== undefined) {
+        behavior.remove_file(target);
+        return;
+      }
+      rmSync(target, { force: true });
+    },
     now: () => 1760000000000,
   };
   return { deps, calls };
@@ -154,6 +171,23 @@ function extracted_node_relative(platform: string): string {
 
 function extracted_npm_relative(platform: string): string {
   return platform === "win" ? "npm.cmd" : path.join("bin", "npm");
+}
+
+/** 安装 fake lark-cli（与其它测试同一 fixture）。 */
+function install_fake_cli(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  const fixtures = path.join(repoRoot, "server", "tests", "fixtures");
+  const wrapper_name = isWindows ? "lark-cli.cmd" : "lark-cli";
+  cpSync(
+    path.join(fixtures, isWindows ? "fake-lark-cli.cmd" : "fake-lark-cli"),
+    path.join(dir, wrapper_name),
+  );
+  cpSync(path.join(fixtures, "fake-lark-cli.mjs"), path.join(dir, "lark-cli.mjs"));
+  const wrapper_path = path.join(dir, wrapper_name);
+  if (!isWindows) {
+    chmodSync(wrapper_path, 0o755);
+  }
+  return wrapper_path;
 }
 
 function collect_io(): { io: { stdout: (text: string) => void; stderr: (text: string) => void }; stdout: string[]; stderr: string[] } {
@@ -679,6 +713,7 @@ describe("setup_bootstrap", () => {
       deps,
       cli_path: "lark-cli",
       create: true,
+      io: { stdout: () => {}, stderr: () => {} },
     });
 
     expect(result.ok).toBe(false);
@@ -909,6 +944,200 @@ describe("setup_bootstrap", () => {
       cli_path: "lark-cli",
     });
     expect(succeeded).toEqual({ ok: true, profile: "cli_active" });
+  });
+
+  test(
+    "call-tool returns the raw health result over the real stdio bridge",
+    async () => {
+      const home = path.join(tempRoot, "home");
+      mkdirSync(home, { recursive: true });
+      const fake_cli = install_fake_cli(path.join(tempRoot, "bin"));
+      const { call_tool } = await import("../../scripts/setup_bootstrap.mjs");
+
+      const result = await call_tool(
+        "health",
+        {
+          pending_config: {
+            lark: {
+              cli_path: fake_cli,
+              profile: "default",
+              space_a: "space-a-1",
+              base_b: "basetoken-b-123456789",
+            },
+          },
+        },
+        {
+          env: {
+            ...process.env,
+            SCRIPT2SHOT_HOME: home,
+            FAKE_SCENARIO: "ok",
+            FAKE_ACTIVE_PROFILE: "default",
+          },
+          home_dir: home,
+          plugin_root: repoRoot,
+        },
+      );
+
+      expect(result.config_source).toBe("pending");
+      expect(Array.isArray(result.checks)).toBe(true);
+    },
+    30000,
+  );
+
+  test("call-tool keeps sensitive input off stdout, stderr and disk", async () => {
+    const home = path.join(tempRoot, "home");
+    const sensitive = "SENSITIVE-TOKEN-1";
+    const { deps, calls } = fake_deps({
+      mcp_session: async () => ({
+        ok: true,
+        results: [
+          { content: [{ type: "text", text: JSON.stringify({ ok: true, config_source: "pending" }) }] },
+        ],
+      }),
+    });
+    const { call_tool } = await import("../../scripts/setup_bootstrap.mjs");
+    const forwarded: string[] = [];
+
+    const result = await call_tool(
+      "write_config",
+      { config: { lark: { profile: "profile-1", base_b: sensitive } } },
+      {
+        home_dir: home,
+        env: {},
+        deps,
+        plugin_root: repoRoot,
+        io: { stdout: () => {}, stderr: (text: string) => forwarded.push(text) },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(calls.mcp_session).toHaveLength(1);
+    expect(calls.mcp_session[0].requests[0]).toMatchObject({
+      method: "tools/call",
+      params: { name: "write_config" },
+    });
+    expect(JSON.stringify(result)).not.toContain(sensitive);
+    expect(forwarded.join("")).not.toContain(sensitive);
+    expect(
+      existsSync(path.join(home, ".codex-script2shot", "tmp")),
+      "stdin 路径不得在私有临时目录落盘",
+    ).toBe(false);
+  });
+
+  test("call-tool consumes and deletes a private --input file", async () => {
+    const home = path.join(tempRoot, "home");
+    const tmp_dir = path.join(home, ".codex-script2shot", "tmp");
+    mkdirSync(tmp_dir, { recursive: true });
+    const input_file = path.join(tmp_dir, "input.json");
+    writeFileSync(input_file, JSON.stringify({ pending_config: {} }), "utf8");
+    const { deps } = fake_deps({
+      mcp_session: async () => ({
+        ok: true,
+        results: [
+          { content: [{ type: "text", text: JSON.stringify({ ok: true, config_source: "pending" }) }] },
+        ],
+      }),
+    });
+    const { call_tool } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await call_tool("health", undefined, {
+      home_dir: home,
+      env: {},
+      deps,
+      plugin_root: repoRoot,
+      input_file,
+    });
+
+    expect(result.config_source).toBe("pending");
+    expect(existsSync(input_file), "--input 文件必须在调用后被删除").toBe(false);
+  });
+
+  test("call-tool rejects --input files outside the private tmp dir", async () => {
+    const home = path.join(tempRoot, "home");
+    mkdirSync(home, { recursive: true });
+    const outside = path.join(tempRoot, "outside.json");
+    writeFileSync(outside, "{}", "utf8");
+    const { deps } = fake_deps();
+    const { call_tool } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await call_tool("health", undefined, {
+      home_dir: home,
+      env: {},
+      deps,
+      plugin_root: repoRoot,
+      input_file: outside,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("USAGE_ERROR");
+    expect(existsSync(outside)).toBe(true);
+  });
+
+  test("call-tool surfaces a structured warning when temp cleanup fails", async () => {
+    const home = path.join(tempRoot, "home");
+    const tmp_dir = path.join(home, ".codex-script2shot", "tmp");
+    mkdirSync(tmp_dir, { recursive: true });
+    const input_file = path.join(tmp_dir, "input.json");
+    writeFileSync(input_file, JSON.stringify({ pending_config: {} }), "utf8");
+    const { deps } = fake_deps({
+      remove_file: () => {
+        throw new Error("EBUSY");
+      },
+      mcp_session: async () => ({
+        ok: true,
+        results: [
+          { content: [{ type: "text", text: JSON.stringify({ ok: true, config_source: "pending" }) }] },
+        ],
+      }),
+    });
+    const { call_tool } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await call_tool("health", undefined, {
+      home_dir: home,
+      env: {},
+      deps,
+      plugin_root: repoRoot,
+      input_file,
+    });
+
+    expect(result.config_source).toBe("pending");
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ code: "INPUT_TEMP_CLEANUP_FAILED" }),
+    );
+    expect(JSON.stringify(result)).not.toContain("EBUSY");
+  });
+
+  test("run_cli call-tool exits 0 for tool payloads without an ok flag", async () => {
+    const home = path.join(tempRoot, "home");
+    const { deps } = fake_deps({
+      mcp_session: async () => ({
+        ok: true,
+        results: [
+          {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ exists: false, path: "config.toml", warnings: [] }),
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    const { run_cli } = await import("../../scripts/setup_bootstrap.mjs");
+    const { io, stdout } = collect_io();
+
+    const code = await run_cli(["call-tool", "read_config"], {
+      home_dir: home,
+      env: {},
+      deps,
+      io,
+      plugin_root: repoRoot,
+      read_stdin: async () => "{}",
+    });
+
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout.join(""))).toMatchObject({ exists: false });
   });
 });
 

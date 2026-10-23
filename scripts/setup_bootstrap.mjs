@@ -63,6 +63,7 @@ export const USAGE_COMMANDS = [
   "ensure-app",
   "auth-login",
   "profile",
+  "call-tool",
 ];
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -76,12 +77,17 @@ export function failure(code, message, extra = {}) {
   return { ok: false, error: { code, message, ...extra } };
 }
 
-/** 退出码映射：成功 0，需要人类动作 / 提权 2，其余失败 1。 */
+/**
+ * 退出码映射：`ok: false` 才算失败；带 HUMAN 错误码的失败是 2，其余失败 1。
+ * 工具返回的普通 payload（如 `read_config` 的 `{ exists: false }`）没有 `ok`
+ * 字段，属于"子命令跑完了"，返回 0，由调用方读 payload 自行判断。
+ */
 export function exit_code_for(result) {
-  if (result !== undefined && result.ok === true) {
+  if (!is_plain_object(result) || result.ok !== false) {
     return EXIT_OK;
   }
-  return NEEDS_HUMAN_ERROR_CODES.includes(result?.error?.code)
+  const code = is_plain_object(result.error) ? result.error.code : undefined;
+  return typeof code === "string" && NEEDS_HUMAN_ERROR_CODES.includes(code)
     ? EXIT_NEEDS_HUMAN
     : EXIT_FAILED;
 }
@@ -182,6 +188,7 @@ export function create_default_deps() {
     fetch_bytes: default_fetch_bytes,
     can_write: is_writable_path,
     mcp_session: default_mcp_session,
+    remove_file: (target) => unlinkSync(target),
     now: () => Date.now(),
   };
   deps.extract = (archive_path, format, destination) =>
@@ -1455,6 +1462,165 @@ function is_plain_object(value) {
 }
 
 /**
+ * `call-tool <name>`：以子进程启动已构建的 MCP Server，走 stdio JSON-RPC 调用指定
+ * 工具。入参默认由调用方从 stdin 传进来；`--input <file>` 只作兜底，且文件必须落在
+ * `<home>/tmp/` 下：读入后立刻删除（早于子进程启动），删除失败写结构化 warning。
+ * 脚本不把入参内容写进 stdout / stderr / 日志（架构 §5.2、§8）。
+ */
+export async function call_tool(name, input, options = {}) {
+  const deps = resolve_deps(options.deps);
+  const io = { ...default_io(), ...(options.io ?? {}) };
+  const env = options.env ?? process.env;
+  const home_dir = options.home_dir ?? os.homedir();
+  const plugin_root = options.plugin_root ?? DEFAULT_PLUGIN_ROOT;
+  const server_path =
+    options.server_path ?? path.join(plugin_root, "server", "dist", "server.mjs");
+  const node_path = options.node_path ?? "node";
+
+  if (typeof name !== "string" || name.trim() === "") {
+    return failure("USAGE_ERROR", "call-tool 需要一个工具名。", {
+      details: { argv: [name, input === undefined ? undefined : "<input>"] },
+      next_actions: ["用法：call-tool <工具名> [--input <私有临时文件>]。"],
+    });
+  }
+  if (!is_file(server_path)) {
+    return failure("TOOL_CALL_FAILED", `MCP Server 尚未构建：${server_path}。`, {
+      details: { server_path },
+      next_actions: ["先运行 build-server 构建并握手自检。"],
+    });
+  }
+
+  let payload = input;
+  let cleanup_warning;
+  if (payload === undefined && typeof options.input_file === "string") {
+    const tmp_dir = path.join(home_dir, HOME_DIR_NAME, "tmp");
+    const input_file = path.resolve(options.input_file);
+    if (!is_path_inside(input_file, tmp_dir)) {
+      return failure("USAGE_ERROR", `--input 只接受私有临时目录下的文件：${tmp_dir}。`, {
+        details: { input_file, tmp_dir },
+        next_actions: ["把入参写到 <home>/tmp/ 下再重试，或改用 stdin 传入。"],
+      });
+    }
+    let raw;
+    try {
+      raw = readFileSync(input_file, "utf8");
+    } catch (error) {
+      return failure("USAGE_ERROR", `读取 --input 文件失败：${describe_error(error)}。`, {
+        details: { input_file },
+      });
+    }
+    try {
+      payload = JSON.parse(raw);
+    } catch (error) {
+      return failure("USAGE_ERROR", `--input 文件不是合法 JSON：${describe_error(error)}。`, {
+        details: { input_file },
+      });
+    }
+    try {
+      deps.remove_file(input_file);
+    } catch {
+      cleanup_warning = {
+        code: "INPUT_TEMP_CLEANUP_FAILED",
+        message: `清理 --input 临时文件失败，请手动删除：${input_file}。`,
+        path: input_file,
+      };
+    }
+  }
+  if (payload === undefined) {
+    payload = {};
+  }
+
+  const session = await deps.mcp_session({
+    node_path,
+    server_path,
+    cwd: plugin_root,
+    env,
+    timeout_ms: options.timeout_ms ?? 60000,
+    requests: [
+      { method: "tools/call", params: { name: name.trim(), arguments: payload } },
+    ],
+  });
+  if (!session.ok) {
+    return failure("TOOL_CALL_FAILED", `MCP 工具调用失败：${session.error.message}`, {
+      details: { tool: name.trim(), reason_code: session.error.code },
+      next_actions: ["检查 MCP Server 构建产物与工具入参后重试。"],
+    });
+  }
+
+  const result = parse_tool_result(session.results[0]);
+  if (cleanup_warning !== undefined && is_plain_object(result)) {
+    const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+    return { ...result, warnings: [...warnings, cleanup_warning] };
+  }
+  return result;
+}
+
+function parse_tool_result(entry) {
+  if (!is_plain_object(entry)) {
+    return failure("TOOL_CALL_FAILED", "MCP 工具返回结构无法识别。", {
+      details: { result_type: typeof entry },
+    });
+  }
+  const content = entry.content;
+  if (Array.isArray(content)) {
+    const text = content.find(
+      (part) => is_plain_object(part) && part.type === "text" && typeof part.text === "string",
+    )?.text;
+    if (typeof text === "string") {
+      try {
+        return JSON.parse(text);
+      } catch {
+        return failure("TOOL_CALL_FAILED", "MCP 工具返回的 text 不是合法 JSON。");
+      }
+    }
+  }
+  return entry;
+}
+
+function is_path_inside(target, dir) {
+  const base = path.resolve(dir);
+  const resolved = path.resolve(target);
+  const relative = path.relative(base, resolved);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+/** 默认从 stdin 读入参；测试可注入 reader。stdin 不是管道时按空对象处理。 */
+async function read_stdin_json(reader) {
+  let text;
+  try {
+    text = await (reader ?? read_process_stdin)();
+  } catch (error) {
+    return {
+      error: failure("USAGE_ERROR", `读取 stdin 失败：${describe_error(error)}。`),
+    };
+  }
+  if (typeof text !== "string" || text.trim() === "") {
+    return { value: {} };
+  }
+  try {
+    return { value: JSON.parse(text) };
+  } catch (error) {
+    return {
+      error: failure("USAGE_ERROR", `stdin 入参不是合法 JSON：${describe_error(error)}。`, {
+        next_actions: ["改用 --input <私有临时文件> 兜底，或修正 stdin 的 JSON。"],
+      }),
+    };
+  }
+}
+
+async function read_process_stdin() {
+  if (process.stdin.isTTY) {
+    return "";
+  }
+  let text = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) {
+    text += chunk;
+  }
+  return text;
+}
+
+/**
  * 子命令入口：输出 JSON 到 stdout，返回进程退出码。
  * 未识别的子命令返回 USAGE_ERROR；其余子命令由后续任务（§7.1）逐个接入。
  */
@@ -1535,6 +1701,29 @@ export async function run_cli(argv = [], options = {}) {
       result = usage_error(`profile 不支持的位置参数：${argv.slice(1).join(" ")}。`, ["profile"]);
     } else {
       result = await resolve_profile(base_options);
+    }
+  } else if (command === "call-tool") {
+    const flag = take_flag(argv.slice(1), "--input");
+    const tool_name = flag.rest[0];
+    const extra = flag.rest.slice(1);
+    if (flag.error !== undefined) {
+      result = flag.error;
+    } else if (typeof tool_name !== "string" || tool_name.trim() === "") {
+      result = usage_error("call-tool 需要一个工具名。", ["call-tool <name> [--input <file>]"]);
+    } else if (extra.length > 0) {
+      result = usage_error(`call-tool 不支持的位置参数：${extra.join(" ")}。`, [tool_name]);
+    } else if (flag.value !== undefined) {
+      result = await call_tool(tool_name, undefined, {
+        ...base_options,
+        io,
+        input_file: flag.value,
+      });
+    } else {
+      const read = await read_stdin_json(options.read_stdin);
+      result =
+        read.error !== undefined
+          ? read.error
+          : await call_tool(tool_name, read.value, { ...base_options, io });
     }
   } else if (command === undefined) {
     result = usage_error("缺少子命令。", USAGE_COMMANDS);
