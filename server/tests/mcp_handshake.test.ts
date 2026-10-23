@@ -181,7 +181,11 @@ describe("mcp handshake", () => {
         name: "write_config",
         arguments: {
           config: {
-            lark: { space_a: "space-a-1", base_b: "basetoken-b-123456789" },
+            lark: {
+              profile: "default",
+              space_a: "space-a-1",
+              base_b: "basetoken-b-123456789",
+            },
             retrieval: { default_top_k: 12 },
           },
           create_local_dirs: false,
@@ -209,7 +213,11 @@ describe("mcp handshake", () => {
         name: "write_config",
         arguments: {
           config: {
-            lark: { space_a: "space-a-1", base_b: "basetoken-b-123456789" },
+            lark: {
+              profile: "default",
+              space_a: "space-a-1",
+              base_b: "basetoken-b-123456789",
+            },
           },
           dry_run: "false",
         },

@@ -7,7 +7,9 @@ import {
   parse_project_roots,
   resolve_home,
   save_config,
+  type ConfigWarning,
   type LarkConfig,
+  type ProjectRoot,
   type Script2ShotConfig,
 } from "../config.js";
 import { SETUP_DEFAULTS } from "../setup_defaults.js";
@@ -17,9 +19,14 @@ import { SETUP_DEFAULTS } from "../setup_defaults.js";
  *
  * - `dry_run` 缺省为 true：只返回将写入的 config.toml diff 和将创建的目录，不落盘。
  * - `dry_run: false`：按需执行 `ensure_local_dirs()`，再原子写入 config.toml。
- * - `config` 里缺省的字段（profile / space_a / base_b / project_roots /
- *   retrieval.default_top_k）用 `SETUP_DEFAULTS` 填充，显式提供的值（包括显式
- *   空数组）优先；返回值用 `applied_defaults` 列出实际套用的默认键路径。
+ * - 逐字段判定顺序：**显式 > 既有（`preserve_existing` 缺省 true）> 默认**。
+ *   显式提供的值（包括显式空数组）优先；否则保留磁盘上的非空值并在
+ *   `preserved_existing` 里列出；再否则套 `SETUP_DEFAULTS` 并在
+ *   `applied_defaults` 里列出。`preserve_existing: false` 跳过全部磁盘值，
+ *   保持"纯默认覆盖"的旧语义。
+ * - `lark.profile` 没有默认值：未显式传入、磁盘也没有时返回 `CONFIG_INVALID`，
+ *   `details.missing_keys` 含 `lark.profile`。磁盘 TOML 损坏时不静默丢弃，
+ *   同样返回 `CONFIG_INVALID`。
  * - `config`、`lark`、`retrieval` 若出现必须是普通对象，否则 CONFIG_INVALID。
  * - 返回值与错误信息里的 base_b 一律掩码（前 6 位 + `…`）；完整 token 只出现在配置文件里。
  */
@@ -33,6 +40,8 @@ export interface WriteConfigInput {
   create_local_dirs?: unknown;
   /** 缺省 true：只预览不写入。 */
   dry_run?: unknown;
+  /** 缺省 true：保留磁盘上既有的非空字段；false 时按纯默认语义覆盖。 */
+  preserve_existing?: unknown;
 }
 
 export interface WriteConfigSuccess {
@@ -43,6 +52,8 @@ export interface WriteConfigSuccess {
   written: boolean;
   /** 本次按缺省语义填充的键路径，例如 `["lark.profile", "lark.space_a"]`。 */
   applied_defaults: string[];
+  /** 本次从磁盘保留的既有键路径，例如 `["lark.base_b", "lark.space_a"]`。 */
+  preserved_existing: string[];
 }
 
 export interface WriteConfigFailure {
@@ -59,20 +70,55 @@ export type WriteConfigResult = WriteConfigSuccess | WriteConfigFailure;
 /** 与 config.ts `ensure_local_dirs` 创建的目录保持一致（架构 §7.2）。 */
 const LOCAL_DIR_NAMES = ["cache", "index", "logs"] as const;
 const BASE_TOKEN_PREFIX_LENGTH = 6;
-const DEFAULTED_LARK_STRING_KEYS = ["profile", "space_a", "base_b"] as const;
+/** 缺省时套 `SETUP_DEFAULTS` 的字段；`profile` 不在此列，它没有默认值。 */
+const DEFAULTED_LARK_STRING_KEYS = ["space_a", "base_b"] as const;
 const PASSTHROUGH_LARK_STRING_KEYS = [
   "cli_path",
   "knowledge_cards_table_id",
   "sync_state_table_id",
 ] as const;
+const EXISTING_LARK_KEYS = [
+  "cli_path",
+  "profile",
+  "space_a",
+  "base_b",
+  "knowledge_cards_table_id",
+  "sync_state_table_id",
+] as const;
+
+export interface NormalizeConfigOptions {
+  /**
+   * 缺省 true：从磁盘保留既有非空字段；false 时完全不读磁盘（`preserve_existing:
+   * false` 的显式重写，以及 `pending_config` 这类"提供即替代磁盘配置"的调用）。
+   */
+  preserve_existing?: boolean;
+}
+
+export interface NormalizedConfig {
+  config: Script2ShotConfig;
+  applied_defaults: string[];
+  preserved_existing: string[];
+}
 
 export function write_config(input: WriteConfigInput): WriteConfigResult {
-  const normalized = normalize_config(input.config);
+  const preserve_existing = parse_boolean_flag(
+    input.preserve_existing,
+    "preserve_existing",
+    true,
+  );
+  if ("error" in preserve_existing) {
+    return preserve_existing;
+  }
+
+  const normalized = normalize_config(input.config, {
+    preserve_existing: preserve_existing.value,
+  });
   if ("error" in normalized) {
     return normalized;
   }
   const config = normalized.config;
   const applied_defaults = normalized.applied_defaults;
+  const preserved_existing = normalized.preserved_existing;
   const dry_run = parse_boolean_flag(input.dry_run, "dry_run", true);
   if ("error" in dry_run) {
     return dry_run;
@@ -97,6 +143,7 @@ export function write_config(input: WriteConfigInput): WriteConfigResult {
         created_dirs: create_local_dirs.value ? missing_local_dirs() : [],
         written: false,
         applied_defaults,
+        preserved_existing,
       };
     }
 
@@ -109,6 +156,7 @@ export function write_config(input: WriteConfigInput): WriteConfigResult {
       created_dirs: created,
       written: true,
       applied_defaults,
+      preserved_existing,
     };
   } catch (error) {
     return internal_error(`写入本地配置失败：${describe_error(error)}`);
@@ -124,9 +172,56 @@ function existing_base_b(): string | undefined {
   return loaded.config.lark.base_b;
 }
 
-function normalize_config(
+/** 磁盘配置里用于"保留"判定的字段快照；缺省字段不出现。 */
+interface ExistingConfig {
+  lark: Partial<Pick<LarkConfig, (typeof EXISTING_LARK_KEYS)[number]>>;
+  project_roots: ProjectRoot[];
+  default_top_k?: number;
+}
+
+/**
+ * 把 `load_config()` 的结果转成"磁盘上真正写过的值"。
+ *
+ * `load_config()` 会对缺失的 `retrieval.default_top_k` 套默认值并写
+ * `CONFIG_FIELD_DEFAULTED` warning；这里按 warning 把它还原成"磁盘上没有"，
+ * 避免把默认值误记为"既有值保留"。
+ */
+function snapshot_existing(loaded: {
+  config: Script2ShotConfig;
+  warnings: ConfigWarning[];
+}): ExistingConfig {
+  const lark: ExistingConfig["lark"] = {};
+  for (const key of EXISTING_LARK_KEYS) {
+    const value = loaded.config.lark[key];
+    if (value !== undefined) {
+      lark[key] = value;
+    }
+  }
+  const top_k_defaulted = loaded.warnings.some(
+    (warning) =>
+      warning.code === "CONFIG_FIELD_DEFAULTED" &&
+      (warning.refs ?? []).includes("retrieval.default_top_k"),
+  );
+  return {
+    lark,
+    project_roots: loaded.config.lark.project_roots,
+    ...(top_k_defaulted ? {} : { default_top_k: loaded.config.retrieval.default_top_k }),
+  };
+}
+
+/**
+ * 归一化并校验配置：**显式 > 既有（`preserve_existing`）> 默认**。
+ *
+ * 导出的原因是 `init_knowledge_b` / `health` 的 `pending_config` 必须复用同一套
+ * 校验与默认值规则（架构 §8）；这些调用方传 `preserve_existing: false`，保证
+ * 本次调用完全不读磁盘配置。
+ */
+export function normalize_config(
   raw: unknown,
-): { config: Script2ShotConfig; applied_defaults: string[] } | WriteConfigFailure {
+  options: NormalizeConfigOptions = {},
+): NormalizedConfig | WriteConfigFailure {
+  const preserve_existing = options.preserve_existing ?? true;
+
   // 容器类型必须 fail-closed：null / 数组等非对象输入不得被当作空配置套默认值。
   if (!is_record(raw)) {
     return config_invalid('配置字段 "config" 必须提供且为普通对象。', { field: "config" });
@@ -144,45 +239,88 @@ function normalize_config(
     return config_invalid('配置字段 "retrieval" 期望普通对象。', { field: "retrieval" });
   }
 
+  // 只有 preserve_existing 为真时才读磁盘：磁盘配置损坏不静默丢弃。
+  let existing: ExistingConfig | undefined;
+  if (preserve_existing) {
+    const loaded = load_config();
+    if ("error" in loaded) {
+      return loaded;
+    }
+    existing = loaded.exists ? snapshot_existing(loaded) : undefined;
+  }
+
   const applied_defaults: string[] = [];
+  const preserved_existing: string[] = [];
 
   const lark_config: LarkConfig = { project_roots: [] };
   for (const key of DEFAULTED_LARK_STRING_KEYS) {
     const value = lark[key];
-    if (value === undefined) {
-      lark_config[key] = SETUP_DEFAULTS.lark[key];
-      applied_defaults.push(`lark.${key}`);
-    } else if (typeof value === "string") {
+    if (typeof value === "string") {
       lark_config[key] = value.trim();
-    } else {
+      continue;
+    }
+    if (value !== undefined) {
       return config_invalid(`配置字段 "lark.${key}" 期望字符串。`, { field: `lark.${key}` });
     }
+    const existing_value = existing?.lark[key];
+    if (has_text(existing_value)) {
+      lark_config[key] = existing_value;
+      preserved_existing.push(`lark.${key}`);
+      continue;
+    }
+    lark_config[key] = SETUP_DEFAULTS.lark[key];
+    applied_defaults.push(`lark.${key}`);
+  }
+
+  // profile 没有默认值：显式 > 既有 > 缺失（后面按 CONFIG_INVALID 报 missing_keys）。
+  const raw_profile = lark.profile;
+  if (typeof raw_profile === "string") {
+    lark_config.profile = raw_profile.trim();
+  } else if (raw_profile !== undefined) {
+    return config_invalid('配置字段 "lark.profile" 期望字符串。', { field: "lark.profile" });
+  } else if (has_text(existing?.lark.profile)) {
+    lark_config.profile = existing.lark.profile;
+    preserved_existing.push("lark.profile");
   }
 
   for (const key of PASSTHROUGH_LARK_STRING_KEYS) {
     const value = lark[key];
     if (typeof value === "string") {
       lark_config[key] = value.trim();
-    } else if (value !== undefined) {
+      continue;
+    }
+    if (value !== undefined) {
       return config_invalid(`配置字段 "lark.${key}" 期望字符串。`, { field: `lark.${key}` });
+    }
+    const existing_value = existing?.lark[key];
+    if (has_text(existing_value)) {
+      lark_config[key] = existing_value;
+      preserved_existing.push(`lark.${key}`);
     }
   }
 
   const raw_roots = lark.project_roots;
-  if (raw_roots === undefined) {
-    // 克隆默认映射，避免调用方改动返回值时波及 SETUP_DEFAULTS。
-    lark_config.project_roots = SETUP_DEFAULTS.lark.project_roots.map((root) => ({ ...root }));
-    applied_defaults.push("lark.project_roots");
-  } else {
+  if (raw_roots !== undefined) {
     const parsed_roots = parse_project_roots(raw_roots);
     if (!("roots" in parsed_roots)) {
       return config_invalid(parsed_roots.invalid_message, { field: parsed_roots.field });
     }
     lark_config.project_roots = parsed_roots.roots;
+  } else if (existing !== undefined && existing.project_roots.length > 0) {
+    // 既有映射非空才保留；空数组按"空值"处理，回落到默认映射。
+    lark_config.project_roots = existing.project_roots.map((root) => ({ ...root }));
+    preserved_existing.push("lark.project_roots");
+  } else {
+    // 克隆默认映射，避免调用方改动返回值时波及 SETUP_DEFAULTS。
+    lark_config.project_roots = SETUP_DEFAULTS.lark.project_roots.map((root) => ({ ...root }));
+    applied_defaults.push("lark.project_roots");
   }
 
   // 默认值应用后仍执行原有的必填校验：显式空值不会被默认值悄悄覆盖。
   const missing_keys: string[] = [];
+  if (!has_text(lark_config.profile)) {
+    missing_keys.push("lark.profile");
+  }
   if (!has_text(lark_config.space_a)) {
     missing_keys.push("lark.space_a");
   }
@@ -196,7 +334,7 @@ function normalize_config(
     );
   }
 
-  let default_top_k = SETUP_DEFAULTS.retrieval.default_top_k;
+  let default_top_k: number;
   const raw_top_k = is_record(raw_retrieval) ? raw_retrieval.default_top_k : undefined;
   if (raw_top_k !== undefined) {
     if (typeof raw_top_k !== "number" || !Number.isInteger(raw_top_k) || raw_top_k <= 0) {
@@ -206,19 +344,24 @@ function normalize_config(
       );
     }
     default_top_k = raw_top_k;
+  } else if (existing?.default_top_k !== undefined) {
+    default_top_k = existing.default_top_k;
+    preserved_existing.push("retrieval.default_top_k");
   } else {
+    default_top_k = SETUP_DEFAULTS.retrieval.default_top_k;
     applied_defaults.push("retrieval.default_top_k");
   }
 
   return {
     config: { lark: lark_config, retrieval: { default_top_k } },
     applied_defaults,
+    preserved_existing,
   };
 }
 
 function parse_boolean_flag(
   value: unknown,
-  field: "dry_run" | "create_local_dirs",
+  field: "dry_run" | "create_local_dirs" | "preserve_existing",
   default_value: boolean,
 ): { value: boolean } | WriteConfigFailure {
   if (value === undefined) {

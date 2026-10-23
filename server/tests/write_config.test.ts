@@ -142,7 +142,10 @@ describe("write_config", () => {
 
   test("rejects explicit blank required keys before touching the filesystem", () => {
     const result = expect_error(
-      write_config({ config: { lark: { space_a: "", base_b: "" } }, dry_run: false }),
+      write_config({
+        config: { lark: { profile: "profile-1", space_a: "", base_b: "" } },
+        dry_run: false,
+      }),
     );
 
     expect(result.ok).toBe(false);
@@ -152,10 +155,9 @@ describe("write_config", () => {
   });
 
   test("write_config applies setup defaults when omitted", () => {
-    const preview = expect_success(write_config({ config: { lark: {} } }));
+    const preview = expect_success(write_config({ config: { lark: { profile: "profile-1" } } }));
 
     expect(preview.applied_defaults).toEqual([
-      "lark.profile",
       "lark.space_a",
       "lark.base_b",
       "lark.project_roots",
@@ -170,7 +172,9 @@ describe("write_config", () => {
     ).not.toContain(SETUP_DEFAULTS.lark.base_b);
     expect(existsSync(home), "dry run must not create the home directory").toBe(false);
 
-    const written = expect_success(write_config({ config: {}, dry_run: false }));
+    const written = expect_success(
+      write_config({ config: { lark: { profile: "profile-1" } }, dry_run: false }),
+    );
     expect(written.applied_defaults).toEqual(preview.applied_defaults);
 
     const loaded = load_config();
@@ -178,7 +182,7 @@ describe("write_config", () => {
       throw new Error(`expected an existing config, got ${JSON.stringify(loaded)}`);
     }
     expect(loaded.config.lark).toEqual({
-      profile: SETUP_DEFAULTS.lark.profile,
+      profile: "profile-1",
       space_a: SETUP_DEFAULTS.lark.space_a,
       base_b: SETUP_DEFAULTS.lark.base_b,
       project_roots: SETUP_DEFAULTS.lark.project_roots,
@@ -187,7 +191,7 @@ describe("write_config", () => {
   });
 
   test("setup defaults pin the shipped knowledge bases", () => {
-    expect(SETUP_DEFAULTS.lark.profile).toBe("cli_aa20f40faa785d11");
+    expect("profile" in SETUP_DEFAULTS.lark, "profile 不再有默认值").toBe(false);
     expect(SETUP_DEFAULTS.lark.space_a).toBe("7695983197091302359");
     expect(SETUP_DEFAULTS.lark.base_b).toBe("WRrVblDbqaEFOSs39P0cFzilnfd");
     expect(SETUP_DEFAULTS.lark.project_roots).toEqual([
@@ -197,18 +201,24 @@ describe("write_config", () => {
   });
 
   test("write_config reports the retrieval default only when it applies", () => {
-    const omitted = expect_success(write_config({ config: { lark: {} } }));
+    const omitted = expect_success(
+      write_config({ config: { lark: { profile: "profile-1" } } }),
+    );
     expect(omitted.applied_defaults).toContain("retrieval.default_top_k");
     expect(omitted.diff).toContain(`default_top_k = ${SETUP_DEFAULTS.retrieval.default_top_k}`);
 
-    const empty_table = expect_success(write_config({ config: { retrieval: {} } }));
+    const empty_table = expect_success(
+      write_config({ config: { lark: { profile: "profile-1" }, retrieval: {} } }),
+    );
     expect(
       empty_table.applied_defaults,
       "retrieval 表存在但 default_top_k 缺省时，该值仍是默认填充",
     ).toContain("retrieval.default_top_k");
 
     const explicit = expect_success(
-      write_config({ config: { retrieval: { default_top_k: 20 } } }),
+      write_config({
+        config: { lark: { profile: "profile-1" }, retrieval: { default_top_k: 20 } },
+      }),
     );
     expect(explicit.applied_defaults).not.toContain("retrieval.default_top_k");
     expect(explicit.diff).toContain("default_top_k = 20");
@@ -244,7 +254,7 @@ describe("write_config", () => {
   });
 
   test("rejects non-boolean dry_run and create_local_dirs", () => {
-    for (const field of ["dry_run", "create_local_dirs"] as const) {
+    for (const field of ["dry_run", "create_local_dirs", "preserve_existing"] as const) {
       for (const value of [0, "false"]) {
         const result = expect_error(
           write_config({
@@ -327,12 +337,15 @@ describe("write_config", () => {
   test("write_config reports applied defaults", () => {
     const result = expect_success(
       write_config({
-        config: { lark: { space_a: SPACE_A, base_b: BASE_B }, retrieval: { default_top_k: 12 } },
+        config: {
+          lark: { profile: "profile-1", space_a: SPACE_A, base_b: BASE_B },
+          retrieval: { default_top_k: 12 },
+        },
       }),
     );
 
-    expect(result.applied_defaults).toEqual(["lark.profile", "lark.project_roots"]);
-    expect(result.diff).toContain(`profile = "${SETUP_DEFAULTS.lark.profile}"`);
+    expect(result.applied_defaults).toEqual(["lark.project_roots"]);
+    expect(result.diff).toContain('profile = "profile-1"');
     expect(result.diff).toContain(SETUP_DEFAULTS.lark.project_roots[0].node_token);
   });
 
@@ -421,5 +434,154 @@ describe("write_config", () => {
       BASE_B,
     );
     expect(JSON.stringify(result)).not.toContain(OLD_BASE_B);
+  });
+
+  test("re-running write_config preserves the existing custom fields", () => {
+    const custom: Script2ShotConfig = {
+      lark: {
+        cli_path: "D:\\custom\\lark-cli.exe",
+        profile: "profile-old",
+        space_a: SPACE_A,
+        base_b: BASE_B,
+        knowledge_cards_table_id: "tbl_custom_cards",
+        sync_state_table_id: "tbl_custom_state",
+        project_roots: [{ node_token: "node-custom", project_id: "custom-project" }],
+      },
+      retrieval: { default_top_k: 20 },
+    };
+    expect_success(write_config({ config: custom, dry_run: false }));
+
+    const result = expect_success(
+      write_config({
+        config: { lark: { profile: "profile-new", cli_path: "D:\\new\\lark-cli.exe" } },
+        dry_run: false,
+      }),
+    );
+
+    expect([...result.preserved_existing].sort()).toEqual(
+      [
+        "lark.base_b",
+        "lark.knowledge_cards_table_id",
+        "lark.project_roots",
+        "lark.space_a",
+        "lark.sync_state_table_id",
+        "retrieval.default_top_k",
+      ].sort(),
+    );
+    expect(result.applied_defaults).toEqual([]);
+
+    const loaded = load_config();
+    if (!("exists" in loaded) || !loaded.exists) {
+      throw new Error(`expected an existing config, got ${JSON.stringify(loaded)}`);
+    }
+    expect(loaded.config).toEqual({
+      lark: {
+        cli_path: "D:\\new\\lark-cli.exe",
+        profile: "profile-new",
+        space_a: SPACE_A,
+        base_b: BASE_B,
+        knowledge_cards_table_id: "tbl_custom_cards",
+        sync_state_table_id: "tbl_custom_state",
+        project_roots: [{ node_token: "node-custom", project_id: "custom-project" }],
+      },
+      retrieval: { default_top_k: 20 },
+    });
+    expect(readFileSync(config_path(), "utf8")).toContain(BASE_B);
+  });
+
+  test("write_config requires an explicit profile when the disk has none", () => {
+    const missing = expect_error(write_config({ config: { lark: {} } }));
+
+    expect(missing.error.code).toBe("CONFIG_INVALID");
+    expect(missing.error.details?.missing_keys).toEqual(["lark.profile"]);
+    expect(existsSync(home), "invalid input must not create anything").toBe(false);
+
+    const provided = expect_success(
+      write_config({ config: { lark: { profile: "profile-1" } }, dry_run: false }),
+    );
+
+    expect(provided.applied_defaults).toEqual([
+      "lark.space_a",
+      "lark.base_b",
+      "lark.project_roots",
+      "retrieval.default_top_k",
+    ]);
+    const loaded = load_config();
+    if (!("exists" in loaded) || !loaded.exists) {
+      throw new Error(`expected an existing config, got ${JSON.stringify(loaded)}`);
+    }
+    expect(loaded.config.lark.profile).toBe("profile-1");
+    expect(loaded.config.lark.space_a).toBe(SETUP_DEFAULTS.lark.space_a);
+    expect(loaded.config.lark.base_b).toBe(SETUP_DEFAULTS.lark.base_b);
+  });
+
+  test("write_config reuses the stored profile when it is not passed explicitly", () => {
+    expect_success(
+      write_config({ config: { lark: { profile: "disk-profile" } }, dry_run: false }),
+    );
+
+    const result = expect_success(write_config({ config: { lark: {} } }));
+
+    expect(result.preserved_existing).toContain("lark.profile");
+    expect(result.applied_defaults).not.toContain("lark.profile");
+
+    const loaded = load_config();
+    if (!("exists" in loaded) || !loaded.exists) {
+      throw new Error(`expected an existing config, got ${JSON.stringify(loaded)}`);
+    }
+    expect(loaded.config.lark.profile).toBe("disk-profile");
+  });
+
+  test("preserve_existing=false falls back to the pure default semantics", () => {
+    const custom: Script2ShotConfig = {
+      lark: {
+        profile: "profile-old",
+        space_a: SPACE_A,
+        base_b: BASE_B,
+        knowledge_cards_table_id: "tbl_custom_cards",
+        sync_state_table_id: "tbl_custom_state",
+        project_roots: [{ node_token: "node-custom", project_id: "custom-project" }],
+      },
+      retrieval: { default_top_k: 20 },
+    };
+    expect_success(write_config({ config: custom, dry_run: false }));
+
+    const result = expect_success(
+      write_config({
+        config: { lark: { profile: "profile-1" } },
+        preserve_existing: false,
+        dry_run: false,
+      }),
+    );
+
+    expect(result.preserved_existing).toEqual([]);
+    expect(result.applied_defaults).toEqual([
+      "lark.space_a",
+      "lark.base_b",
+      "lark.project_roots",
+      "retrieval.default_top_k",
+    ]);
+
+    const loaded = load_config();
+    if (!("exists" in loaded) || !loaded.exists) {
+      throw new Error(`expected an existing config, got ${JSON.stringify(loaded)}`);
+    }
+    expect(loaded.config.lark.space_a).toBe(SETUP_DEFAULTS.lark.space_a);
+    expect(loaded.config.lark.base_b).toBe(SETUP_DEFAULTS.lark.base_b);
+    expect(loaded.config.lark.project_roots).toEqual(SETUP_DEFAULTS.lark.project_roots);
+    expect(loaded.config.lark.knowledge_cards_table_id).toBeUndefined();
+    expect(loaded.config.lark.sync_state_table_id).toBeUndefined();
+    expect(loaded.config.retrieval.default_top_k).toBe(SETUP_DEFAULTS.retrieval.default_top_k);
+  });
+
+  test("rejects broken TOML on disk instead of silently dropping it", () => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(config_path(), "[lark\n", "utf8");
+
+    const result = expect_error(write_config({ config: FULL_CONFIG }));
+
+    expect(result.error.code).toBe("CONFIG_INVALID");
+    expect(result.error.details?.path).toBe(config_path());
+    expect(readFileSync(config_path(), "utf8"), "must not rewrite the broken file").toBe("[lark\n");
   });
 });

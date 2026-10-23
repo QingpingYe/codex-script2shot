@@ -8,7 +8,6 @@
 
 export interface SetupDefaults {
   lark: {
-    profile: string;
     space_a: string;
     base_b: string;
     project_roots: Array<{ node_token: string; project_id: string }>;
@@ -20,7 +19,6 @@ export interface SetupDefaults {
 
 export const SETUP_DEFAULTS: SetupDefaults = {
   lark: {
-    profile: "cli_aa20f40faa785d11",
     space_a: "7695983197091302359",
     base_b: "WRrVblDbqaEFOSs39P0cFzilnfd",
     project_roots: [

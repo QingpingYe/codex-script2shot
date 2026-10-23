@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Script2ShotConfig } from "./config.js";
+import { DEFAULT_HOME_DIR_NAME, type Script2ShotConfig } from "./config.js";
 
 /**
  * lark-cli 适配层（架构 §7.3、§8）。
@@ -627,6 +627,10 @@ function common_directories(home_dir: string, env: NodeJS.ProcessEnv): string[] 
     dirs.push("/usr/local/bin");
   }
   dirs.push(path.join(home_dir, ".local", "bin"));
+  // setup 的私有 prefix（架构 §7.3）：install-cli 把 lark-cli 装到这里。
+  dirs.push(
+    path.join(home_dir, DEFAULT_HOME_DIR_NAME, "cli", "node_modules", "@larksuite", "cli", "bin"),
+  );
   return dirs;
 }
 

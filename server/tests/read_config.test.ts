@@ -86,24 +86,27 @@ describe("read_config", () => {
     const result = expect_success(read_config());
 
     expect(result.exists).toBe(true);
+    if (!result.exists) {
+      throw new Error(`expected an existing config, got ${JSON.stringify(result)}`);
+    }
     expect(result.path).toBe(config_path());
-    expect(result.config?.lark.base_b_prefix).toBe(MASKED_BASE_B);
+    expect(result.config.lark.base_b_prefix).toBe(MASKED_BASE_B);
     expect(
-      result.config?.lark,
+      result.config.lark,
       "the snapshot must replace base_b instead of echoing it",
     ).not.toHaveProperty("base_b");
     expect(JSON.stringify(result), "no full base token may appear in the result").not.toContain(
       BASE_B,
     );
-    expect(result.config?.lark.cli_path).toBe("D:\\lark-cli\\lark-cli.exe");
-    expect(result.config?.lark.profile).toBe("default");
-    expect(result.config?.lark.space_a).toBe(SPACE_A);
-    expect(result.config?.lark.knowledge_cards_table_id).toBe("tbl_cards");
-    expect(result.config?.lark.sync_state_table_id).toBe("tbl_state");
-    expect(result.config?.lark.project_roots).toEqual([
+    expect(result.config.lark.cli_path).toBe("D:\\lark-cli\\lark-cli.exe");
+    expect(result.config.lark.profile).toBe("default");
+    expect(result.config.lark.space_a).toBe(SPACE_A);
+    expect(result.config.lark.knowledge_cards_table_id).toBe("tbl_cards");
+    expect(result.config.lark.sync_state_table_id).toBe("tbl_state");
+    expect(result.config.lark.project_roots).toEqual([
       { node_token: "node-1", project_id: "demo" },
     ]);
-    expect(result.config?.retrieval).toEqual({ default_top_k: 12 });
+    expect(result.config.retrieval).toEqual({ default_top_k: 12 });
     expect(result.warnings).toEqual([]);
   });
 

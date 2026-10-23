@@ -124,6 +124,32 @@ describe("lark_cli", () => {
     ).toEqual({ ok: true, path: common_fake, source: "common" });
   });
 
+  test("resolver finds the private cli prefix under the script2shot home", () => {
+    const home = path.join(tempRoot, "home");
+    const private_fake = install_fake_cli(
+      path.join(
+        home,
+        ".codex-script2shot",
+        "cli",
+        "node_modules",
+        "@larksuite",
+        "cli",
+        "bin",
+      ),
+    );
+    const empty_dir = path.join(tempRoot, "empty-path");
+    const local_app_data = path.join(tempRoot, "local-app-data");
+    mkdirSync(empty_dir, { recursive: true });
+    mkdirSync(local_app_data, { recursive: true });
+
+    const result = resolve_lark_cli(undefined, {
+      env: isolated_env({ PATH: empty_dir, LOCALAPPDATA: local_app_data }),
+      home_dir: home,
+    });
+
+    expect(result).toEqual({ ok: true, path: private_fake, source: "common" });
+  });
+
   test("resolver falls back when env path is invalid", () => {
     const missing = path.join(tempRoot, "missing-bin", "lark-cli");
     const config_fake = install_fake_cli(path.join(tempRoot, "config-bin"));
