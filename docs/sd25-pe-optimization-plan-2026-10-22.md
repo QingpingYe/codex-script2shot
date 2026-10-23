@@ -6,7 +6,8 @@
 （落地情况：I1–I3 已按执行计划完成并通过全量回归；**I4 为已采纳方向、待各自计划裁决**）
 参照技能：`sd25-pe`（Seedance 2.5 Prompt Optimizer，火山方舟
 `arkdocs.tos-cn-beijing.volces.com/skills/` 技能源，v0.1.1，2026-10-22 装入
-`.agents/skills/sd25-pe/`）
+`.agents/skills/sd25-pe/` 供本方案分析使用；该分析副本已在迭代完成后移除，
+插件不依赖它）
 现状基线：`docs/architecture.md`、`references/stage-conventions.md`、
 `skills/{script2shot,script-breakdown,shot-planning,shot-prompting}/SKILL.md`、
 `rules/models/*.json`、`schemas/prompt_ir.schema.json`、
