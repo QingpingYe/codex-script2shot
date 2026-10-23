@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+launcher_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+script_path=$launcher_dir/setup_bootstrap.mjs
+
+if [ ! -f "$script_path" ]; then
+  printf '%s\n' "setup_bootstrap 缺失：找不到 $script_path" >&2
+  exit 1
+fi
+
+codex_resources=
+case "${CODEX_CLI_PATH:-}" in
+  */*) codex_resources=${CODEX_CLI_PATH%/*} ;;
+esac
+cache_root=${XDG_CACHE_HOME:-${HOME:-}/.cache}
+
+for candidate in \
+  "${CODEX_MCP_NODE_PATH:-}" \
+  "${CODEX_ELECTRON_RESOURCES_PATH:-}/cua_node/bin/node" \
+  "$codex_resources/cua_node/bin/node" \
+  "$cache_root/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node"
+do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    exec "$candidate" "$script_path" "$@"
+  fi
+done
+
+if command -v node >/dev/null 2>&1; then
+  exec node "$script_path" "$@"
+fi
+
+printf '%s\n' '请更新 Codex 或安装 Node.js >= 24' >&2
+exit 127
