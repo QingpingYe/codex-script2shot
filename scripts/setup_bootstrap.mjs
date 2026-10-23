@@ -8,7 +8,18 @@
  * - 所有外部动作（子进程、网络、解压、时钟）都经 `deps` 注入，测试不触碰真实环境。
  */
 
-import { accessSync, constants, existsSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -27,6 +38,9 @@ export const NEEDS_HUMAN_ERROR_CODES = [
 
 export const MIN_NODE_MAJOR = 24;
 export const NETWORK_PROBE_URL = "https://registry.npmjs.org/-/ping";
+export const NODE_DIST_BASE = "https://nodejs.org/dist";
+export const NODE_INDEX_URL = `${NODE_DIST_BASE}/index.json`;
+export const NODE_SHA256_FILE = "SHASUMS256.txt";
 export const CHECK_IDS = [
   "plugin_dir",
   "node",
@@ -38,6 +52,9 @@ export const CHECK_IDS = [
   "dist",
   "index",
 ];
+
+/** 已实现的子命令清单（后续任务逐个补齐，见架构 §7.1）。 */
+export const USAGE_COMMANDS = ["doctor", "ensure-runtime"];
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PLUGIN_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -324,6 +341,252 @@ export async function doctor(options = {}) {
   };
 }
 
+const ARCHIVE_SPECS = {
+  "win32-x64": { tag: "win", extension: "zip", format: "zip" },
+  "darwin-arm64": { tag: "darwin", extension: "tar.gz", format: "tar.gz" },
+  "darwin-x64": { tag: "darwin", extension: "tar.gz", format: "tar.gz" },
+  "linux-x64": { tag: "linux", extension: "tar.xz", format: "tar.xz" },
+};
+
+function archive_for(platform, arch, version) {
+  const spec = ARCHIVE_SPECS[`${platform}-${arch}`];
+  if (spec === undefined) {
+    return undefined;
+  }
+  return {
+    filename: `node-${version}-${spec.tag}-${arch}.${spec.extension}`,
+    format: spec.format,
+  };
+}
+
+/**
+ * `ensure-runtime`：系统 `node` + `npm` 满足 `>= 24` 时复用；否则解析官方
+ * `index.json` 的最新 LTS，下载归档、校验同版本目录的 `SHASUMS256.txt` 后解压到
+ * `<home>/runtime/node-<version>/`（架构 §7.1）。
+ */
+export async function ensure_runtime(options = {}) {
+  const deps = resolve_deps(options.deps);
+  const env = options.env ?? process.env;
+  const home_dir = options.home_dir ?? os.homedir();
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+
+  // ① 复用系统运行时：node 与 npm 都在才算数。
+  const system_node = await probe_version(deps, { command: "node", args: ["--version"] }, env);
+  if (system_node.ok && system_node.major >= MIN_NODE_MAJOR) {
+    const npm_call = npm_invocation(["--version"]);
+    const system_npm = await probe_version(deps, npm_call, env);
+    if (system_npm.ok) {
+      return {
+        ok: true,
+        source: "system",
+        version: system_node.version,
+        node_path: "node",
+        npm_path: "npm",
+      };
+    }
+  }
+
+  // ② 解析要补装的版本（可用 node_version 固定）。
+  let version = options.node_version;
+  if (typeof version !== "string" || version.trim() === "") {
+    let index;
+    try {
+      index = await deps.fetch_json(NODE_INDEX_URL, { timeout_ms: 30000 });
+    } catch (error) {
+      return failure("NETWORK_BLOCKED", `无法读取 Node 版本索引：${describe_error(error)}。`, {
+        details: { url: NODE_INDEX_URL },
+        next_actions: ["放行 nodejs.org 后重跑 ensure-runtime。"],
+      });
+    }
+    version = pick_latest_lts(index);
+    if (version === undefined) {
+      return failure(
+        "NODE_UNAVAILABLE",
+        `Node 版本索引里没有满足 >= ${MIN_NODE_MAJOR} 的 LTS 版本。`,
+        { details: { url: NODE_INDEX_URL } },
+      );
+    }
+  }
+  version = version.trim();
+  if (/^\d+\.\d+\.\d+$/.test(version)) {
+    version = `v${version}`;
+  }
+  if (!/^v\d+\.\d+\.\d+$/.test(version)) {
+    return failure("NODE_UNAVAILABLE", `Node 版本号格式不合法：${version}。`, {
+      details: { version },
+    });
+  }
+
+  const archive = archive_for(platform, arch, version);
+  if (archive === undefined) {
+    return failure("NPM_UNAVAILABLE", `当前平台/架构不支持自动补装 Node：${platform}-${arch}。`, {
+      details: { platform, arch, supported: Object.keys(ARCHIVE_SPECS) },
+      next_actions: ["在支持的平台/架构上重跑，或由宿主提供 npm 后重跑 ensure-runtime。"],
+    });
+  }
+
+  const archive_url = `${NODE_DIST_BASE}/${version}/${archive.filename}`;
+  const checksum_source = `${NODE_DIST_BASE}/${version}/${NODE_SHA256_FILE}`;
+
+  let archive_bytes;
+  try {
+    archive_bytes = await deps.fetch_bytes(archive_url, { timeout_ms: 600000 });
+  } catch (error) {
+    return failure("NODE_DOWNLOAD_FAILED", `下载 Node 归档失败：${describe_error(error)}。`, {
+      details: { archive_url },
+      next_actions: ["确认 nodejs.org 可达后重跑 ensure-runtime。"],
+    });
+  }
+
+  let checksum_text;
+  try {
+    checksum_text = new TextDecoder().decode(
+      await deps.fetch_bytes(checksum_source, { timeout_ms: 30000 }),
+    );
+  } catch (error) {
+    return failure("NODE_DOWNLOAD_FAILED", `下载 Node 校验文件失败：${describe_error(error)}。`, {
+      details: { checksum_source },
+      next_actions: ["确认 nodejs.org 可达后重跑 ensure-runtime。"],
+    });
+  }
+
+  const expected_sha256 = find_sha256(checksum_text, archive.filename);
+  if (expected_sha256 === undefined) {
+    return failure(
+      "NODE_CHECKSUM_MISMATCH",
+      `校验文件里没有 ${archive.filename} 的 sha256 记录。`,
+      { details: { archive_url, checksum_source } },
+    );
+  }
+  const actual_sha256 = sha256_of(archive_bytes);
+  if (actual_sha256 !== expected_sha256) {
+    return failure("NODE_CHECKSUM_MISMATCH", `Node 归档 sha256 校验失败：${archive.filename}。`, {
+      details: { archive_url, checksum_source, expected_sha256, actual_sha256 },
+    });
+  }
+
+  // ③ 校验通过后才落地：解压 → 定位顶层目录 → 归一化 node/npm 路径。
+  const runtime_dir = path.join(home_dir, HOME_DIR_NAME, "runtime", `node-${version}`);
+  const archive_path = path.join(runtime_dir, archive.filename);
+  mkdirSync(runtime_dir, { recursive: true });
+  writeFileSync(archive_path, archive_bytes);
+
+  try {
+    await deps.extract(archive_path, archive.format, runtime_dir);
+  } catch (error) {
+    rmSync(runtime_dir, { recursive: true, force: true });
+    return failure("NODE_DOWNLOAD_FAILED", `解压 Node 归档失败：${describe_error(error)}。`, {
+      details: { archive_url, runtime_dir },
+    });
+  }
+  try {
+    unlinkSync(archive_path);
+  } catch {
+    // 归档删除失败不影响运行时可用性，保留现场即可。
+  }
+
+  const top_dir = find_extracted_root(runtime_dir, version);
+  if (top_dir === undefined) {
+    return failure("NODE_DOWNLOAD_FAILED", "解压后未找到 Node 顶层目录。", {
+      details: { runtime_dir },
+    });
+  }
+  const node_path = path.join(
+    top_dir,
+    platform === "win32" ? "node.exe" : path.join("bin", "node"),
+  );
+  const npm_path = path.join(
+    top_dir,
+    platform === "win32" ? "npm.cmd" : path.join("bin", "npm"),
+  );
+  if (!is_file(node_path) || !is_file(npm_path)) {
+    return failure("NODE_DOWNLOAD_FAILED", "解压后的 Node 运行时缺少 node / npm。", {
+      details: { runtime_dir, node_path, npm_path },
+    });
+  }
+
+  return {
+    ok: true,
+    source: "private",
+    version: version.slice(1),
+    node_path,
+    npm_path,
+    archive_url,
+    checksum_source,
+  };
+}
+
+function pick_latest_lts(index) {
+  if (!Array.isArray(index)) {
+    return undefined;
+  }
+  let best;
+  for (const entry of index) {
+    if (entry === null || typeof entry !== "object") {
+      continue;
+    }
+    const version = entry.version;
+    if (typeof version !== "string" || !/^v\d+\.\d+\.\d+$/.test(version)) {
+      continue;
+    }
+    if (entry.lts === false) {
+      continue;
+    }
+    if (Number(version.slice(1).split(".")[0]) < MIN_NODE_MAJOR) {
+      continue;
+    }
+    if (best === undefined || compare_versions(version, best) > 0) {
+      best = version;
+    }
+  }
+  return best;
+}
+
+function compare_versions(left, right) {
+  const left_parts = left.slice(1).split(".").map(Number);
+  const right_parts = right.slice(1).split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const diff = (left_parts[index] ?? 0) - (right_parts[index] ?? 0);
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return 0;
+}
+
+/** 从 `SHASUMS256.txt` 里取指定文件名的 sha256；找不到返回 undefined。 */
+function find_sha256(checksum_text, filename) {
+  for (const line of checksum_text.split(/\r?\n/)) {
+    const match = /^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$/.exec(line);
+    if (match !== null && match[2] === filename) {
+      return match[1].toLowerCase();
+    }
+  }
+  return undefined;
+}
+
+function sha256_of(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function find_extracted_root(runtime_dir, version) {
+  let entries;
+  try {
+    entries = readdirSync(runtime_dir, { withFileTypes: true }).filter((entry) =>
+      entry.isDirectory(),
+    );
+  } catch {
+    return undefined;
+  }
+  const expected_prefix = `node-${version}-`;
+  const matched = entries.find((entry) => entry.name.startsWith(expected_prefix));
+  if (matched !== undefined) {
+    return path.join(runtime_dir, matched.name);
+  }
+  return entries.length === 1 ? path.join(runtime_dir, entries[0].name) : undefined;
+}
+
 /**
  * 子命令入口：输出 JSON 到 stdout，返回进程退出码。
  * 未识别的子命令返回 USAGE_ERROR；其余子命令由后续任务（§7.1）逐个接入。
@@ -337,36 +600,26 @@ export async function run_cli(argv = [], options = {}) {
   let result;
   if (command === "doctor") {
     result = await doctor(base_options);
+  } else if (command === "ensure-runtime") {
+    const flag = take_flag(argv.slice(1), "--node-version");
+    if (flag.error !== undefined) {
+      result = flag.error;
+    } else if (flag.rest.length > 0) {
+      result = usage_error(
+        `ensure-runtime 不支持的位置参数：${flag.rest.join(" ")}。`,
+        ["--node-version"],
+      );
+    } else {
+      result = await ensure_runtime({ ...base_options, node_version: flag.value });
+    }
   } else if (command === undefined) {
-    result = failure("USAGE_ERROR", "缺少子命令：可用子命令为 doctor。", {
-      details: { argv: [] },
-      next_actions: ["运行 doctor 获取环境探测结果。"],
-    });
+    result = usage_error("缺少子命令。", USAGE_COMMANDS);
   } else {
-    result = failure("USAGE_ERROR", `未知子命令：${command}。可用子命令为 doctor。`, {
-      details: { argv: [...argv], allowed: ["doctor"] },
-      next_actions: ["运行 doctor 获取环境探测结果。"],
-    });
+    result = usage_error(`未知子命令：${command}。`, USAGE_COMMANDS);
   }
 
   io.stdout(`${JSON.stringify(result, null, 2)}\n`);
   return exit_code_for(result);
-}
-
-async function main(argv) {
-  const code = await run_cli(argv);
-  process.exitCode = code;
-}
-
-const invoked_directly =
-  process.argv[1] !== undefined &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-
-if (invoked_directly) {
-  main(process.argv.slice(2)).catch((error) => {
-    process.stderr.write(`setup_bootstrap 未处理异常：${describe_error(error)}\n`);
-    process.exitCode = EXIT_FAILED;
-  });
 }
 
 async function probe_version(deps, call, env, extra = {}) {
@@ -386,6 +639,30 @@ async function probe_version(deps, call, env, extra = {}) {
     major: Number(match[1]),
     raw,
   };
+}
+
+function usage_error(message, allowed) {
+  return failure("USAGE_ERROR", `${message}可用子命令：${allowed.join("、")}。`, {
+    details: { allowed: [...allowed] },
+    next_actions: ["按 $setup 的流程选择下一个子命令。"],
+  });
+}
+
+/**
+ * 从位置参数里取出 `--flag value`；值缺失时返回 USAGE_ERROR。
+ * `rest` 是去掉该 flag 之后的其余位置参数（由调用方判定是否非法）。
+ */
+function take_flag(args, flag) {
+  const index = args.indexOf(flag);
+  if (index === -1) {
+    return { value: undefined, rest: [...args] };
+  }
+  const value = args[index + 1];
+  const rest = [...args.slice(0, index), ...args.slice(index + 2)];
+  if (value === undefined) {
+    return { value: undefined, rest, error: usage_error(`${flag} 需要一个值。`, USAGE_COMMANDS) };
+  }
+  return { value, rest };
 }
 
 /**
@@ -499,4 +776,20 @@ function first_non_empty(value) {
 
 function describe_error(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** 直接执行（非 import）时才跑子命令分发；必须放在文件末尾，避免 TDZ。 */
+const invoked_directly =
+  process.argv[1] !== undefined &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (invoked_directly) {
+  run_cli(process.argv.slice(2))
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      process.stderr.write(`setup_bootstrap 未处理异常：${describe_error(error)}\n`);
+      process.exitCode = EXIT_FAILED;
+    });
 }
