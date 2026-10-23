@@ -1,6 +1,6 @@
 {
   "name": "script2shot-git",
-  "interface": { "displayName": "Script2Shot (Local)" },
+  "interface": { "displayName": "Script2Shot" },
   "plugins": [
     {
       "name": "script2shot",
