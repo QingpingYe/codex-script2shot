@@ -16,6 +16,7 @@ import {
   type LarkBaseFailure,
 } from "../lark_base.js";
 import { resolve_lark_cli, type LarkCliErrorCode } from "../lark_cli.js";
+import { normalize_config } from "./write_config.js";
 
 /**
  * `init_knowledge_b` MCP Tool（架构 §5.1、§8、§9.1）。
@@ -26,6 +27,9 @@ import { resolve_lark_cli, type LarkCliErrorCode } from "../lark_cli.js";
  * - 表名解析出多个 table_id 时报 `KB_TABLE_AMBIGUOUS` 并要求人工处理。
  * - `dry_run` 缺省 true：只做读操作（表列表），不建表、不写配置；dry_run=false 且
  *   建表/校验成功后，才把解析出的两个 table_id 合并写回本地 config.toml。
+ * - `pending_config`（架构 §8）可选：与 `write_config` 的 `config` 同形状，提供且
+ *   校验通过时本次调用完全不读磁盘配置（`config_source: "pending"`）；只允许
+ *   dry-run，执行路径携带时直接返回 `CONFIG_INVALID`。
  * - 返回值是结果对象，不抛异常；错误码为 SCREAMING_SNAKE。
  */
 
@@ -42,6 +46,8 @@ export type InitKnowledgeBAction = "created" | "validated" | "drift";
 export interface InitKnowledgeBInput {
   /** 缺省 true：只校验不落盘。 */
   dry_run?: unknown;
+  /** 可选：与 `write_config` 的 `config` 同形状；提供即替代磁盘配置（仅 dry-run）。 */
+  pending_config?: unknown;
   /** 默认 process.env；测试可注入受控环境。 */
   env?: NodeJS.ProcessEnv;
   /** 默认 os.homedir()；用于 lark-cli 常见安装目录探测。 */
@@ -68,6 +74,8 @@ export interface InitKnowledgeBWarning {
 export interface InitKnowledgeBSuccess {
   dry_run: boolean;
   action: InitKnowledgeBAction;
+  /** 本次配置来源：`pending`（入参提供）或 `disk`（读取 config.toml）。 */
+  config_source: "pending" | "disk";
   tables: {
     knowledge_cards: string | null;
     sync_state: string | null;
@@ -147,18 +155,38 @@ export async function init_knowledge_b(
   }
   const dry_run = dry_run_parsed.value;
 
-  const loaded = load_config();
-  if ("error" in loaded) {
-    return failure("CONFIG_INVALID", loaded.error.message, loaded.error.details);
+  let config: Script2ShotConfig;
+  let config_source: InitKnowledgeBSuccess["config_source"];
+  if (input.pending_config !== undefined) {
+    if (!dry_run) {
+      return failure(
+        "CONFIG_INVALID",
+        '入参字段 "pending_config" 只允许用于 dry_run 预览；执行路径必须先写入配置。',
+        { field: "pending_config" },
+      );
+    }
+    const normalized = normalize_config(input.pending_config, { preserve_existing: false });
+    if ("error" in normalized) {
+      return normalized;
+    }
+    config = normalized.config;
+    config_source = "pending";
+  } else {
+    const loaded = load_config();
+    if ("error" in loaded) {
+      return failure("CONFIG_INVALID", loaded.error.message, loaded.error.details);
+    }
+    if (!loaded.exists) {
+      return failure(
+        "CONFIG_MISSING",
+        `未找到配置文件：${loaded.path}。请先运行 $setup 或 write_config 初始化配置。`,
+        { path: loaded.path },
+      );
+    }
+    config = loaded.config;
+    config_source = "disk";
   }
-  if (!loaded.exists) {
-    return failure(
-      "CONFIG_MISSING",
-      `未找到配置文件：${loaded.path}。请先运行 $setup 或 write_config 初始化配置。`,
-      { path: loaded.path },
-    );
-  }
-  const config = loaded.config;
+
   const base_b = config.lark.base_b;
   if (!has_text(base_b)) {
     return failure("CONFIG_INVALID", "配置缺少 lark.base_b，无法访问 AI 库。", {
@@ -259,7 +287,7 @@ export async function init_knowledge_b(
     }
   }
 
-  return { dry_run, action, tables: { ...tables }, drift, warnings };
+  return { dry_run, action, config_source, tables: { ...tables }, drift, warnings };
 }
 
 function inspect_table_schema(

@@ -119,6 +119,12 @@ const TOOLS = [
           type: "boolean",
           description: "缺省 true：只读取并校验，不建表、不写配置。",
         },
+        pending_config: {
+          type: "object",
+          description:
+            "可选：与 write_config 的 config 同形状的待写入配置；提供时本次调用完全不读磁盘配置，" +
+            "只允许 dry_run 预览（执行路径携带它返回 CONFIG_INVALID）；成功结果带 config_source。",
+        },
       },
       additionalProperties: false,
     },

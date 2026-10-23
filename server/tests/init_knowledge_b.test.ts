@@ -1,6 +1,7 @@
 import {
   chmodSync,
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -405,5 +406,86 @@ describe("init_knowledge_b", () => {
     expect(result.error.details?.table_name).toBe("SyncState");
     expect(result.error.details?.table_ids).toEqual(["tbl_state_1", "tbl_state_2"]);
     expect(create_calls()).toEqual([]);
+  });
+
+  test("dry-run previews with a pending config when the disk has none", async () => {
+    rmSync(path.join(home, "config.toml"), { force: true });
+    const env_without_cli_path = { ...env };
+    delete env_without_cli_path.LARK_CLI_PATH;
+
+    const result = expect_success(
+      await init_knowledge_b({
+        dry_run: true,
+        pending_config: {
+          lark: {
+            cli_path: cliPath,
+            profile: "pending-profile",
+            space_a: SPACE_A,
+            base_b: BASE_B,
+          },
+        },
+        env: env_without_cli_path,
+      }),
+    );
+
+    expect(result.config_source).toBe("pending");
+    expect(result.action).toBe("created");
+    expect(result.tables).toEqual({ knowledge_cards: null, sync_state: null });
+    expect(read_calls().map((call) => call.args)).toEqual([
+      ["base", "+table-list", "--base-token", BASE_B],
+    ]);
+  });
+
+  test("dry-run previews with a pending config even when the disk config is broken", async () => {
+    const broken = "[lark\nspace_a = 1\n";
+    writeFileSync(path.join(home, "config.toml"), broken, "utf8");
+
+    const result = expect_success(
+      await init_knowledge_b({
+        dry_run: true,
+        pending_config: {
+          lark: { cli_path: cliPath, profile: "pending-profile", space_a: SPACE_A, base_b: BASE_B },
+        },
+        env,
+      }),
+    );
+
+    expect(result.config_source).toBe("pending");
+    expect(result.action).toBe("created");
+    expect(config_text(), "pending 预览不得改写磁盘配置").toBe(broken);
+  });
+
+  test("rejects an invalid pending config as CONFIG_INVALID", async () => {
+    const result = expect_error(
+      await init_knowledge_b({
+        dry_run: true,
+        pending_config: {
+          lark: { cli_path: cliPath, profile: "pending-profile", space_a: SPACE_A, base_b: "" },
+        },
+        env,
+      }),
+    );
+
+    expect(result.error.code).toBe("CONFIG_INVALID");
+    expect(result.error.details?.missing_keys).toEqual(["lark.base_b"]);
+  });
+
+  test("refuses a pending config on the execution path without writing anything", async () => {
+    const before = config_text();
+
+    const result = expect_error(
+      await init_knowledge_b({
+        dry_run: false,
+        pending_config: {
+          lark: { cli_path: cliPath, profile: "pending-profile", space_a: SPACE_A, base_b: BASE_B },
+        },
+        env,
+      }),
+    );
+
+    expect(result.error.code).toBe("CONFIG_INVALID");
+    expect(result.error.details?.field).toBe("pending_config");
+    expect(config_text(), "执行路径携带 pending_config 时不得写配置").toBe(before);
+    expect(existsSync(logPath), "不得启动任何 lark-cli 子进程").toBe(false);
   });
 });
