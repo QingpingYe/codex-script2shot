@@ -1,4 +1,4 @@
-# Phase 4：阶段技能与提示词生成 实施计划
+> 历史计划说明：本文记录 Phase 4 的旧实现路径。其中的逐镜头时长、九节渲染、禁止自主动数字时间轴和单镜头提示词口径，已被 `docs/superpowers/specs/2026-10-26-shortdrama-video-prompts-design.md` 的 v2 短剧多镜头方案取代。当前实现以架构和阶段约定 v2 为准。\n\n# Phase 4：阶段技能与提示词生成 实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

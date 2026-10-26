@@ -1,56 +1,40 @@
 {
   "model": "seedance-2.5",
   "label": "Seedance 2.5",
-  "duration": {
-    "min_sec": 4,
-    "max_sec": 30,
-    "default_sec": 5
-  },
+  "duration": { "min_sec": 4, "max_sec": 30, "default_sec": 5 },
+  "reference_limits": { "max_images": 30 },
+  "timeline": { "required_in_prompt": true },
   "aspect_ratios": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
   "shot_split": {
     "prefer_max_sec": 30,
-    "multi_action_rule": "一段提示词可覆盖同一连续镜头内的多个连续节拍，但必须有统一的叙事目标，且只保留一个主要动作或一个主要情绪；避免把多个独立事件压进同一段；不为填满时长添加原文没有的动作、台词或事件。"
+    "multi_action_rule": "一个视频提示词优先容纳一个完整、连续的叙事过程，可以包含多个电影镜头和多段连续节拍；切镜本身不是拆分理由。只有超过单次生成时长或参考素材上限时，才在动作完成、短句结束或信息揭示等自然节点拆段，并保持过程 ID、进入状态、离开状态和声音关系稳定。"
   },
-  "required_fields": ["shot_size", "subject", "action", "setting", "camera_movement", "lighting", "color", "style"],
+  "required_fields": ["generation_goal", "subjects_and_relations", "subject", "action", "setting", "camera_movement", "lighting", "color", "style"],
   "forbidden": ["--ar", "aspect_ratio", "duration", "fps", "resolution", "run_id", "seedance"],
   "render": {
     "title": "# Seedance 2.5 提示词",
-    "shot_heading": "## 镜头 {shot_id}（时长 {duration} 秒，画幅 {aspect_ratio}）",
+    "clip_heading": "## 视频 {clip_id}（时长 {duration} 秒，画幅 {aspect_ratio}）",
     "section_labels": {
-      "subject_action": "主体与动作",
-      "dialogue": "对白",
-      "setting_time": "环境与时间",
-      "camera": "景别、机位与运镜",
-      "light_color": "光线与色彩",
-      "style": "风格",
-      "audio": "声音",
-      "continuity": "连续性",
-      "negative": "负面约束"
+      "generation_goal": "生成目标",
+      "reference_duties": "参考素材职责",
+      "subjects_relations": "主体与关系",
+      "event_script": "事件脚本",
+      "consistency": "保持一致"
     },
-    "section_order": [
-      "subject_action",
-      "dialogue",
-      "setting_time",
-      "camera",
-      "light_color",
-      "style",
-      "audio",
-      "continuity",
-      "negative"
-    ],
+    "section_order": ["generation_goal", "reference_duties", "subjects_relations", "event_script", "consistency"],
     "empty_negative": "无",
     "empty_dialogue": "无对白；人物自然闭口，无旁白"
   },
   "prompt_guidance": {
-    "long_shot_staging_threshold_sec": 15,
-    "shot_structure": "单段提示词可覆盖同一连续镜头内的多个连续节拍，但必须有统一的叙事目标，每个节拍仍有明确中心；超过阶段化阈值的长镜头必须阶段化：拆成连续阶段，每个阶段只安排一个主要状态变化，写清该阶段结束时画面中可见的状态，并保持人物身份、数量、服装、道具归属、空间方向与声音关系稳定。",
-    "dialogue": "支持更多语种；多人对话逐句标明说话人与语言，台词语种仍以原文为准，不擅自改语种或混用中英文。",
-    "sound": "音效用 <> 包裹、音乐用 () 包裹，台词用 {}；控制声音时直接写明保留与不采用的类别，例如「无背景音乐，只保留人物对白、环境声和动作音效」「不要任何声音」。",
-    "negative": "画面内容优先正向描述，只有素材职责、编辑范围与容易被误带入的内容才写限制；约束词用已核实句式：字幕写「不额外加入对白字幕」「不要字幕」，音频写「无 bgm，只生成环境音和动作音」（或「不要任何声音」），Logo 写「不要生成 Logo」，水印写「不要生成水印」；画面瑕疵类约束按正向短语写。"
+    "long_shot_staging_threshold_sec": 30,
+    "shot_structure": "先按完整过程组织视频，再在视频内部安排镜头。每个视觉镜头必须输出明确的秒数区间；对白轨和声音 cue 也使用独立秒数区间，允许跨切镜。超过上限时只在自然节点拆段，并写清前后衔接状态。",
+    "dialogue": "支持更多语种；多人对话逐句标明说话人与语言，台词语种仍以原文为准，逐字保留，不因切镜或跨视频分片而改字。",
+    "sound": "音效用 <> 包裹、音乐用 () 包裹，台词用 {}；环境声和音乐写明完整覆盖区间，瞬时音效写明具体发生区间，来源必须可追溯。",
+    "negative": "画面内容优先正向描述，只有素材职责、编辑范围与容易被误带入的内容才写限制。"
   },
   "source": [
     "https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh",
     "https://docs.volcengine.com/docs/ark/seedance-2-5?lang=zh"
   ],
-  "checked_at": "2026-10-22"
+  "checked_at": "2026-10-26"
 }

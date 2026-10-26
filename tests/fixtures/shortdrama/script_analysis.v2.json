@@ -1,0 +1,222 @@
+{
+  "schema_version": 2,
+  "run_id": "run-20261026-120000",
+  "input_mode": "script_segment",
+  "project_id": "demo",
+  "target_model": "seedance-2.5",
+  "input_hashes": {
+    "run_context": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "episodes": [
+    {
+      "episode_id": "ep01",
+      "title": "信封",
+      "scenes": [
+        {
+          "scene_id": "ep01-sc01",
+          "heading": "客厅 日 内",
+          "summary": "林岚把信封交给周宁。",
+          "location": "客厅",
+          "time_of_day": "日",
+          "characters": ["林岚", "周宁"],
+          "beats": [
+            {
+              "beat_id": "ep01-sc01-b01",
+              "description": "林岚把信封交给周宁",
+              "action_unit_ids": ["ep01-sc01-a01"],
+              "emotion_unit_ids": ["ep01-sc01-e01"],
+              "dialogue_unit_ids": ["ep01-sc01-d01"]
+            }
+          ],
+          "action_units": [
+            {
+              "id": "ep01-sc01-a01",
+              "description": "林岚把信封递给周宁。",
+              "characters": ["林岚", "周宁"],
+              "location": "客厅",
+              "entity_ids": ["character-a", "character-b", "scene-living-room", "prop-envelope"]
+            }
+          ],
+          "emotion_units": [
+            {
+              "id": "ep01-sc01-e01",
+              "description": "林岚克制，周宁警惕。",
+              "characters": ["林岚", "周宁"],
+              "tone": "克制与警惕",
+              "entity_ids": ["character-a", "character-b", "prop-envelope"]
+            }
+          ],
+          "dialogue_units": [
+            {
+              "id": "ep01-sc01-d01",
+              "speaker": "林岚",
+              "text": "给你。",
+              "visual_action": "林岚把信封递向周宁。",
+              "entity_ids": ["character-a", "character-b", "prop-envelope"]
+            }
+          ],
+          "processes": [
+            {
+              "process_id": "ep01-p01",
+              "goal": "林岚把信封交给周宁，周宁接住。",
+              "enter_state": "信封在林岚手中。",
+              "exit_state": "信封在周宁手中。",
+              "action_unit_ids": ["ep01-sc01-a01"],
+              "emotion_unit_ids": ["ep01-sc01-e01"],
+              "dialogue_unit_ids": ["ep01-sc01-d01"],
+              "entity_ids": ["character-a", "character-b", "scene-living-room", "prop-envelope"]
+            }
+          ]
+        },
+        {
+          "scene_id": "ep01-sc02",
+          "heading": "客厅 日 内",
+          "summary": "周宁从信封中取出项链。",
+          "location": "客厅",
+          "time_of_day": "日",
+          "characters": ["林岚", "周宁"],
+          "beats": [
+            {
+              "beat_id": "ep01-sc02-b01",
+              "description": "周宁打开信封并取出项链",
+              "action_unit_ids": ["ep01-sc02-a01"],
+              "emotion_unit_ids": ["ep01-sc02-e01"],
+              "dialogue_unit_ids": ["ep01-sc02-d01"]
+            }
+          ],
+          "action_units": [
+            {
+              "id": "ep01-sc02-a01",
+              "description": "周宁打开信封，从里面取出项链。",
+              "characters": ["周宁"],
+              "location": "客厅",
+              "entity_ids": ["character-b", "scene-living-room", "prop-envelope", "prop-necklace"]
+            }
+          ],
+          "emotion_units": [
+            {
+              "id": "ep01-sc02-e01",
+              "description": "周宁震惊，林岚沉默。",
+              "characters": ["林岚", "周宁"],
+              "tone": "震惊与沉默",
+              "entity_ids": ["character-a", "character-b", "prop-necklace"]
+            }
+          ],
+          "dialogue_units": [
+            {
+              "id": "ep01-sc02-d01",
+              "speaker": "周宁",
+              "text": "你一直留着？",
+              "visual_action": "周宁看着项链，没有抬头。",
+              "entity_ids": ["character-b", "prop-necklace"]
+            }
+          ],
+          "processes": [
+            {
+              "process_id": "ep01-p02",
+              "goal": "周宁发现信封里的项链，林岚没有解释。",
+              "enter_state": "信封在周宁手中，尚未打开。",
+              "exit_state": "项链在周宁手中，林岚保持沉默。",
+              "action_unit_ids": ["ep01-sc02-a01"],
+              "emotion_unit_ids": ["ep01-sc02-e01"],
+              "dialogue_unit_ids": ["ep01-sc02-d01"],
+              "entity_ids": ["character-a", "character-b", "scene-living-room", "prop-envelope", "prop-necklace"]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "character-a",
+      "entity_type": "character",
+      "name": "林岚",
+      "description": "浅灰风衣；其他外观待补充。",
+      "source_scene_ids": ["ep01-sc01", "ep01-sc02"]
+    },
+    {
+      "entity_id": "character-b",
+      "entity_type": "character",
+      "name": "周宁",
+      "description": "深色衬衫；其他外观待补充。",
+      "source_scene_ids": ["ep01-sc01", "ep01-sc02"]
+    },
+    {
+      "entity_id": "scene-living-room",
+      "entity_type": "scene",
+      "name": "客厅",
+      "description": "同一间客厅；布局细节待补充。",
+      "source_scene_ids": ["ep01-sc01", "ep01-sc02"]
+    },
+    {
+      "entity_id": "prop-envelope",
+      "entity_type": "prop",
+      "name": "信封",
+      "description": "旧信封；颜色与封口状态待补充。",
+      "source_scene_ids": ["ep01-sc01", "ep01-sc02"]
+    },
+    {
+      "entity_id": "prop-necklace",
+      "entity_type": "prop",
+      "name": "项链",
+      "description": "项链；材质和吊坠外观待补充。",
+      "source_scene_ids": ["ep01-sc02"]
+    }
+  ],
+  "reference_assets": [
+    {
+      "asset_id": "asset-character-a",
+      "media_type": "image",
+      "status": "placeholder",
+      "entity_ids": ["character-a"],
+      "adopt": ["面部与剧本已明确的服装"],
+      "exclude": ["背景"]
+    },
+    {
+      "asset_id": "asset-character-b",
+      "media_type": "image",
+      "status": "placeholder",
+      "entity_ids": ["character-b"],
+      "adopt": ["面部与剧本已明确的服装"],
+      "exclude": ["背景"]
+    },
+    {
+      "asset_id": "asset-scene-living-room",
+      "media_type": "image",
+      "status": "placeholder",
+      "entity_ids": ["scene-living-room"],
+      "adopt": ["空间布局、门窗和固定家具位置"],
+      "exclude": ["图中人物"]
+    },
+    {
+      "asset_id": "asset-prop-envelope",
+      "media_type": "image",
+      "status": "placeholder",
+      "entity_ids": ["prop-envelope"],
+      "adopt": ["信封的形状、颜色和封口状态"],
+      "exclude": ["手部和背景"]
+    },
+    {
+      "asset_id": "asset-prop-necklace",
+      "media_type": "image",
+      "status": "placeholder",
+      "entity_ids": ["prop-necklace"],
+      "adopt": ["项链形状和吊坠外观"],
+      "exclude": ["手部和背景"]
+    }
+  ],
+  "continuity": {
+    "characters": [],
+    "scenes": [],
+    "style": []
+  },
+  "missing_info": [
+    {
+      "code": "REFERENCE_IMAGE_PENDING",
+      "message": "角色、场景和关键道具参考图均待提供。"
+    }
+  ],
+  "knowledge_refs": [],
+  "generated_at": "2026-10-26T12:00:00+08:00"
+}

@@ -17,7 +17,9 @@
             "enter_state": "角色A站在旧公寓门口，手停在门把上",
             "exit_state": "角色A推门进入旧公寓"
           },
-          "source_shot_group_ids": ["ep01-sc01-g01"],
+          "source_shot_group_ids": [
+            "ep01-sc01-g01"
+          ],
           "notes": "建立角色与空间关系"
         }
       ]
@@ -36,5 +38,6 @@
       "last_synced_at": "2026-10-20T12:00:00+08:00"
     }
   ],
-  "generated_at": "2026-10-20T12:05:00+08:00"
+  "generated_at": "2026-10-20T12:05:00+08:00",
+  "schema_version": 1
 }

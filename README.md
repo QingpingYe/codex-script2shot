@@ -1,119 +1,75 @@
 # codex-script2shot
 
-把剧本变成 AI 视频提示词的 Codex 插件。
+把剧本转换成 AI 视频生成提示词的 Codex 插件。当前 v2 面向短剧：最终交付单位是一个
+待生成视频的一段提示词，一个视频可以包含多个电影镜头。
 
-用户提交一段剧本、一集剧本或多集剧本，插件通过剧本解析、镜头规划和知识检索，
-为 Seedance 2.0 或 Seedance 2.5 生成视频提示词。
-
-当前状态：Phase 1-4 已实现。插件包含六个 Skill、本地 MCP Server、阶段 schema 和
-Seedance 2.0 / 2.5 规则文件，主流程可端到端产出提示词。Phase 5（检索诊断）与 I4
-前瞻项（跨产物语义校验、多模态参考绑定等）尚未落地，见文末路线图。
-
-## 工作原理
-
-系统由三部分组成：
-
-- 飞书知识库（原始资料）（简称「原始库」）：用户维护的原始知识，包括通用知识和项目知识。
-  插件只读取，不写入。
-- 飞书知识库（AI）（简称「AI 库」）：一个飞书多维表格（Base），保存插件从原始库归纳出的结构化知识卡
-  （`KnowledgeCards`）和同步状态（`SyncState`）。只保留最新版，不保存历史，
-  不提供人工阅读页面。
-- 本地 Codex 插件：六个 Skill 和本地 MCP Server，负责知识同步、本地关键词
-  索引、检索、阶段产物校验和提示词渲染。
-
-文档中的「原始库 / AI 库」分别对应工具和配置里的 `space_a` / `base_b` 标识。
-
-主流程：
+## 主流程
 
 ```text
-原始库
-  -> knowledge-sync（增量归纳，只处理变化文档）
-  -> AI 库
-  -> script2shot 入口
-       -> 刷新本地索引
-       -> script-breakdown（剧本 -> 结构化解析）
-       -> shot-planning（解析结果 + 项目知识 -> 镜头计划）
-       -> shot-prompting（镜头计划 + 知识 -> PromptIR）
-  -> 校验 Seedance 硬规则 -> 渲染提示词
+剧本 + 可选参考素材
+  → script-breakdown
+      script_analysis.json：实体、参考图占位、原文单元、完整过程、run_context 指纹
+  → shot-planning
+      shot_plan.json：scenes[].clips[].shots[]、秒数、对白轨、AudioCue、script_analysis 指纹
+  → shot-prompting
+      prompts.ir.json + prompts.<model>.md：五模块视频提示词
+  → knowledge_refs.json + warnings.md
 ```
 
-设计原则：原始库与 AI 库职责分离、剧本不进知识库、同步状态以 AI 库为准、
-增量同步优先、插件不在服务端运行。
+一个完整过程默认保留在一个视频中。切镜不是拆分理由；只有超过模型时长或图片上限时，
+才在自然节点拆分并交代前后状态。
+
+## 五模块
+
+每段正文固定：
+
+1. 【生成目标】
+2. 【参考素材职责】
+3. 【主体与关系】
+4. 【事件脚本】
+5. 【保持一致】
+
+- Seedance 2.5：每个内部镜头、对白片段和声音 cue 必须带秒数。
+- Seedance 2.0：默认顺序叙述，用户开启 `display_timeline` 后显示秒数。
+- 仅剧本输入：为每个角色、场景、关键道具分别建立 image 占位，标记“待提供”。
 
 ## 主要能力
 
-插件提供六个 Skill，其中 `script2shot` 是薄入口，创作工作由三个阶段 Skill 承担：
+- `script-breakdown`：实体台账、参考素材槽、动作/情绪/对白单元、完整过程。
+- `shot-planning`：过程 → 视频 clip → 内部 shot；对白分片和 AudioCue 时间轴。
+- `shot-prompting`：五模块 PromptIR 和确定性 Markdown 渲染。
+- `script2shot`：三阶段编排、内容指纹交接、v1 拒绝续跑、引用和 warning 聚合。
+- 本地 MCP Server：知识检索、运行目录、schema/语义校验、渲染与聚合。
 
-| Skill | 职责 |
-| --- | --- |
-| `setup` | 查找 `lark-cli`、检查登录状态、配置原始库和 AI 库、初始化本地目录 |
-| `knowledge-sync` | 扫描原始库的节点元数据，只读取变化文档，生成知识卡并更新 AI 库的 `SyncState` |
-| `script2shot` | 入口编排：刷新索引、创建运行目录、依次执行三个阶段、校验硬规则、聚合输出 |
-| `script-breakdown` | 剧本 -> 结构化解析（场次、节拍、动作、情绪、对白、镜头组建议） |
-| `shot-planning` | 解析结果 + 项目知识 -> 镜头计划（景别、机位、运镜、时长、连贯性） |
-| `shot-prompting` | 镜头计划 + 知识包 -> PromptIR -> 校验 -> Seedance 提示词 |
+## 运行产物
 
-本地 MCP Server 只负责确定性操作，包括扫描知识库、读写知识卡、
-刷新索引、检索知识、管理运行目录、校验阶段产物和 PromptIR、渲染提示词。
-LLM 归纳放在 Skill 中完成。
-
-在 Codex 中可以用自然语言指定单个文档同步：
+输出到 `<workspace>/.script2shot/outputs/<run_id>/`：
 
 ```text
-$knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
+run.json
+script_analysis.json
+shot_plan.json
+prompts.ir.json
+prompts.<model>.md
+knowledge_refs.json
+warnings.md
 ```
 
-`script2shot` 的运行产物输出到工作区：
+## 版本与续跑
 
-```text
-.script2shot/outputs/<run_id>/
-  run.json
-  script_analysis.json
-  shot_plan.json
-  prompts.ir.json
-  prompts.<model>.md
-  knowledge_refs.json
-  warnings.md
-```
-
-每次运行必须指定 `project_id` 和一个目标模型。三个阶段之间只通过文件产物交接，
-`run.json` 记录输入模式、项目、目标模型和阶段状态。
-`shot_plan.json` 可以人工修改后再继续，也可以从任意阶段续跑：
-
-```text
-$script2shot 从 shot-planning 继续，run_id 是 <run_id>
-$script2shot 只执行 shot-prompting，run_id 是 <run_id>
-```
-
-## 快速开始
-
-1. 在 Codex 中安装插件并运行 `$setup`。环境自举、`lark-cli` 安装、登录编排和配置
-   写入都由 AI 执行；人类只做浏览器操作与一次写入确认。
-2. 运行 `$knowledge-sync`，完成首次同步并刷新本地索引。
-3. 在 Codex 会话中提交剧本，指定 `project_id` 和目标模型，
-   `$script2shot` 默认按顺序跑完三个阶段。
-
-初始化流程与人机边界见 [skills/setup/SKILL.md](skills/setup/SKILL.md)。
+- 四个基础产物使用 `schema_version: 2`。
+- 旧 run、未来版本或版本混杂返回 `ARTIFACT_VERSION_UNSUPPORTED`，不自动迁移。
+- `read_run` 核对运行上下文和内容指纹；上游文字变化会使下游待重跑，即使 ID/时间未变。
+- 支持 `from <stage>` 与 `only <stage>`，但每个阶段都要重新校验上游。
 
 ## 文档
 
-- [架构设计](docs/architecture.md)：总体架构、知识卡与同步状态模型、检索和生成流程。
-- [阶段约定](references/stage-conventions.md)：阶段交接、检索配方和知识引用聚合规则。
-- [飞书知识库（原始资料）内容说明](docs/knowledge-base-raw.md)：简称「原始库」，说明应包含的目录、文档和内容。
-- [飞书知识库（AI）内容说明](docs/knowledge-base-ai.md)：简称「AI 库」，说明应包含的表、字段和内容。
-- [设计复盘最小修正清单](docs/design-remediation-2026-10-20.md)：本轮设计收敛项。
+- [总体架构](docs/architecture.md)
+- [阶段约定](references/stage-conventions.md)
+- [模型规则说明](docs/model-rules-notes.md)
+- [本轮设计与计划](docs/superpowers/specs/2026-10-26-shortdrama-video-prompts-design.md)
 
-## 路线图
+## 边界
 
-1. Phase 1（已完成）：插件骨架、`setup`、`health`、飞书连接。
-2. Phase 2（已完成）：AI 库建表、增量同步、`knowledge-sync`。
-3. Phase 3（已完成）：本地缓存、SQLite 关键词索引和规则排序。
-4. Phase 4（已完成）：阶段技能与提示词生成。
-   - 4a：`script-breakdown` 与 `script_analysis` schema。
-   - 4b：`shot-planning` 与 `shot_plan` schema。
-   - 4c：`shot-prompting`、PromptIR、Seedance 规则文件和渲染。
-   - 4d：`script2shot` 入口编排、续跑和输出聚合。
-5. Phase 5（可选，未开始）：检索诊断 `explain` 输出和 `knowledge-inspect` 诊断技能。
-
-当前未完成：Phase 5，以及 I4 四项前瞻能力（跨产物语义校验、多模态参考绑定、
-素材规格上限进规则、编辑 / 延长任务路由）；I4 需要先完成架构裁决再排期。
+本轮不生成图片、不上传素材、不实际生成视频、不写远端知识库；不新增原文没有的剧情、
+台词、声音或关键道具。占位参考图不等于图片已提供。

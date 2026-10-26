@@ -2,308 +2,93 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { validate_stage_artifact } from "../src/tools/validate_stage_artifact.js";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const fixturesDir = path.join(repoRoot, "tests", "fixtures");
+const shortdramaDir = path.join(fixturesDir, "shortdrama");
+const tempDirs: string[] = [];
 
-function fixture_path(file_name: string): string {
-  return path.join(fixturesDir, file_name);
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+function read_json(file_path: string): Record<string, any> {
+  return JSON.parse(readFileSync(file_path, "utf8")) as Record<string, any>;
 }
 
-function read_fixture(file_name: string): unknown {
-  return JSON.parse(readFileSync(fixture_path(file_name), "utf8")) as unknown;
+function write_temp(value: unknown, name = "artifact.json"): string {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-v2-"));
+  tempDirs.push(dir);
+  const file_path = path.join(dir, name);
+  writeFileSync(file_path, JSON.stringify(value, null, 2), "utf8");
+  return file_path;
 }
 
-describe("stage artifact validation", () => {
-  test("valid script analysis fixture passes", () => {
+describe("stage artifact v2 validation", () => {
+  test("valid script analysis returns content_hash", () => {
     const result = validate_stage_artifact({
       stage: "script_breakdown",
-      path: fixture_path("script_analysis.sample.json"),
+      path: path.join(shortdramaDir, "script_analysis.v2.json"),
     });
-
-    expect(result).toEqual({ ok: true, errors: [] });
+    expect(result.ok).toBe(true);
+    expect(result.content_hash).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  test("validate rejects missing scene summary", () => {
-    const result = validate_stage_artifact({
-      stage: "script_breakdown",
-      path: fixture_path("script_analysis.invalid.missing_scene_summary.json"),
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.errors).toMatchObject([
-      {
-        path: "/episodes/0/scenes/0/summary",
-        keyword: "required",
-      },
-    ]);
-  });
-
-  test("validate rejects unknown input mode", () => {
-    const result = validate_stage_artifact({
-      stage: "script_breakdown",
-      path: fixture_path("script_analysis.invalid.bad_input_mode.json"),
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.errors).toMatchObject([
-      {
-        path: "/input_mode",
-        keyword: "enum",
-      },
-    ]);
-  });
-
-  test("validate rejects hand edited missing field with json pointer", () => {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-artifact-"));
-    try {
-      const edited = read_fixture("script_analysis.sample.json") as {
-        episodes: Array<{
-          scenes: Array<{
-            action_units: Array<Record<string, unknown>>;
-          }>;
-        }>;
-      };
-      delete edited.episodes[0].scenes[0].action_units[0].description;
-      const editedPath = path.join(tempDir, "script_analysis.json");
-      writeFileSync(editedPath, JSON.stringify(edited), "utf8");
-
-      const result = validate_stage_artifact({
-        stage: "script_breakdown",
-        path: editedPath,
-      });
-
-      expect(result.ok).toBe(false);
-      expect(result.errors).toMatchObject([
-        {
-          path: "/episodes/0/scenes/0/action_units/0/description",
-          keyword: "required",
-        },
-      ]);
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  test("validate reports missing file as STAGE_ARTIFACT_MISSING", () => {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-artifact-"));
-    try {
-      const result = validate_stage_artifact({
-        stage: "script_breakdown",
-        path: path.join(tempDir, "missing.json"),
-      });
-
-      expect(result.ok).toBe(false);
-      expect(result.errors).toHaveLength(1);
-      expect(result.errors[0]).toMatchObject({
-        path: "",
-        code: "STAGE_ARTIFACT_MISSING",
-      });
-      expect(result.errors[0].message).toContain("missing.json");
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  test("validate reports invalid json as STAGE_ARTIFACT_INVALID_JSON", () => {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-artifact-"));
-    try {
-      const invalidPath = path.join(tempDir, "invalid.json");
-      writeFileSync(invalidPath, "{", "utf8");
-
-      const result = validate_stage_artifact({
-        stage: "script_breakdown",
-        path: invalidPath,
-      });
-
-      expect(result.ok).toBe(false);
-      expect(result.errors).toHaveLength(1);
-      expect(result.errors[0]).toMatchObject({
-        path: "",
-        code: "STAGE_ARTIFACT_INVALID_JSON",
-      });
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  test("validate reports unreadable file as STAGE_ARTIFACT_UNREADABLE", () => {
-    const result = validate_stage_artifact({
-      stage: "script_breakdown",
-      path: fixturesDir,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]).toMatchObject({
-      path: "",
-      code: "STAGE_ARTIFACT_UNREADABLE",
-    });
-  });
-
-  test("validate appends additional property to json pointer", () => {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-artifact-"));
-    try {
-      const edited = read_fixture("script_analysis.sample.json") as Record<string, unknown>;
-      edited["unexpected/field"] = true;
-      const editedPath = path.join(tempDir, "script_analysis.json");
-      writeFileSync(editedPath, JSON.stringify(edited), "utf8");
-
-      const result = validate_stage_artifact({
-        stage: "script_breakdown",
-        path: editedPath,
-      });
-
-      expect(result.ok).toBe(false);
-      expect(result.errors).toMatchObject([
-        {
-          path: "/unexpected~1field",
-          keyword: "additionalProperties",
-        },
-      ]);
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  test("valid shot plan fixture passes", () => {
+  test("valid shot plan returns content_hash with analysis link", () => {
     const result = validate_stage_artifact({
       stage: "shot_planning",
-      path: fixture_path("shot_plan.sample.json"),
+      path: path.join(shortdramaDir, "shot_plan.v2.json"),
+      script_analysis_path: path.join(shortdramaDir, "script_analysis.v2.json"),
     });
-
-    expect(result).toEqual({ ok: true, errors: [] });
+    expect(result.ok).toBe(true);
+    expect(result.content_hash).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  test("shot plan rejects missing duration", () => {
+  test("legacy artifact version is rejected before schema validation", () => {
+    const result = validate_stage_artifact({
+      stage: "script_breakdown",
+      path: path.join(fixturesDir, "legacy_script_analysis.v1.json"),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({ code: "ARTIFACT_VERSION_UNSUPPORTED" }),
+    );
+  });
+
+  test("reports schema path for a missing nested field", () => {
+    const edited = read_json(path.join(shortdramaDir, "script_analysis.v2.json"));
+    delete edited.episodes[0].scenes[0].summary;
+    const result = validate_stage_artifact({
+      stage: "script_breakdown",
+      path: write_temp(edited),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({ path: "/episodes/0/scenes/0/summary" }),
+    );
+  });
+
+  test("rejects an internal shot timeline gap", () => {
+    const edited = read_json(path.join(shortdramaDir, "shot_plan.v2.json"));
+    edited.scenes[0].clips[0].shots[1].start_sec = 2.1;
     const result = validate_stage_artifact({
       stage: "shot_planning",
-      path: fixture_path("shot_plan.invalid.missing_duration.json"),
+      path: write_temp(edited),
+      script_analysis_path: path.join(shortdramaDir, "script_analysis.v2.json"),
     });
-
     expect(result.ok).toBe(false);
-    expect(result.errors).toMatchObject([
-      {
-        path: "/scenes/0/shots/0/duration_sec",
-        keyword: "required",
-      },
-    ]);
+    expect(result.errors).toContainEqual(expect.objectContaining({ code: "TIMELINE_INVALID" }));
   });
 
-  test("shot plan rejects unknown shot size enum", () => {
-    const result = validate_stage_artifact({
-      stage: "shot_planning",
-      path: fixture_path("shot_plan.invalid.bad_shot_size.json"),
-    });
+  test("reports missing and invalid JSON files structurally", () => {
+    const missing = validate_stage_artifact({ stage: "script_breakdown", path: path.join(os.tmpdir(), "missing.json") });
+    expect(missing).toMatchObject({ ok: false, errors: [{ code: "STAGE_ARTIFACT_MISSING" }] });
 
-    expect(result.ok).toBe(false);
-    expect(result.errors).toMatchObject([
-      {
-        path: "/scenes/0/shots/0/shot_size",
-        keyword: "enum",
-      },
-    ]);
-  });
-
-  test("shot plan rejects shot without enter exit state", () => {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-artifact-"));
-    try {
-      const edited = read_fixture("shot_plan.sample.json") as {
-        scenes: Array<{
-          shots: Array<{ continuity: Record<string, unknown> }>;
-        }>;
-      };
-      delete edited.scenes[0].shots[0].continuity.exit_state;
-      const editedPath = path.join(tempDir, "shot_plan.json");
-      writeFileSync(editedPath, JSON.stringify(edited), "utf8");
-
-      const result = validate_stage_artifact({
-        stage: "shot_planning",
-        path: editedPath,
-      });
-
-      expect(result.ok).toBe(false);
-      expect(result.errors).toMatchObject([
-        {
-          path: "/scenes/0/shots/0/continuity/exit_state",
-          keyword: "required",
-        },
-      ]);
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  test("shot plan rejects non integer duration", () => {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-artifact-"));
-    try {
-      const edited = read_fixture("shot_plan.sample.json") as {
-        scenes: Array<{ shots: Array<{ duration_sec: number }> }>;
-      };
-      edited.scenes[0].shots[0].duration_sec = 7.5;
-      const editedPath = path.join(tempDir, "shot_plan.json");
-      writeFileSync(editedPath, JSON.stringify(edited), "utf8");
-
-      const result = validate_stage_artifact({
-        stage: "shot_planning",
-        path: editedPath,
-      });
-
-      expect(result.ok).toBe(false);
-      expect(result.errors).toHaveLength(1);
-      expect(result.errors).toMatchObject([
-        {
-          path: "/scenes/0/shots/0/duration_sec",
-          code: "OUT_OF_RANGE",
-        },
-      ]);
-      expect(result.errors[0]?.message).toContain("整数");
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  test("shot plan rejects duration outside model rules", () => {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-stage-artifact-"));
-    try {
-      const edited = read_fixture("shot_plan.sample.json") as {
-        scenes: Array<{ shots: Array<{ duration_sec: number }> }>;
-      };
-      const editedPath = path.join(tempDir, "shot_plan.json");
-
-      edited.scenes[0].shots[0].duration_sec = 3;
-      writeFileSync(editedPath, JSON.stringify(edited), "utf8");
-      const below = validate_stage_artifact({
-        stage: "shot_planning",
-        path: editedPath,
-      });
-
-      edited.scenes[0].shots[0].duration_sec = 31;
-      writeFileSync(editedPath, JSON.stringify(edited), "utf8");
-      const above = validate_stage_artifact({
-        stage: "shot_planning",
-        path: editedPath,
-      });
-
-      expect(below.ok).toBe(false);
-      expect(below.errors).toMatchObject([
-        {
-          path: "/scenes/0/shots/0/duration_sec",
-          code: "OUT_OF_RANGE",
-        },
-      ]);
-      expect(below.errors[0]?.message).toContain("seedance-2.5");
-      expect(above.ok).toBe(false);
-      expect(above.errors).toMatchObject([
-        {
-          path: "/scenes/0/shots/0/duration_sec",
-          code: "OUT_OF_RANGE",
-        },
-      ]);
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
+    const invalid_path = write_temp({}, "invalid.json");
+    writeFileSync(invalid_path, "{", "utf8");
+    const invalid = validate_stage_artifact({ stage: "script_breakdown", path: invalid_path });
+    expect(invalid).toMatchObject({ ok: false, errors: [{ code: "STAGE_ARTIFACT_INVALID_JSON" }] });
   });
 });

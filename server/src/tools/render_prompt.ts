@@ -1,110 +1,220 @@
-/**
- * PromptIR → Seedance 提示词文档渲染（架构 §11.4、§9.6；Task 4c-3）。
- *
- * 固定流程：
- * 1. 只读一次 PromptIR：解析后的同一份 document 先走 `validate_prompt_document`
- *    （`validate_prompt` 的文档级入口）；结构或硬规则不通过时返回
- *    `HARD_RULE_VIOLATION`（`{ ok: false, error: { code, message, details } }`），
- *    且不创建目录、不写文件。避免「校验读一次、渲染再读一次」之间文件被替换。
- * 2. 通过后按目标模型规则文件的 `render` 模板渲染同一份 document。模板只承载
- *    人可见的中文标题、节标签与节顺序；字段到节内容的组装在渲染层。
- * 3. 输出为 Markdown：整篇标题 → 每个镜头一节（分节标题行 + 固定顺序的九条节内容；
- *    空的 `audio` 节整行省略）。正文不含时间戳 / run 元数据，行尾统一 `\n`，同输入
- *    逐字节一致。
- *
- * 节顺序（与 brief 冻结的 镜头号与时长 → 主体与动作 → 对白 → 环境与时间 →
- * 景别、机位与运镜 → 光线与色彩 → 风格 → 声音 → 连续性 → 负面约束 一致）：
- * 「镜头号与时长」由分节标题行
- * `## 镜头 {shot_id}（时长 {duration} 秒，画幅 {aspect_ratio}）` 承载，其余九节是
- * 节内条目，顺序由规则文件 `render.section_order` 给出。
- *
- * 冻结英文枚举 `shot_size` / `camera_angle` / `camera_movement` 渲染为中文标签（映射表与
- * `schemas/prompt_ir.schema.json` 描述、`schemas/shot_plan.schema.json` 的中文词表
- * 一一对应）；`time` 按 `TIME_LABELS` 做中文映射，未收录词原样透传；其余自由文本字段
- * 原样输出，渲染层不翻译、不补写内容。所有查表都只认自有键（`Object.hasOwn`），
- * 自由文本取值命中 `Object.prototype` 成员名（如 `constructor` / `__proto__`）时
- * 仍走「未收录词原样透传」，不会取到继承成员。
- *
- * 空 `negative_prompt` 的裁决：不省略节，稳定输出「负面约束：{empty_negative}」
- * （当前规则文件取值为「无」），保证每个镜头都是同一套节骨架。
- *
- * 空 `dialogue` 的裁决（Task A3）：同样不省略节，按规则文件 `render.empty_dialogue`
- * 输出占位（当前取值为「无对白；人物自然闭口，无旁白」）。`dialogue` 是原文保真
- * 豁免区：`text` 逐字渲染进 `{}`（Seedance 台词记号，来源见
- * `docs/model-rules-notes.md` §2.4），渲染层不翻译、不删改，也不做禁止项改写。
- *
- * `emotion`（Task B1）取值是上游 `emotion_units.tone` / `emotion_units.description`
- * 与同镜头动作线索的可观察外化（取材规则见架构 §9.6、§11.3），渲染层只做拼接：
- * 「主体与动作」节在 `emotion` 非空时追加子标签「情绪：…」，空值沿用 `field()` 的
- * 空值省略语义不输出该子标签，也不补写情绪文本或改写动作文本。
- *
- * `audio`（Task B2）取自原文已有声音线索与检索卡片：条目输出前去掉首尾空白（与
- * `dialogue` 路径一致），音效条目渲染时用 `<>` 包裹，音乐非空时用 `()` 包裹；空子项
- * 省略，三项全空时整行省略，不输出「无声音」类负向暗示。
- */
-
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { load_model_rules, type ModelRules, type ModelRulesRender } from "../rules.js";
+import { load_model_rules, type ModelRules } from "../rules.js";
 import {
-  read_prompt_ir_document,
   validate_prompt_document,
   type PromptValidationError,
 } from "./validate_prompt.js";
+import { check_artifact_version } from "../artifact_version.js";
 
 export interface RenderPromptInput {
   prompt_ir_path: string;
   output_path: string;
+  shot_plan_path?: string;
+  script_analysis_path?: string;
 }
 
-export interface RenderPromptSuccess {
+export interface RenderPromptResult {
+  ok: boolean;
+  output_path?: string;
+  errors: PromptValidationError[];
+}
+
+interface JsonReadResult {
   ok: true;
-  output_path: string;
+  value: unknown;
 }
 
-export type RenderPromptErrorCode = "HARD_RULE_VIOLATION" | "RENDER_FAILED";
+export function render_prompt(input: RenderPromptInput): RenderPromptResult {
+  const loaded = read_json_file(input.prompt_ir_path, "prompt_ir_path");
+  if (!loaded.ok) return loaded;
+  const plan = read_optional_json_file(input.shot_plan_path, "shot_plan_path");
+  if (!plan.ok) return plan;
+  const analysis = read_optional_json_file(input.script_analysis_path, "script_analysis_path");
+  if (!analysis.ok) return analysis;
 
-export interface RenderPromptFailure {
-  ok: false;
-  error: {
-    code: RenderPromptErrorCode;
-    message: string;
-    details?: Record<string, unknown>;
-  };
+  const validation = validate_prompt_document(loaded.value, {
+    shot_plan: plan.value,
+    script_analysis: analysis.value,
+  });
+  if (!validation.ok) return validation;
+
+  if (!is_record(loaded.value) || typeof loaded.value.target_model !== "string") {
+    return {
+      ok: false,
+      errors: [{ clip_id: "", shot_id: "", field: "target_model", code: "MISSING_FIELD", message: "PromptIR 缺少 target_model。" }],
+    };
+  }
+  const rules_result = load_model_rules(loaded.value.target_model);
+  if (!rules_result.ok) {
+    return {
+      ok: false,
+      errors: [{ clip_id: "", shot_id: "", field: "target_model", code: "MODEL_RULES_UNAVAILABLE", message: rules_result.error.message }],
+    };
+  }
+  try {
+    const markdown = render_document(loaded.value, rules_result.rules, analysis.value);
+    write_text(input.output_path, markdown);
+    return { ok: true, output_path: input.output_path, errors: [] };
+  } catch (error) {
+    return {
+      ok: false,
+      errors: [{ clip_id: "", shot_id: "", field: "output_path", code: "RENDER_FAILED", message: `渲染失败：${describe_error(error)}` }],
+    };
+  }
 }
 
-export type RenderPromptResult = RenderPromptSuccess | RenderPromptFailure;
+function render_document(document: Record<string, unknown>, rules: ModelRules, analysis: unknown): string {
+  const clips = as_array(document.clips).filter(is_record);
+  const display_timeline = document.display_timeline === true;
+  const lines: string[] = [rules.render.title, ""];
 
-/** 节 key：与规则文件 `render.section_labels` / `render.section_order` 一一对应。 */
-const SECTION_KEYS = [
-  "subject_action",
-  "dialogue",
-  "setting_time",
-  "camera",
-  "light_color",
-  "style",
-  "audio",
-  "continuity",
-  "negative",
-] as const;
-
-type RenderSectionKey = (typeof SECTION_KEYS)[number];
-
-interface RenderTemplate {
-  title: string;
-  shot_heading: string;
-  section_order: RenderSectionKey[];
-  section_labels: Record<RenderSectionKey, string>;
-  empty_negative: string;
-  empty_dialogue: string;
+  for (const [clip_index, clip] of clips.entries()) {
+    if (clip_index > 0) lines.push("");
+    const clip_id = as_string(clip.clip_id);
+    const duration = clip.duration_sec;
+    const aspect_ratio = as_string(clip.aspect_ratio);
+    lines.push(
+      rules.render.clip_heading
+        .replace("{clip_id}", clip_id)
+        .replace("{duration}", String(duration))
+        .replace("{aspect_ratio}", aspect_ratio),
+    );
+    const placeholders = as_array(clip.reference_bindings)
+      .filter(is_record)
+      .filter((binding) => binding.status === "placeholder");
+    if (placeholders.length > 0) {
+      lines.push("", `> 参考素材提示：本段有 ${placeholders.length} 张参考图待提供，正文只描述职责，不表示图片已就绪。`);
+    }
+    lines.push("", `【${rules.render.section_labels.generation_goal}】`, as_string(clip.generation_goal));
+    const references = as_array(clip.reference_bindings).filter(is_record);
+    const sections: Record<string, string> = {
+      generation_goal: as_string(clip.generation_goal),
+      reference_duties: references.length === 0 ? "无参考素材绑定。" : references.map((binding) => render_reference_binding(binding, analysis)).join("\n"),
+      subjects_relations: as_string(clip.subjects_and_relations),
+      event_script: render_event_script(clip, display_timeline, analysis, rules).join("\n"),
+      consistency: render_consistency(clip, rules),
+    };
+    for (const key of rules.render.section_order) {
+      lines.push("", `【${rules.render.section_labels[key]}】`, sections[key] ?? "");
+    }
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
 }
 
-/**
- * `shot_size` 冻结英文枚举 → 中文标签。与
- * `schemas/prompt_ir.schema.json` 的描述、`schemas/shot_plan.schema.json` 的
- * `shot_size` 中文枚举按顺序一一对应。
- */
-export const SHOT_SIZE_LABELS: Record<string, string> = {
+function render_reference_binding(binding: Record<string, unknown>, analysis: unknown): string {
+  const tag = as_string(binding.tag);
+  const status = binding.status === "placeholder" ? "待提供" : "用户提供";
+  const media = binding.media_type === "image" ? "参考图" : binding.media_type === "video" ? "参考视频" : "参考音频";
+  const entity_names = entity_names_for_binding(binding, analysis);
+  const target = entity_names.length === 0 ? "" : entity_names.join("、");
+  const adopt = as_string_array(binding.adopt).join("、") || "仅采用已明确的部分";
+  const exclude = as_string_array(binding.exclude).join("、") || "未参与本段的内容";
+  return `${tag}（${status}：${target}${media}）用于${adopt}；不采用${exclude}。`;
+}
+
+function render_event_script(clip: Record<string, unknown>, display_timeline: boolean, analysis: unknown, rules: ModelRules): string[] {
+  const lines: string[] = [];
+  const shots = as_array(clip.shots).filter(is_record);
+  for (const [index, shot] of shots.entries()) {
+    const prefix = display_timeline
+      ? `${format_seconds(shot.start_sec)}–${format_seconds(shot.end_sec)}秒：`
+      : `镜头${index + 1}：`;
+    const camera = [
+      label_for(SHOT_SIZE_LABELS, as_string(shot.shot_size)),
+      label_for(CAMERA_ANGLE_LABELS, as_string(shot.camera_angle)),
+      label_for(CAMERA_MOVEMENT_LABELS, as_string(shot.camera_movement)),
+    ].join("，");
+    const subject = as_string(shot.subject);
+    const action = as_string(shot.action);
+    const emotion = as_string(shot.emotion).trim();
+    const action_text = [subject, action, emotion === "" ? "" : `情绪：${emotion}`]
+      .map(strip_terminal_punctuation)
+      .filter((part) => part !== "")
+      .join("；");
+    lines.push(`${prefix}${camera}，${sentence(action_text)}`);
+  }
+
+  const dialogue = as_array(clip.dialogue).filter(is_record);
+  if (dialogue.length > 0) {
+    if (display_timeline) {
+      for (const segment of dialogue) {
+        lines.push(sentence(`${format_seconds(segment.start_sec)}–${format_seconds(segment.end_sec)}秒：${render_dialogue_segment(segment, analysis)}`));
+      }
+    } else {
+      lines.push(sentence(`对白：${dialogue.map((segment) => render_dialogue_segment(segment, analysis)).join("；")}`));
+    }
+  } else {
+    lines.push(rules.render.empty_dialogue);
+  }
+
+  const audio = is_record(clip.audio) ? clip.audio : undefined;
+  const audio_parts: string[] = [];
+  for (const track of ["ambience", "sfx", "music"] as const) {
+    for (const cue of as_array(audio?.[track])) {
+      if (!is_record(cue)) continue;
+      const label = track === "ambience" ? "环境声" : track === "sfx" ? "音效" : "音乐";
+      const text = track === "sfx" ? `<${as_string(cue.text)}>` : track === "music" ? `(${as_string(cue.text)})` : as_string(cue.text);
+      const prefix = display_timeline ? `${format_seconds(cue.start_sec)}–${format_seconds(cue.end_sec)}秒：` : "";
+      audio_parts.push(`${prefix}${label}：${text}`);
+    }
+  }
+  if (audio_parts.length > 0) {
+    lines.push(sentence(audio_parts.join("；")));
+  }
+  return lines;
+}
+
+function render_dialogue_segment(segment: Record<string, unknown>, analysis: unknown): string {
+  const speaker = resolve_speaker_name(as_string(segment.speaker_id), analysis);
+  const language = as_string(segment.language);
+  const delivery = as_string(segment.delivery);
+  const language_part = language === "" ? "" : `用${language}`;
+  return `${speaker}${language_part}${delivery}说：{${as_string(segment.text)}}`;
+}
+
+function render_consistency(clip: Record<string, unknown>, rules: ModelRules): string {
+  const continuity = is_record(clip.continuity) ? clip.continuity : undefined;
+  const previous = continuity?.previous_clip_id;
+  const parts = [
+    previous === null || previous === undefined ? "承接：首段" : `承接：${String(previous)}`,
+    `进入状态：${as_string(continuity?.enter_state)}`,
+    `离开状态：${as_string(continuity?.exit_state)}`,
+  ].map(strip_terminal_punctuation);
+  const negative = as_string_array(clip.negative_prompt).filter((term) => term.trim() !== "");
+  if (negative.length > 0) {
+    parts.push(`限制：${negative.join("、")}`);
+  } else {
+    parts.push(`限制：${rules.render.empty_negative}`);
+  }
+  return sentence(parts.join("；"));
+}
+
+function entity_names_for_binding(binding: Record<string, unknown>, analysis: unknown): string[] {
+  const ids = new Set(as_string_array(binding.entity_ids));
+  const names: string[] = [];
+  if (is_record(analysis)) {
+    for (const entity of as_array(analysis.entities)) {
+      if (is_record(entity) && ids.has(as_string(entity.entity_id))) {
+        names.push(as_string(entity.name));
+      }
+    }
+  }
+  return names.length === 0 ? [...ids] : names;
+}
+
+function resolve_speaker_name(speaker_id: string, analysis: unknown): string {
+  if (is_record(analysis)) {
+    for (const entity of as_array(analysis.entities)) {
+      if (is_record(entity) && as_string(entity.entity_id) === speaker_id) {
+        return as_string(entity.name) || speaker_id;
+      }
+    }
+  }
+  return speaker_id;
+}
+
+const SHOT_SIZE_LABELS: Record<string, string> = {
   "extreme-long-shot": "大远景",
   "long-shot": "远景",
   "full-shot": "全景",
@@ -115,13 +225,7 @@ export const SHOT_SIZE_LABELS: Record<string, string> = {
   "close-up": "特写",
   "insert-shot": "插入镜头",
 };
-
-/**
- * `camera_angle` 冻结英文枚举 → 中文标签。与
- * `schemas/prompt_ir.schema.json` 的描述、`schemas/shot_plan.schema.json` 的
- * `camera_angle` 中文枚举按顺序一一对应。
- */
-export const CAMERA_ANGLE_LABELS: Record<string, string> = {
+const CAMERA_ANGLE_LABELS: Record<string, string> = {
   "eye-level": "平视",
   "low-angle": "仰视",
   "high-angle": "俯视",
@@ -136,13 +240,7 @@ export const CAMERA_ANGLE_LABELS: Record<string, string> = {
   "back-view": "背身",
   "two-shot": "双人镜头",
 };
-
-/**
- * `camera_movement` 冻结英文枚举 → 中文标签。与
- * `schemas/prompt_ir.schema.json` 的描述、`schemas/shot_plan.schema.json` 的
- * `camera_movement` 中文枚举按顺序一一对应。
- */
-export const CAMERA_MOVEMENT_LABELS: Record<string, string> = {
+const CAMERA_MOVEMENT_LABELS: Record<string, string> = {
   static: "固定",
   pan: "横摇",
   tilt: "竖摇",
@@ -161,298 +259,73 @@ export const CAMERA_MOVEMENT_LABELS: Record<string, string> = {
   "follow-focus": "跟焦",
 };
 
-/**
- * `time` 英文时间术语 → 中文标签（Task A2，插件设计裁决，无外部来源；见
- * `docs/model-rules-notes.md` §4.3）。`time` 的 schema 口径不变，仍是英文术语，
- * 只有渲染层本地化；键顺序为该裁决记录的顺序。
- */
-export const TIME_LABELS: Record<string, string> = {
-  night: "夜晚",
-  day: "白天",
-  dawn: "清晨",
-  dusk: "黄昏",
-  morning: "早晨",
-  noon: "正午",
-  afternoon: "下午",
-  evening: "傍晚",
-};
-
-export function render_prompt(input: RenderPromptInput): RenderPromptResult {
-  // 单次读取：文件缺失 / 不可读 / JSON 非法与校验失败同样返回 HARD_RULE_VIOLATION。
-  const loaded = read_prompt_ir_document(input.prompt_ir_path);
-  if (!loaded.ok) {
-    return hard_rule_violation(input.prompt_ir_path, loaded.errors);
-  }
-
-  const validation = validate_prompt_document(loaded.value);
-  if (!validation.ok) {
-    return hard_rule_violation(input.prompt_ir_path, validation.errors);
-  }
-
-  try {
-    const document = loaded.value as PromptIrDocument;
-    const rules = load_model_rules(document.target_model);
-    if (!rules.ok) {
-      throw new Error(rules.error.message);
-    }
-    const content = render_document(document, rules.rules);
-    write_text(input.output_path, content);
-    return { ok: true, output_path: input.output_path };
-  } catch (error) {
-    // 校验通过后的失败只剩渲染 / 写盘问题：模板结构不符、输出目录不可写等。
-    // 统一返回结构化 RENDER_FAILED，不穿透 MCP 边界。
-    return {
-      ok: false,
-      error: {
-        code: "RENDER_FAILED",
-        message: `渲染提示词失败：${describe_error(error)}`,
-        details: {
-          prompt_ir_path: input.prompt_ir_path,
-          output_path: input.output_path,
-        },
-      },
-    };
-  }
-}
-
-/** 文件读取 / 解析失败与规则校验失败走同一条 HARD_RULE_VIOLATION 出口。 */
-function hard_rule_violation(
-  prompt_ir_path: string,
-  errors: PromptValidationError[],
-): RenderPromptFailure {
-  return {
-    ok: false,
-    error: {
-      code: "HARD_RULE_VIOLATION",
-      message:
-        `PromptIR 未通过校验（${errors.length} 条错误），` +
-        "已停止渲染且未写入任何文件。",
-      details: { prompt_ir_path, errors },
-    },
-  };
-}
-
-interface PromptIrShot {
-  shot_id: string;
-  duration: number;
-  aspect_ratio: string;
-  shot_size: string;
-  subject: string;
-  action: string;
-  emotion: string;
-  dialogue: DialogueEntry[];
-  setting: string;
-  time: string;
-  camera_angle: string;
-  camera_movement: string;
-  lighting: string;
-  color: string;
-  style: string;
-  audio: {
-    ambience: string[];
-    sfx: string[];
-    music: string;
-  };
-  continuity: {
-    previous_shot?: string | null;
-    character_state: string;
-    environment_state: string;
-  };
-  negative_prompt: string[];
-}
-
-interface DialogueEntry {
-  speaker: string;
-  text: string;
-  language?: string;
-  delivery?: string;
-}
-
-interface PromptIrDocument {
-  target_model: string;
-  shots: PromptIrShot[];
-}
-
-function render_document(document: PromptIrDocument, rules: ModelRules): string {
-  const template = resolve_template(rules.render);
-  const lines: string[] = [template.title];
-
-  for (const shot of document.shots) {
-    lines.push("", render_shot_heading(template, shot), "");
-    for (const key of template.section_order) {
-      const label = template.section_labels[key];
-      const content = render_section(key, shot, template);
-      if (content !== undefined) {
-        lines.push(`- ${label}：${content}`);
-      }
-    }
-  }
-
-  return `${lines.join("\n")}\n`;
-}
-
-/**
- * 规则文件模板 → 渲染层可用的节顺序与标签。规则文件只校验「section_order ⊆
- * section_labels」，节 key 全集属于渲染层知识：多 / 少节都按插件安装损坏处理。
- */
-function resolve_template(render: ModelRulesRender): RenderTemplate {
-  const unsupported = render.section_order.filter((key) => !is_section_key(key));
-  if (unsupported.length > 0) {
-    throw new Error(
-      `规则文件 render.section_order 含渲染层不支持的节 key：${unsupported.join("、")}`,
-    );
-  }
-  const missing = SECTION_KEYS.filter((key) => !render.section_order.includes(key));
-  if (missing.length > 0) {
-    throw new Error(
-      `规则文件 render.section_order 缺少节 key：${missing.join("、")}`,
-    );
-  }
-
-  const section_labels = Object.fromEntries(
-    SECTION_KEYS.map((key) => [key, render.section_labels[key] as string]),
-  ) as Record<RenderSectionKey, string>;
-
-  return {
-    title: render.title,
-    shot_heading: render.shot_heading,
-    section_order: render.section_order as RenderSectionKey[],
-    section_labels,
-    empty_negative: render.empty_negative,
-    empty_dialogue: render.empty_dialogue,
-  };
-}
-
-function is_section_key(value: string): value is RenderSectionKey {
-  return (SECTION_KEYS as readonly string[]).includes(value);
-}
-
-function render_shot_heading(template: RenderTemplate, shot: PromptIrShot): string {
-  return template.shot_heading
-    .replaceAll("{shot_id}", shot.shot_id)
-    .replaceAll("{duration}", String(shot.duration))
-    .replaceAll("{aspect_ratio}", shot.aspect_ratio);
-}
-
-function render_section(
-  key: RenderSectionKey,
-  shot: PromptIrShot,
-  template: RenderTemplate,
-): string | undefined {
-  switch (key) {
-    case "subject_action":
-      return join_parts([
-        field("主体", shot.subject),
-        field("动作", shot.action),
-        field("情绪", shot.emotion),
-      ]);
-    case "dialogue":
-      return render_dialogue(shot.dialogue, template.empty_dialogue);
-    case "setting_time":
-      return join_parts([
-        field("环境", shot.setting),
-        field("时间", time_label(shot.time)),
-      ]);
-    case "camera":
-      return join_parts([
-        field("景别", label_for(SHOT_SIZE_LABELS, shot.shot_size)),
-        field("机位", label_for(CAMERA_ANGLE_LABELS, shot.camera_angle)),
-        field("运镜", label_for(CAMERA_MOVEMENT_LABELS, shot.camera_movement)),
-      ]);
-    case "light_color":
-      return join_parts([field("光线", shot.lighting), field("色彩", shot.color)]);
-    case "style":
-      return shot.style;
-    case "audio":
-      return render_audio(shot.audio);
-    case "continuity":
-      return join_parts([
-        field("承接镜头", shot.continuity.previous_shot ?? ""),
-        field("角色状态", shot.continuity.character_state),
-        field("环境状态", shot.continuity.environment_state),
-      ]);
-    case "negative":
-      return render_negative(shot.negative_prompt, template.empty_negative);
-  }
-}
-
-/** 自由文本 / 可选子字段：空白值不生成子标签，避免输出空冒号。 */
-function field(label: string, value: string): string | undefined {
-  return value.trim() === "" ? undefined : `${label}：${value}`;
-}
-
-function join_parts(parts: Array<string | undefined>): string {
-  return parts.filter((part): part is string => part !== undefined).join("；");
-}
-
-/**
- * 冻结枚举查表；schema 校验保证取值合法，查不到时原样透传（防御式兜底）。
- * 只认自有键：`Object.prototype` 上的成员名不得被当作映射值。
- */
 function label_for(labels: Record<string, string>, value: string): string {
   return Object.hasOwn(labels, value) ? labels[value] : value;
 }
 
-/**
- * 时间词本地化：命中映射取中文，未收录词原样透传（不发明未定义的映射）。
- * `time` 是 schema 合法自由文本，同样只认自有键。
- */
-function time_label(value: string): string {
-  return Object.hasOwn(TIME_LABELS, value) ? TIME_LABELS[value] : value;
+function strip_terminal_punctuation(value: string): string {
+  return value.trim().replace(/[。；;.!?！？]+$/u, "");
 }
 
-/**
- * 声音节渲染（Task B2）：条目先去掉首尾空白（空值判定与输出用同一个值，与
- * `dialogue` 的 language / delivery 处理一致），空子项省略，`sfx` 每项用 `<>`
- * 包裹、非空 `music` 用 `()` 包裹；三项全空时返回 undefined，由渲染循环整行省略，
- * 不输出「无声音」类负向暗示。
- */
-function render_audio(audio: PromptIrShot["audio"]): string | undefined {
-  const ambience = audio.ambience
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== "");
-  const sfx = audio.sfx
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== "")
-    .map((entry) => `<${entry}>`);
-  const music = audio.music.trim() === "" ? "" : `(${audio.music.trim()})`;
-  const content = join_parts([
-    ambience.length === 0 ? undefined : `环境声：${ambience.join("、")}`,
-    sfx.length === 0 ? undefined : `音效：${sfx.join("、")}`,
-    music === "" ? undefined : `音乐：${music}`,
-  ]);
-  return content === "" ? undefined : content;
+function sentence(value: string): string {
+  return `${strip_terminal_punctuation(value)}。`;
 }
 
-/** 空 `negative_prompt`（含全空白条目）不省略节，渲染模板里的稳定占位。 */
-function render_negative(entries: string[], empty_negative: string): string {
-  const terms = entries.filter((entry) => entry.trim() !== "");
-  return terms.length === 0 ? empty_negative : terms.join("、");
+function format_seconds(value: unknown): string {
+  const number = value as number;
+  return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(3)));
 }
 
-/**
- * 台词条目渲染（Task A3）：固定顺序 `{speaker}用{language}{delivery}说：{text}`，
- * `text` 用 `{}` 包裹并逐字保留（原文保真豁免区，渲染层不删改）。`language` /
- * `delivery` 缺失或纯空白串时省略对应片段，拼接用的是去掉首尾空白后的值。空
- * `dialogue` 不省略节，渲染规则文件的 `empty_dialogue` 占位。
- */
-function render_dialogue(entries: DialogueEntry[], empty_dialogue: string): string {
-  if (entries.length === 0) {
-    return empty_dialogue;
+
+function read_optional_json_file(
+  file_path: string | undefined,
+  field: string,
+): { ok: true; value: unknown | undefined } | { ok: false; errors: PromptValidationError[] } {
+  if (file_path === undefined) return { ok: true, value: undefined };
+  return read_json_file(file_path, field);
+}
+
+function read_json_file(
+  file_path: string,
+  field: string,
+): { ok: true; value: unknown } | { ok: false; errors: PromptValidationError[] } {
+  try {
+    const value = JSON.parse(readFileSync(file_path, "utf8")) as unknown;
+    const version = check_artifact_version(value);
+    if (!version.ok) {
+      return {
+        ok: false,
+        errors: [{ clip_id: "", shot_id: "", field: "schema_version", code: version.code, message: `${field} schema_version 不受支持。` }],
+      };
+    }
+    return { ok: true, value };
+  } catch (error) {
+    return {
+      ok: false,
+      errors: [{ clip_id: "", shot_id: "", field, code: "MISSING_FIELD", message: `无法读取或解析文件：${file_path}（${describe_error(error)}）` }],
+    };
   }
-  return entries
-    .map((entry) => {
-      const language = (entry.language ?? "").trim();
-      const delivery = (entry.delivery ?? "").trim();
-      const language_part = language === "" ? "" : `用${language}`;
-      return `${entry.speaker}${language_part}${delivery}说：{${entry.text}}`;
-    })
-    .join("；");
 }
 
-function write_text(output_path: string, content: string): void {
-  mkdirSync(path.dirname(output_path), { recursive: true });
-  writeFileSync(output_path, content, "utf8");
+function write_text(file_path: string, content: string): void {
+  mkdirSync(path.dirname(file_path), { recursive: true });
+  writeFileSync(file_path, content, "utf8");
+}
+
+function as_array(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function as_string(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function as_string_array(value: unknown): string[] {
+  return as_array(value).filter((entry): entry is string => typeof entry === "string");
+}
+
+function is_record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function describe_error(error: unknown): string {

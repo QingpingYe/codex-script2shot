@@ -93,6 +93,8 @@ describe("model rules", () => {
       expect(rules.aspect_ratios).toEqual(ASPECT_RATIOS);
       expect(rules.shot_split.prefer_max_sec).toBe(EXPECTED[model_id].prefer_max_sec);
       expect(rules.shot_split.multi_action_rule.trim().length).toBeGreaterThan(0);
+      expect(rules.reference_limits.max_images).toBe(model_id === "seedance-2.0" ? 9 : 30);
+      expect(rules.timeline.required_in_prompt).toBe(model_id === "seedance-2.5");
     }
   });
 
@@ -123,7 +125,7 @@ describe("model rules", () => {
         expect(typeof entry).toBe("string");
         expect(entry as string).toMatch(/^https:\/\//);
       }
-      expect(rules.checked_at).toBe("2026-10-22");
+      expect(rules.checked_at).toBe("2026-10-26");
     }
   });
 
@@ -240,7 +242,7 @@ describe("model rules", () => {
   test("rules expose per model prompt guidance", () => {
     for (const model_id of MODEL_RULE_IDS) {
       const guidance = load_ok(model_id).prompt_guidance;
-      expect(guidance.long_shot_staging_threshold_sec).toBe(15);
+      expect(guidance.long_shot_staging_threshold_sec).toBe(model_id === "seedance-2.0" ? 15 : 30);
       expect(guidance.long_shot_staging_threshold_sec).toBeGreaterThan(0);
       expect(Number.isFinite(guidance.long_shot_staging_threshold_sec)).toBe(true);
       for (const key of GUIDANCE_TEXT_KEYS) {

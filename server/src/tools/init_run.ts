@@ -10,6 +10,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
+import { hash_run_context } from "../artifact_hash.js";
+import { check_artifact_version } from "../artifact_version.js";
 
 export const RUN_INPUT_MODE_VALUES = [
   "script_segment",
@@ -18,6 +20,7 @@ export const RUN_INPUT_MODE_VALUES = [
 ] as const;
 
 export type RunInputMode = (typeof RUN_INPUT_MODE_VALUES)[number];
+
 
 export const RUN_TARGET_MODEL_VALUES = ["seedance-2.0", "seedance-2.5"] as const;
 
@@ -69,11 +72,14 @@ export interface RunWarning {
 }
 
 export interface RunDocument {
+  schema_version: 2;
   run_id: string;
   input_mode: RunInputMode;
   project_id: string;
   target_model: RunTargetModel;
   aspect_ratio?: RunAspectRatio;
+  input_references?: Array<Record<string, unknown>>;
+  display_timeline?: boolean;
   warnings?: RunWarning[];
   stages: Record<RunStage, RunStageState>;
 }
@@ -84,15 +90,19 @@ export interface InitRunInput {
   project_id: string;
   target_model: RunTargetModel;
   aspect_ratio?: RunAspectRatio;
+  input_references?: Array<Record<string, unknown>>;
+  display_timeline?: boolean;
 }
 
 export interface InitRunSuccess {
   run_id: string;
   run_json_path: string;
+  run_context_hash: string;
 }
 
 export type RunToolErrorCode =
   | "CONFIG_INVALID"
+  | "ARTIFACT_VERSION_UNSUPPORTED"
   | "RUN_NOT_FOUND"
   | "RUN_UNREADABLE"
   | "RUN_INVALID_JSON"
@@ -133,38 +143,33 @@ let run_validator: ValidateFunction | undefined;
 
 export function init_run(input: InitRunInput): InitRunSuccess | RunToolFailure {
   const workspace_root = validate_workspace_root(input?.workspace_root);
-  if (!workspace_root.ok) {
-    return workspace_root;
-  }
+  if (!workspace_root.ok) return workspace_root;
   const input_mode = validate_input_mode(input?.input_mode);
-  if (!input_mode.ok) {
-    return input_mode;
-  }
+  if (!input_mode.ok) return input_mode;
   const project_id = validate_project_id(input?.project_id);
-  if (!project_id.ok) {
-    return project_id;
-  }
+  if (!project_id.ok) return project_id;
   const target_model = validate_target_model(input?.target_model);
-  if (!target_model.ok) {
-    return target_model;
-  }
+  if (!target_model.ok) return target_model;
   const aspect_ratio = validate_aspect_ratio(input?.aspect_ratio);
-  if (!aspect_ratio.ok) {
-    return aspect_ratio;
-  }
+  if (!aspect_ratio.ok) return aspect_ratio;
+  const input_references = validate_input_references(input?.input_references);
+  if (!input_references.ok) return input_references;
+  const display_timeline = validate_display_timeline(input?.display_timeline);
+  if (!display_timeline.ok) return display_timeline;
 
   const outputs_dir = path.join(path.resolve(workspace_root.value), ".script2shot", "outputs");
   const created = create_run_directory(outputs_dir, new Date());
-  if (!created.ok) {
-    return created;
-  }
+  if (!created.ok) return created;
 
   const run: RunDocument = {
+    schema_version: 2,
     run_id: created.run_id,
     input_mode: input_mode.value,
     project_id: project_id.value,
     target_model: target_model.value,
     ...(aspect_ratio.value === undefined ? {} : { aspect_ratio: aspect_ratio.value }),
+    ...(input_references.value === undefined ? {} : { input_references: input_references.value }),
+    ...(display_timeline.value === undefined ? {} : { display_timeline: display_timeline.value }),
     warnings: [],
     stages: initial_stages(),
   };
@@ -178,11 +183,13 @@ export function init_run(input: InitRunInput): InitRunSuccess | RunToolFailure {
   }
 
   const write_error = write_run_document(created.run_json_path, run);
-  if (write_error !== undefined) {
-    return write_error;
-  }
+  if (write_error !== undefined) return write_error;
 
-  return { run_id: created.run_id, run_json_path: created.run_json_path };
+  return {
+    run_id: created.run_id,
+    run_json_path: created.run_json_path,
+    run_context_hash: hash_run_context(run),
+  };
 }
 
 export function validate_workspace_root(
@@ -250,6 +257,45 @@ export function validate_aspect_ratio(
     );
   }
   return { ok: true, value: value as RunAspectRatio };
+}
+
+export function validate_input_references(
+  value: unknown,
+): { ok: true; value: Array<Record<string, unknown>> | undefined } | RunToolFailure {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (!Array.isArray(value)) {
+    return run_failure("CONFIG_INVALID", '入参字段 "input_references" 期望数组。', { field: "input_references" });
+  }
+  for (const [index, entry] of value.entries()) {
+    if (!is_record(entry) || typeof entry.asset_id !== "string" || entry.asset_id.trim() === "") {
+      return run_failure("CONFIG_INVALID", `input_references[${index}] 期望含非空 asset_id 的对象。`, { field: `input_references[${index}]` });
+    }
+    if (entry.media_type !== undefined && !["image", "video", "audio"].includes(String(entry.media_type))) {
+      return run_failure("CONFIG_INVALID", `input_references[${index}].media_type 非法。`, { field: `input_references[${index}].media_type` });
+    }
+    if (entry.status !== undefined && !["placeholder", "provided"].includes(String(entry.status))) {
+      return run_failure("CONFIG_INVALID", `input_references[${index}].status 非法。`, { field: `input_references[${index}].status` });
+    }
+    for (const key of ["entity_ids", "adopt", "exclude"] as const) {
+      if (entry[key] !== undefined && (!Array.isArray(entry[key]) || entry[key].some((item) => typeof item !== "string"))) {
+        return run_failure("CONFIG_INVALID", `input_references[${index}].${key} 期望字符串数组。`, { field: `input_references[${index}].${key}` });
+      }
+    }
+    if (entry.source !== undefined && (typeof entry.source !== "string" || entry.source.trim() === "")) {
+      return run_failure("CONFIG_INVALID", `input_references[${index}].source 期望非空字符串。`, { field: `input_references[${index}].source` });
+    }
+  }
+  return { ok: true, value: value as Array<Record<string, unknown>> };
+}
+
+export function validate_display_timeline(
+  value: unknown,
+): { ok: true; value: boolean | undefined } | RunToolFailure {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (typeof value !== "boolean") {
+    return run_failure("CONFIG_INVALID", '入参字段 "display_timeline" 期望布尔值。', { field: "display_timeline" });
+  }
+  return { ok: true, value };
 }
 
 export function validate_run_id(
@@ -323,6 +369,14 @@ export function read_run_document(
     return run_failure("RUN_INVALID_JSON", `run.json JSON 非法：${file_path}`, {
       path: file_path,
       reason: describe_error(error),
+    });
+  }
+
+  const version = check_artifact_version(parsed);
+  if (!version.ok) {
+    return run_failure("ARTIFACT_VERSION_UNSUPPORTED", "run.json 不是受支持的 v2 产物。", {
+      path: file_path,
+      found_version: version.found_version,
     });
   }
 

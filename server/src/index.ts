@@ -65,7 +65,7 @@ import {
 } from "./aggregate.js";
 
 const server = new Server(
-  { name: "script2shot", version: "0.1.1" },
+  { name: "script2shot", version: "0.2.0" },
   { capabilities: { tools: {} } },
 );
 
@@ -372,7 +372,7 @@ const TOOLS = [
   {
     name: "init_run",
     description:
-      "在工作区创建 .script2shot/outputs/<run-YYYYMMDD-HHMMSS>/ 与 run.json（三阶段初始 pending）。" +
+      "在工作区创建 .script2shot/outputs/<run-YYYYMMDD-HHMMSS>/ 与 v2 run.json（三阶段初始 pending），返回 run_context_hash。" +
       "workspace_root 必填：MCP Server 位于插件根目录，仅凭 run_id 无法定位用户工作区的运行目录。",
     inputSchema: {
       type: "object",
@@ -402,6 +402,15 @@ const TOOLS = [
           enum: [...RUN_ASPECT_RATIO_VALUES],
           description: "可选运行级画幅比例；shot-prompting 可从中恢复。",
         },
+        input_references: {
+          type: "array",
+          description: "可选：用户提供的参考素材与职责，仅保存本地路径或素材标识，不写凭据。",
+          items: { type: "object" },
+        },
+        display_timeline: {
+          type: "boolean",
+          description: "可选：是否在 2.0 提示词中显示秒数；2.5 强制显示。",
+        },
       },
       required: ["workspace_root", "input_mode", "project_id", "target_model"],
       additionalProperties: false,
@@ -410,7 +419,7 @@ const TOOLS = [
   {
     name: "read_run",
     description:
-      "读取工作区 .script2shot/outputs/<run_id>/run.json 与三阶段产物校验结果；" +
+      "读取工作区 .script2shot/outputs/<run_id>/run.json 与三阶段产物校验结果；先识别 v2 版本和内容指纹，返回 run_context_hash；" +
       "产物存在且通过校验时以产物为准修正 run.json，并用 warning RUN_STATE_RECONCILED 报告；" +
       "同时核对产物身份字段（run_id / input_mode / project_id / target_model）与 run.json " +
       "及产物之间是否一致，冲突时把冲突产物所属阶段置 failed，在 warning 的 " +
@@ -492,7 +501,7 @@ const TOOLS = [
   {
     name: "validate_stage_artifact",
     description:
-      "按阶段 schema 校验阶段产物 JSON，返回 { ok, errors[] }；errors[].path 使用 JSON Pointer，" +
+      "按 v2 阶段 schema 与语义规则校验阶段产物 JSON，返回 { ok, errors[], content_hash }；errors[].path 使用 JSON Pointer，" +
       "文件缺失 / 不可读 / JSON 非法分别返回 STAGE_ARTIFACT_MISSING / UNREADABLE / INVALID_JSON。",
     inputSchema: {
       type: "object",
@@ -506,6 +515,10 @@ const TOOLS = [
           type: "string",
           description: "阶段产物 JSON 文件路径。",
         },
+        script_analysis_path: {
+          type: "string",
+          description: "可选：规划阶段用于跨产物语义校验的 script_analysis.json 路径。",
+        },
       },
       required: ["stage", "path"],
       additionalProperties: false,
@@ -514,14 +527,22 @@ const TOOLS = [
   {
     name: "validate_prompt",
     description:
-      "按 PromptIR schema 与目标模型硬规则校验 prompts.ir.json，返回 { ok, errors[] }；" +
-      "errors[] = { shot_id, field, code, message }，code 为 MISSING_FIELD / OUT_OF_RANGE / " +
+      "按 v2 PromptIR schema、上游链接与目标模型硬规则校验 prompts.ir.json，返回 { ok, errors[] }；" +
+      "errors[] = { clip_id, shot_id, field, code, message }，code 为 MISSING_FIELD / OUT_OF_RANGE / " +
       "FORBIDDEN_TERM / MODEL_MISMATCH（硬规则校验码）或 MODEL_RULES_UNAVAILABLE" +
       "（目标模型规则文件缺失 / 损坏，安装问题）；文件缺失 / 不可读 / JSON 非法返回一条 " +
       "field=prompt_ir_path 的错误。",
     inputSchema: {
       type: "object",
       properties: {
+        shot_plan_path: {
+          type: "string",
+          description: "可选：跨产物校验使用的 shot_plan.json 路径。",
+        },
+        script_analysis_path: {
+          type: "string",
+          description: "可选：跨产物校验使用的 script_analysis.json 路径。",
+        },
         prompt_ir_path: {
           type: "string",
           description: "PromptIR（prompts.ir.json）文件路径。",
@@ -534,12 +555,20 @@ const TOOLS = [
   {
     name: "render_prompt",
     description:
-      "渲染 Seedance 提示词文档：先调用 validate_prompt 校验 PromptIR 的结构与硬规则，" +
-      "通过后按目标模型规则文件的 render 模板生成按镜头分节的中文 Markdown 并写入 " +
-      "output_path，返回 { output_path }；校验不通过返回 HARD_RULE_VIOLATION，不写文件。",
+      "渲染每段视频的五模块 Seedance 提示词：先校验 PromptIR、上游指纹和硬规则，" +
+      "通过后按规则模板生成一个 clip 一份的中文 Markdown 并写入 output_path；" +
+      "校验或渲染失败返回 { ok: false, errors[] }，不写或覆盖文件。",
     inputSchema: {
       type: "object",
       properties: {
+        shot_plan_path: {
+          type: "string",
+          description: "可选：跨产物校验使用的 shot_plan.json 路径。",
+        },
+        script_analysis_path: {
+          type: "string",
+          description: "可选：跨产物校验使用的 script_analysis.json 路径。",
+        },
         prompt_ir_path: {
           type: "string",
           description: "PromptIR（prompts.ir.json）文件路径。",
@@ -1104,7 +1133,9 @@ function parse_init_run_arguments(raw: unknown): Parsed<InitRunInput> {
     "input_mode",
     "project_id",
     "target_model",
-    "aspect_ratio",
+"aspect_ratio",
+    "input_references",
+    "display_timeline",
   ]);
   if (unknown_key !== undefined) {
     return unknown_key;
@@ -1154,6 +1185,11 @@ function parse_init_run_arguments(raw: unknown): Parsed<InitRunInput> {
     );
   }
 
+  const display_timeline = parsed.value.display_timeline;
+  if (display_timeline !== undefined && typeof display_timeline !== "boolean") {
+    return invalid_arguments('入参字段 "display_timeline" 期望布尔值。', { field: "display_timeline" });
+  }
+
   return {
     ok: true,
     value: {
@@ -1164,6 +1200,10 @@ function parse_init_run_arguments(raw: unknown): Parsed<InitRunInput> {
       ...(aspect_ratio === undefined
         ? {}
         : { aspect_ratio: aspect_ratio as InitRunInput["aspect_ratio"] }),
+      ...(parsed.value.input_references === undefined
+        ? {}
+        : { input_references: parsed.value.input_references as Array<Record<string, unknown>> }),
+      ...(display_timeline === undefined ? {} : { display_timeline }),
     },
   };
 }
@@ -1274,25 +1314,20 @@ function parse_validate_stage_artifact_arguments(
   raw: unknown,
 ): Parsed<ValidateStageArtifactInput> {
   const parsed = parse_arguments_object(raw);
-  if (!parsed.ok) {
-    return parsed;
-  }
-  const unknown_key = reject_unknown_keys(parsed.value, ["stage", "path"]);
-  if (unknown_key !== undefined) {
-    return unknown_key;
-  }
+  if (!parsed.ok) return parsed;
+  const unknown_key = reject_unknown_keys(parsed.value, ["stage", "path", "script_analysis_path"]);
+  if (unknown_key !== undefined) return unknown_key;
   const stage = parsed.value.stage;
   if (typeof stage !== "string" || !is_stage_artifact_stage(stage)) {
-    return invalid_arguments(
-      `入参字段 "stage" 期望以下之一：${STAGE_ARTIFACT_STAGE_VALUES.join("、")}。`,
-      { field: "stage" },
-    );
+    return invalid_arguments(`入参字段 "stage" 期望以下之一：${STAGE_ARTIFACT_STAGE_VALUES.join("、")}。`, { field: "stage" });
   }
   const artifact_path = parsed.value.path;
   if (typeof artifact_path !== "string" || artifact_path.trim() === "") {
     return invalid_arguments('入参字段 "path" 期望非空字符串。', { field: "path" });
   }
-  return { ok: true, value: { stage, path: artifact_path } };
+  const script_analysis_path = parse_optional_path(parsed.value.script_analysis_path, "script_analysis_path");
+  if (!script_analysis_path.ok) return script_analysis_path;
+  return { ok: true, value: { stage, path: artifact_path, ...(script_analysis_path.value === undefined ? {} : { script_analysis_path: script_analysis_path.value }) } };
 }
 
 function is_stage_artifact_stage(value: string): value is StageArtifactStage {
@@ -1301,44 +1336,38 @@ function is_stage_artifact_stage(value: string): value is StageArtifactStage {
 
 function parse_validate_prompt_arguments(raw: unknown): Parsed<ValidatePromptInput> {
   const parsed = parse_arguments_object(raw);
-  if (!parsed.ok) {
-    return parsed;
-  }
-  const unknown_key = reject_unknown_keys(parsed.value, ["prompt_ir_path"]);
-  if (unknown_key !== undefined) {
-    return unknown_key;
-  }
+  if (!parsed.ok) return parsed;
+  const unknown_key = reject_unknown_keys(parsed.value, ["prompt_ir_path", "shot_plan_path", "script_analysis_path"]);
+  if (unknown_key !== undefined) return unknown_key;
   const prompt_ir_path = parsed.value.prompt_ir_path;
   if (typeof prompt_ir_path !== "string" || prompt_ir_path.trim() === "") {
-    return invalid_arguments('入参字段 "prompt_ir_path" 期望非空字符串。', {
-      field: "prompt_ir_path",
-    });
+    return invalid_arguments('入参字段 "prompt_ir_path" 期望非空字符串。', { field: "prompt_ir_path" });
   }
-  return { ok: true, value: { prompt_ir_path } };
+  const shot_plan_path = parse_optional_path(parsed.value.shot_plan_path, "shot_plan_path");
+  if (!shot_plan_path.ok) return shot_plan_path;
+  const script_analysis_path = parse_optional_path(parsed.value.script_analysis_path, "script_analysis_path");
+  if (!script_analysis_path.ok) return script_analysis_path;
+  return { ok: true, value: { prompt_ir_path, ...(shot_plan_path.value === undefined ? {} : { shot_plan_path: shot_plan_path.value }), ...(script_analysis_path.value === undefined ? {} : { script_analysis_path: script_analysis_path.value }) } };
 }
 
 function parse_render_prompt_arguments(raw: unknown): Parsed<RenderPromptInput> {
   const parsed = parse_arguments_object(raw);
-  if (!parsed.ok) {
-    return parsed;
-  }
-  const unknown_key = reject_unknown_keys(parsed.value, ["prompt_ir_path", "output_path"]);
-  if (unknown_key !== undefined) {
-    return unknown_key;
-  }
+  if (!parsed.ok) return parsed;
+  const unknown_key = reject_unknown_keys(parsed.value, ["prompt_ir_path", "output_path", "shot_plan_path", "script_analysis_path"]);
+  if (unknown_key !== undefined) return unknown_key;
   const prompt_ir_path = parsed.value.prompt_ir_path;
   if (typeof prompt_ir_path !== "string" || prompt_ir_path.trim() === "") {
-    return invalid_arguments('入参字段 "prompt_ir_path" 期望非空字符串。', {
-      field: "prompt_ir_path",
-    });
+    return invalid_arguments('入参字段 "prompt_ir_path" 期望非空字符串。', { field: "prompt_ir_path" });
   }
   const output_path = parsed.value.output_path;
   if (typeof output_path !== "string" || output_path.trim() === "") {
-    return invalid_arguments('入参字段 "output_path" 期望非空字符串。', {
-      field: "output_path",
-    });
+    return invalid_arguments('入参字段 "output_path" 期望非空字符串。', { field: "output_path" });
   }
-  return { ok: true, value: { prompt_ir_path, output_path } };
+  const shot_plan_path = parse_optional_path(parsed.value.shot_plan_path, "shot_plan_path");
+  if (!shot_plan_path.ok) return shot_plan_path;
+  const script_analysis_path = parse_optional_path(parsed.value.script_analysis_path, "script_analysis_path");
+  if (!script_analysis_path.ok) return script_analysis_path;
+  return { ok: true, value: { prompt_ir_path, output_path, ...(shot_plan_path.value === undefined ? {} : { shot_plan_path: shot_plan_path.value }), ...(script_analysis_path.value === undefined ? {} : { script_analysis_path: script_analysis_path.value }) } };
 }
 
 function parse_aggregate_knowledge_refs_arguments(
@@ -1419,6 +1448,14 @@ function parse_write_warnings_arguments(raw: unknown): Parsed<WriteWarningsInput
       output_path: required.value.output_path,
     },
   };
+}
+
+function parse_optional_path(value: unknown, field: string): Parsed<string | undefined> {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (typeof value !== "string" || value.trim() === "") {
+    return invalid_arguments(`入参字段 "${field}" 期望非空字符串。`, { field });
+  }
+  return { ok: true, value };
 }
 
 function require_non_empty_string_fields(

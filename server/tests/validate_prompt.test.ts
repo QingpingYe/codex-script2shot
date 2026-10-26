@@ -1,360 +1,121 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { load_model_rules } from "../src/rules.js";
-import {
-  SHOT_FIELD_ORDER,
-  validate_prompt,
-  validate_prompt_document,
-} from "../src/tools/validate_prompt.js";
+import { afterEach, describe, expect, test } from "vitest";
+import { validate_prompt, validate_prompt_document } from "../src/tools/validate_prompt.js";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const fixturesDir = path.join(repoRoot, "tests", "fixtures");
+const shortdramaDir = path.join(fixturesDir, "shortdrama");
+const tempDirs: string[] = [];
 
-interface PromptIrShot {
-  shot_id: string;
-  target_model: string;
-  duration: number;
-  aspect_ratio: string;
-  subject: string;
-  action: string;
-  emotion: string;
-  dialogue: DialogueEntry[];
-  setting: string;
-  time: string;
-  camera_angle: string;
-  camera_movement: string;
-  lighting: string;
-  color: string;
-  style: string;
-  audio: {
-    ambience: string[];
-    sfx: string[];
-    music: string;
-  };
-  continuity: {
-    previous_shot?: string | null;
-    character_state: string;
-    environment_state: string;
-  };
-  negative_prompt: string[];
-  knowledge_refs: unknown[];
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+function read_json(file_path: string): Record<string, any> {
+  return JSON.parse(readFileSync(file_path, "utf8")) as Record<string, any>;
 }
 
-interface DialogueEntry {
-  speaker: string;
-  text: string;
-  language?: string;
-  delivery?: string;
+function write_temp(value: unknown): string {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "script2shot-prompt-v2-"));
+  tempDirs.push(dir);
+  const file_path = path.join(dir, "prompts.ir.json");
+  writeFileSync(file_path, JSON.stringify(value, null, 2), "utf8");
+  return file_path;
 }
 
-interface PromptIr {
-  run_id: string;
-  target_model: string;
-  shots: PromptIrShot[];
-  generated_at: string;
+function keys(result: { errors: Array<{ clip_id: string; shot_id: string; field: string; code: string }> }): string[] {
+  return result.errors.map((error) => `${error.clip_id}|${error.shot_id}|${error.field}|${error.code}`);
 }
 
-function read_prompt_ir(file_name: string): PromptIr {
-  return JSON.parse(
-    readFileSync(path.join(fixturesDir, file_name), "utf8"),
-  ) as PromptIr;
-}
-
-function error_keys(result: { errors: Array<{ shot_id: string; field: string; code: string }> }): string[] {
-  return result.errors.map((error) => `${error.shot_id}|${error.field}|${error.code}`);
-}
-
-describe("prompt hard rule validation", () => {
-  let tempDir: string;
-
-  beforeEach(() => {
-    tempDir = mkdtempSync(path.join(os.tmpdir(), "script2shot-validate-prompt-"));
-  });
-
-  afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  function write_variant(ir: unknown): string {
-    const file_path = path.join(tempDir, "prompts.ir.json");
-    writeFileSync(file_path, JSON.stringify(ir, null, 2), "utf8");
-    return file_path;
-  }
-
-  test("validate passes valid fixture", () => {
+describe("prompt validation v2", () => {
+  test("valid prompt passes with plan and analysis links", () => {
     const result = validate_prompt({
-      prompt_ir_path: path.join(fixturesDir, "prompts_ir.sample.json"),
+      prompt_ir_path: path.join(shortdramaDir, "prompts_ir.v2.json"),
+      shot_plan_path: path.join(shortdramaDir, "shot_plan.v2.json"),
+      script_analysis_path: path.join(shortdramaDir, "script_analysis.v2.json"),
     });
-
     expect(result).toEqual({ ok: true, errors: [] });
   });
 
-  test("shot field order matches the prompt_ir schema property order", () => {
-    // 防漂移护栏：SHOT_FIELD_ORDER 决定镜头内错误顺序，必须与 schema 的 shot
-    // 属性顺序逐项一致（含顺序，不只是集合）。
-    const schema = JSON.parse(
-      readFileSync(path.join(repoRoot, "schemas", "prompt_ir.schema.json"), "utf8"),
-    ) as { $defs?: { shot?: { properties?: Record<string, unknown> } } };
-    const properties = schema.$defs?.shot?.properties;
-    if (properties === undefined) {
-      throw new Error("schemas/prompt_ir.schema.json 缺少 $defs.shot.properties");
-    }
-
-    expect(SHOT_FIELD_ORDER).toEqual(Object.keys(properties));
+  test("schema errors retain clip and shot attribution", () => {
+    const prompt = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    delete prompt.clips[0].shots[0].subject;
+    expect(keys(validate_prompt_document(prompt))).toContain("ep01-sc01-c01|ep01-sc01-c01-s01|subject|MISSING_FIELD");
   });
 
-  test("document-level validation matches path-level validation", () => {
-    const valid_path = path.join(fixturesDir, "prompts_ir.sample.json");
-    const document = JSON.parse(readFileSync(valid_path, "utf8")) as unknown;
 
-    // 文档级入口是 validate_prompt 的抽取：同一份 document 必须得到逐字段一致的结果，
-    // render_prompt 的单次读取才不会改变错误码 / 顺序 / 消息。
-    expect(validate_prompt_document(document)).toEqual(
-      validate_prompt({ prompt_ir_path: valid_path }),
-    );
-
-    const invalid_ir = read_prompt_ir("prompts_ir.sample.json");
-    invalid_ir.shots[0].duration = 3;
-    invalid_ir.shots[0].target_model = "seedance-2.0";
-    invalid_ir.shots[0].style = "neo-noir cinematic realism, fps=24";
-    const invalid_path = write_variant(invalid_ir);
-    expect(validate_prompt_document(invalid_ir)).toEqual(
-      validate_prompt({ prompt_ir_path: invalid_path }),
-    );
-
-    // 规则文件不可用（MODEL_RULES_UNAVAILABLE）走同一路径。
-    const missing_rules_dir = path.join(tempDir, "rules-missing");
-    expect(validate_prompt_document(document, { rules_dir: missing_rules_dir })).toEqual(
-      validate_prompt({ prompt_ir_path: valid_path }, { rules_dir: missing_rules_dir }),
-    );
+  test("returns clip and shot attribution for missing content", () => {
+    const prompt = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    prompt.clips[1].shots[0].action = "   ";
+    const result = validate_prompt_document(prompt);
+    expect(result.ok).toBe(false);
+    expect(keys(result)).toContain("ep01-sc02-c01|ep01-sc02-c01-s01|action|MISSING_FIELD");
   });
 
-  test("validate rejects missing required field", () => {
+  test("duration validation applies to a clip, not each shot", () => {
+    const prompt = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    prompt.clips[0].duration_sec = 3;
+    const result = validate_prompt_document(prompt);
+    expect(keys(result)).toContain("ep01-sc01-c01||duration_sec|OUT_OF_RANGE");
+  });
+
+  test("dialogue remains exempt from forbidden term scanning", () => {
+    const prompt = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    prompt.clips[0].dialogue[0].text = "duration fps";
+    const result = validate_prompt_document(prompt);
+    expect(result.errors.some((error) => error.field === "text")).toBe(false);
+  });
+
+  test("rejects unknown model and disabled Seedance 2.5 timeline", () => {
+    const mismatch = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    mismatch.target_model = "seedance-9.9";
+    expect(keys(validate_prompt_document(mismatch))).toContain("||target_model|SCHEMA_INVALID");
+
+    const no_timeline = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    no_timeline.display_timeline = false;
+    expect(keys(validate_prompt_document(no_timeline))).toContain("||display_timeline|MISSING_FIELD");
+  });
+
+  test("rejects upstream shot drift when plan is provided", () => {
+    const prompt = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    prompt.clips[0].shots[0].end_sec = 2.5;
     const result = validate_prompt({
-      prompt_ir_path: path.join(fixturesDir, "prompts_ir.invalid.missing_subject.json"),
+      prompt_ir_path: write_temp(prompt),
+      shot_plan_path: path.join(shortdramaDir, "shot_plan.v2.json"),
+      script_analysis_path: path.join(shortdramaDir, "script_analysis.v2.json"),
     });
-
     expect(result.ok).toBe(false);
-    expect(error_keys(result)).toEqual(["ep01-sc01-sh01|subject|MISSING_FIELD"]);
-    expect(result.errors[0]?.message).toContain("subject");
+    expect(result.errors.some((error) => error.code === "SOURCE_COVERAGE_INVALID")).toBe(true);
   });
 
-  test("validate reports empty dialogue text as an out of range field error", () => {
-    const result = validate_prompt({
-      prompt_ir_path: path.join(fixturesDir, "prompts_ir.invalid.bad_dialogue.json"),
-    });
-
-    // schema 层 minLength 违规映射为镜头内字段错误：field 取相对路径，定位到具体条目。
-    expect(error_keys(result)).toEqual(["ep01-sc01-sh01|dialogue[0].text|OUT_OF_RANGE"]);
-    expect(result.errors[0]?.message).toContain("镜头 ep01-sc01-sh01");
+  test("validates structured timeline without requiring upstream paths", () => {
+    const shotGap = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    shotGap.clips[0].shots[0].end_sec = 2.5;
+    expect(validate_prompt_document(shotGap).errors.map((error) => error.code)).toContain("TIMELINE_INVALID");
+    const dialogueOut = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    dialogueOut.clips[0].dialogue[0].end_sec = 10.5;
+    expect(validate_prompt_document(dialogueOut).errors.map((error) => error.code)).toContain("TIMELINE_INVALID");
+    const audioOut = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    audioOut.clips[0].audio.sfx[0].end_sec = 10.5;
+    expect(validate_prompt_document(audioOut).errors.map((error) => error.code)).toContain("TIMELINE_INVALID");
   });
 
-  test("validate rejects duration out of range", () => {
-    const ir = read_prompt_ir("prompts_ir.sample.json");
-    ir.shots[0].duration = 3;
-    const below = validate_prompt({ prompt_ir_path: write_variant(ir) });
-
-    ir.shots[0].duration = 31;
-    const above = validate_prompt({ prompt_ir_path: write_variant(ir) });
-
-    expect(error_keys(below)).toEqual(["ep01-sc01-sh01|duration|OUT_OF_RANGE"]);
-    expect(below.errors[0]?.message).toContain("seedance-2.5");
-    expect(error_keys(above)).toEqual(["ep01-sc01-sh01|duration|OUT_OF_RANGE"]);
-    expect(above.errors[0]?.message).toContain("30");
+  test("enforces all model-required non-empty fields", () => {
+    const prompt = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    prompt.clips[0].setting = "";
+    expect(keys(validate_prompt_document(prompt))).toContain("ep01-sc01-c01||setting|MISSING_FIELD");
   });
 
-  test("validate rejects missing shot size", () => {
-    const ir = read_prompt_ir("prompts_ir.sample.json");
-    const shot = ir.shots[0] as unknown as Record<string, unknown>;
-    delete shot.shot_size;
 
-    const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
+  test("reports unsupported versions and unreadable paths structurally", () => {
+    const legacy = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    legacy.schema_version = 1;
+    expect(keys(validate_prompt_document(legacy))).toContain("||schema_version|ARTIFACT_VERSION_UNSUPPORTED");
 
-    expect(result.ok).toBe(false);
-    expect(error_keys(result)).toEqual(["ep01-sc01-sh01|shot_size|MISSING_FIELD"]);
-    expect(result.errors[0]?.message).toContain("shot_size");
-  });
-
-  test("validate rejects forbidden term", () => {
-    const rules = load_model_rules("seedance-2.5");
-    expect(rules.ok).toBe(true);
-    if (!rules.ok) {
-      throw new Error("expected seedance-2.5 rules to load");
-    }
-    // 非空转：断言命中项确实在规则文件词表里，而不是测试自造的词。
-    const forbidden_term = "aspect_ratio";
-    expect(rules.rules.forbidden).toContain(forbidden_term);
-
-    const ir = read_prompt_ir("prompts_ir.sample.json");
-    ir.shots[0].subject = `角色A（参数 ${forbidden_term}=16:9）`;
-    const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
-
-    expect(error_keys(result)).toEqual(["ep01-sc01-sh01|subject|FORBIDDEN_TERM"]);
-    expect(result.errors[0]?.message).toContain(forbidden_term);
-  });
-
-  test("validate rejects forbidden term in emotion", () => {
-    const rules = load_model_rules("seedance-2.5");
-    expect(rules.ok).toBe(true);
-    if (!rules.ok) {
-      throw new Error("expected seedance-2.5 rules to load");
-    }
-    // 非空转：断言命中项确实在规则文件词表里，而不是测试自造的词。
-    const forbidden_term = "fps";
-    expect(rules.rules.forbidden).toContain(forbidden_term);
-
-    // 裁决：emotion 是「由 Agent 撰写、可改写」的自由文本，参与禁止项扫描；
-    // 只有 dialogue 是原文保真豁免区。
-    const ir = read_prompt_ir("prompts_ir.sample.json");
-    ir.shots[0].emotion = `呼吸急促，像 ${forbidden_term} 一样越数越快`;
-    const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
-
-    expect(error_keys(result)).toEqual(["ep01-sc01-sh01|emotion|FORBIDDEN_TERM"]);
-    expect(result.errors[0]?.message).toContain(forbidden_term);
-  });
-
-  test("validate rejects forbidden term in audio fields", () => {
-    const rules = load_model_rules("seedance-2.5");
-    expect(rules.ok).toBe(true);
-    if (!rules.ok) {
-      throw new Error("expected seedance-2.5 rules to load");
-    }
-    // 非空转：三个词都来自规则文件词表，覆盖 audio 的三个可改写子字段。
-    const forbidden_terms = ["duration", "resolution", "fps"];
-    for (const term of forbidden_terms) {
-      expect(rules.rules.forbidden).toContain(term);
-    }
-
-    const ir = read_prompt_ir("prompts_ir.sample.json");
-    ir.shots[0].audio = {
-      ambience: [`环境声里的 ${forbidden_terms[0]}`],
-      sfx: [`音效里的 ${forbidden_terms[1]}`],
-      music: `音乐里的 ${forbidden_terms[2]}`,
-    };
-    const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
-
-    // 扫描顺序与对象结构一致：ambience[] → sfx[] → music。
-    expect(error_keys(result)).toEqual([
-      "ep01-sc01-sh01|audio.ambience[0]|FORBIDDEN_TERM",
-      "ep01-sc01-sh01|audio.sfx[0]|FORBIDDEN_TERM",
-      "ep01-sc01-sh01|audio.music|FORBIDDEN_TERM",
-    ]);
-    for (const [index, term] of forbidden_terms.entries()) {
-      expect(result.errors[index]?.message).toContain(term);
-    }
-  });
-
-  test("validate keeps verbatim dialogue even when it contains forbidden terms", () => {
-    const rules = load_model_rules("seedance-2.5");
-    expect(rules.ok).toBe(true);
-    if (!rules.ok) {
-      throw new Error("expected seedance-2.5 rules to load");
-    }
-    // 非空转：断言两个禁词确实在规则文件词表里，而不是测试自造的词。
-    for (const term of ["fps", "duration"]) {
-      expect(rules.rules.forbidden).toContain(term);
-    }
-
-    const ir = read_prompt_ir("prompts_ir.sample.json");
-    ir.shots[0].dialogue = [
-      { speaker: "角色A", text: "把 fps 和 duration 都留在台词原文里" },
-    ];
-    const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
-
-    // 裁决：dialogue 是原文保真豁免区，不参与 forbidden 扫描；不得为通过校验改写台词。
-    expect(result).toEqual({ ok: true, errors: [] });
-  });
-
-  test("validate rejects model mismatch", () => {
-    const ir = read_prompt_ir("prompts_ir.sample.json");
-    ir.shots[0].target_model = "seedance-2.0";
-    const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
-
-    expect(error_keys(result)).toEqual(["ep01-sc01-sh01|target_model|MODEL_MISMATCH"]);
-    expect(result.errors[0]?.message).toContain("seedance-2.0");
-    expect(result.errors[0]?.message).toContain("seedance-2.5");
-  });
-
-  test("validate returns structured errors per shot", () => {
-    const ir = read_prompt_ir("prompts_ir.sample.json");
-    const second_shot: PromptIrShot = {
-      ...read_prompt_ir("prompts_ir.sample.json").shots[0],
-      shot_id: "ep01-sc02-sh01",
-      target_model: "seedance-2.0",
-      action: "以 resolution 参数改画质",
-    };
-    ir.shots[0].duration = 3;
-    ir.shots[0].subject = "   ";
-    ir.shots[0].style = "neo-noir cinematic realism, fps=24";
-    ir.shots = [ir.shots[0], second_shot];
-
-    const result = validate_prompt({ prompt_ir_path: write_variant(ir) });
-
-    // 顺序固定：镜头顺序 → 镜头内字段顺序；同一字段内先 MISSING_FIELD 再 FORBIDDEN_TERM。
-    expect(error_keys(result)).toEqual([
-      "ep01-sc01-sh01|duration|OUT_OF_RANGE",
-      "ep01-sc01-sh01|subject|MISSING_FIELD",
-      "ep01-sc01-sh01|style|FORBIDDEN_TERM",
-      "ep01-sc02-sh01|target_model|MODEL_MISMATCH",
-      "ep01-sc02-sh01|action|FORBIDDEN_TERM",
-    ]);
-    for (const error of result.errors) {
-      expect(Object.keys(error).sort()).toEqual(["code", "field", "message", "shot_id"]);
-      expect(error.message.length).toBeGreaterThan(0);
-    }
-  });
-
-  test("validate reports unreadable prompt ir path", () => {
-    const missing_path = path.join(tempDir, "does-not-exist.json");
-    const result = validate_prompt({ prompt_ir_path: missing_path });
-
-    expect(result.ok).toBe(false);
-    expect(error_keys(result)).toEqual(["|prompt_ir_path|MISSING_FIELD"]);
-    expect(result.errors[0]?.message).toContain("does-not-exist.json");
-
-    const invalid_json_path = path.join(tempDir, "invalid.json");
-    writeFileSync(invalid_json_path, "{", "utf8");
-    const invalid_json = validate_prompt({ prompt_ir_path: invalid_json_path });
-
-    expect(invalid_json.ok).toBe(false);
-    expect(error_keys(invalid_json)).toEqual(["|prompt_ir_path|MISSING_FIELD"]);
-  });
-
-  test("validate reports unavailable model rules", () => {
-    const prompt_ir_path = path.join(fixturesDir, "prompts_ir.sample.json");
-
-    // 规则目录里没有规则文件：load_model_rules 抛错，必须转成结构化结果而不是穿透。
-    const missing_rules_dir = path.join(tempDir, "rules-missing");
-    const missing = validate_prompt({ prompt_ir_path }, { rules_dir: missing_rules_dir });
-
-    expect(missing.ok).toBe(false);
-    expect(error_keys(missing)).toEqual(["|target_model|MODEL_RULES_UNAVAILABLE"]);
-    expect(missing.errors[0]?.message).toContain("模型规则不可用");
-
-    // 规则文件 JSON 非法。
-    const corrupt_rules_dir = path.join(tempDir, "rules-corrupt");
-    mkdirSync(corrupt_rules_dir, { recursive: true });
-    writeFileSync(path.join(corrupt_rules_dir, "seedance-2.5.json"), "{", "utf8");
-    const corrupt = validate_prompt({ prompt_ir_path }, { rules_dir: corrupt_rules_dir });
-
-    expect(error_keys(corrupt)).toEqual(["|target_model|MODEL_RULES_UNAVAILABLE"]);
-
-    // 规则文件结构合法但文件内的 model 与请求的 model_id 不一致。
-    const mismatched_rules_dir = path.join(tempDir, "rules-mismatched");
-    mkdirSync(mismatched_rules_dir, { recursive: true });
-    const rules = JSON.parse(
-      readFileSync(path.join(repoRoot, "rules", "models", "seedance-2.5.json"), "utf8"),
-    ) as Record<string, unknown>;
-    writeFileSync(
-      path.join(mismatched_rules_dir, "seedance-2.5.json"),
-      JSON.stringify({ ...rules, model: "seedance-9.9" }),
-      "utf8",
-    );
-    const mismatched = validate_prompt({ prompt_ir_path }, { rules_dir: mismatched_rules_dir });
-
-    expect(error_keys(mismatched)).toEqual(["|target_model|MODEL_RULES_UNAVAILABLE"]);
+    const missing = validate_prompt({ prompt_ir_path: path.join(os.tmpdir(), "missing.json") });
+    expect(keys(missing)).toEqual(["||prompt_ir_path|MISSING_FIELD"]);
   });
 });

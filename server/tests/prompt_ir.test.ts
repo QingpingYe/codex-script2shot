@@ -17,119 +17,80 @@ function error_paths(result: { errors: Array<{ path: string }> }): string[] {
 }
 
 interface PromptIrFixture {
-  shots: Array<Record<string, unknown>>;
+  clips: Array<Record<string, any>>;
 }
 
-describe("prompt ir schema validation", () => {
+describe("prompt ir v2 schema validation", () => {
   test("valid prompt ir fixture passes", () => {
-    const result = validate_prompt_ir(read_fixture("prompts_ir.sample.json"));
-    expect(result.ok).toBe(true);
-    expect(result.errors).toEqual([]);
+    expect(validate_prompt_ir(read_fixture("prompts_ir.sample.json"))).toEqual({
+      ok: true,
+      errors: [],
+    });
   });
 
-  test("prompt ir rejects missing subject", () => {
-    const result = validate_prompt_ir(
-      read_fixture("prompts_ir.invalid.missing_subject.json"),
-    );
-    expect(result.ok).toBe(false);
-    expect(error_paths(result)).toEqual(["shots[0].subject"]);
-  });
-
-  test("prompt ir rejects continuity without exit state", () => {
-    const result = validate_prompt_ir(
-      read_fixture("prompts_ir.invalid.bad_continuity.json"),
-    );
-    expect(result.ok).toBe(false);
-    expect(error_paths(result)).toEqual(["shots[0].continuity.environment_state"]);
-  });
-
-  test("prompt ir rejects dialogue entry with empty text", () => {
-    const result = validate_prompt_ir(
-      read_fixture("prompts_ir.invalid.bad_dialogue.json"),
-    );
-    expect(result.ok).toBe(false);
-    expect(error_paths(result)).toEqual(["shots[0].dialogue[0].text"]);
-  });
-
-  test("prompt ir requires dialogue field per shot", () => {
+  test("rejects missing subject inside a shot", () => {
     const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
-    delete edited.shots[0].dialogue;
-
+    delete edited.clips[0].shots[0].subject;
     const result = validate_prompt_ir(edited);
-
     expect(result.ok).toBe(false);
-    expect(error_paths(result)).toEqual(["shots[0].dialogue"]);
+    expect(error_paths(result)).toEqual(["clips[0].shots[0].subject"]);
   });
 
-  test("prompt ir requires emotion per shot", () => {
+  test("rejects continuity without exit state", () => {
     const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
-    delete edited.shots[0].emotion;
-
+    delete edited.clips[0].shots[0].continuity.exit_state;
     const result = validate_prompt_ir(edited);
-
     expect(result.ok).toBe(false);
-    expect(error_paths(result)).toEqual(["shots[0].emotion"]);
+    expect(error_paths(result)).toEqual(["clips[0].shots[0].continuity.exit_state"]);
   });
 
-  test("prompt ir requires audio object per shot", () => {
+  test("rejects dialogue entry fields required by v2", () => {
     const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
-    delete edited.shots[0].audio;
-
+    edited.clips[0].dialogue[0].text = "";
     const result = validate_prompt_ir(edited);
-
     expect(result.ok).toBe(false);
-    expect(error_paths(result)).toEqual(["shots[0].audio"]);
+    expect(error_paths(result)).toEqual(["clips[0].dialogue[0].text"]);
   });
 
-  test("prompt ir requires knowledge refs field per shot", () => {
+  test("requires clip-level dialogue, audio, knowledge refs and display timeline", () => {
+    for (const field of ["dialogue", "audio", "knowledge_refs"] as const) {
+      const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
+      delete edited.clips[0][field];
+      const result = validate_prompt_ir(edited);
+      expect(result.ok).toBe(false);
+      expect(error_paths(result)).toContain(`clips[0].${field}`);
+    }
     const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
-    delete edited.shots[0].knowledge_refs;
-
+    delete (edited as unknown as Record<string, unknown>).display_timeline;
     const result = validate_prompt_ir(edited);
-
     expect(result.ok).toBe(false);
-    expect(error_paths(result)).toEqual(["shots[0].knowledge_refs"]);
+    expect(error_paths(result)).toContain("display_timeline");
   });
 
-  test("prompt ir rejects unknown camera angle", () => {
-    const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
-    edited.shots[0].camera_angle = "low_angle";
+  test("rejects unknown camera angle and shot size", () => {
+    const bad_angle = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
+    bad_angle.clips[0].shots[0].camera_angle = "low_angle";
+    expect(error_paths(validate_prompt_ir(bad_angle))).toEqual(["clips[0].shots[0].camera_angle"]);
 
-    const result = validate_prompt_ir(edited);
-
-    expect(result.ok).toBe(false);
-    expect(error_paths(result)).toEqual(["shots[0].camera_angle"]);
+    const bad_size = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
+    bad_size.clips[0].shots[0].shot_size = "medium_shot";
+    expect(error_paths(validate_prompt_ir(bad_size))).toEqual(["clips[0].shots[0].shot_size"]);
   });
 
-  test("prompt ir rejects unknown shot size", () => {
+  test("allows clip-level knowledge refs with shot_id null", () => {
     const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
-    edited.shots[0].shot_size = "medium_shot";
-
-    const result = validate_prompt_ir(edited);
-
-    expect(result.ok).toBe(false);
-    expect(error_paths(result)).toEqual(["shots[0].shot_size"]);
-  });
-
-  test("prompt ir rejects empty continuity exit state", () => {
-    const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
-    const continuity = edited.shots[0].continuity as Record<string, unknown>;
-    continuity.environment_state = "";
-
-    const result = validate_prompt_ir(edited);
-
-    expect(result.ok).toBe(false);
-    expect(error_paths(result)).toEqual(["shots[0].continuity.environment_state"]);
-  });
-
-  test("prompt ir rejects knowledge ref without string shot id", () => {
-    const edited = read_fixture("prompts_ir.sample.json") as PromptIrFixture;
-    const refs = edited.shots[0].knowledge_refs as Array<Record<string, unknown>>;
-    refs[0].shot_id = null;
-
-    const result = validate_prompt_ir(edited);
-
-    expect(result.ok).toBe(false);
-    expect(error_paths(result)).toEqual(["shots[0].knowledge_refs[0].shot_id"]);
+    edited.clips[0].knowledge_refs = [{
+      card_id: "card-1",
+      scene_id: "ep01-sc01",
+      clip_id: "ep01-sc01-c01",
+      shot_id: null,
+      query: "clip 共用",
+      usage: "used",
+      source_doc_token: "doc",
+      source_path: "path",
+      source_revision: 1,
+      last_synced_at: "2026-10-26T12:00:00+08:00",
+    }];
+    expect(validate_prompt_ir(edited).ok).toBe(true);
   });
 });

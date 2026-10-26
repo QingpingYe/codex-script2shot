@@ -1,71 +1,411 @@
 {
-  "run_id": "run-20261022-090000",
+  "schema_version": 2,
+  "run_id": "run-20261026-120000",
   "target_model": "seedance-2.0",
-  "shots": [
+  "input_hashes": {
+    "script_analysis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "shot_plan": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "display_timeline": false,
+  "clips": [
     {
-      "shot_id": "ep01-sc01-sh01",
-      "target_model": "seedance-2.0",
-      "duration": 5,
-      "aspect_ratio": "16:9",
-      "shot_size": "full-shot",
-      "subject": "角色A",
-      "action": "推开铁门走进废弃剧院前厅",
-      "emotion": "推门的手停了一下，目光扫过空荡的前厅",
-      "dialogue": [
+      "clip_id": "ep01-sc01-c01",
+      "scene_id": "ep01-sc01",
+      "process_id": "ep01-p01",
+      "duration_sec": 10,
+      "aspect_ratio": "9:16",
+      "generation_goal": "林岚把信封交给周宁，周宁接住并保持警惕。",
+      "reference_bindings": [
         {
-          "speaker": "角色A",
-          "text": "这地方还有人吗"
+          "asset_id": "asset-character-a",
+          "media_type": "image",
+          "entity_ids": [
+            "character-a"
+          ],
+          "tag": "@图片1",
+          "status": "placeholder",
+          "adopt": [
+            "面部与剧本已明确的服装"
+          ],
+          "exclude": [
+            "背景"
+          ]
+        },
+        {
+          "asset_id": "asset-character-b",
+          "media_type": "image",
+          "entity_ids": [
+            "character-b"
+          ],
+          "tag": "@图片2",
+          "status": "placeholder",
+          "adopt": [
+            "面部与剧本已明确的服装"
+          ],
+          "exclude": [
+            "背景"
+          ]
+        },
+        {
+          "asset_id": "asset-scene-living-room",
+          "media_type": "image",
+          "entity_ids": [
+            "scene-living-room"
+          ],
+          "tag": "@图片3",
+          "status": "placeholder",
+          "adopt": [
+            "空间布局、门窗和固定家具位置"
+          ],
+          "exclude": [
+            "图中人物"
+          ]
+        },
+        {
+          "asset_id": "asset-prop-envelope",
+          "media_type": "image",
+          "entity_ids": [
+            "prop-envelope"
+          ],
+          "tag": "@图片4",
+          "status": "placeholder",
+          "adopt": [
+            "信封的形状、颜色和封口状态"
+          ],
+          "exclude": [
+            "手部和背景"
+          ]
         }
       ],
-      "setting": "废弃剧院前厅，灰尘与破损海报",
-      "time": "night",
-      "camera_angle": "eye-level",
-      "camera_movement": "push-in",
-      "lighting": "冷白顶灯",
-      "color": "灰蓝低饱和",
-      "style": "写实电影质感",
+      "subjects_and_relations": "主体为林岚、周宁。林岚位于画面左侧，周宁位于右侧；信封初始在林岚手中，最终归属周宁。",
+      "shots": [
+        {
+          "shot_id": "ep01-sc01-c01-s01",
+          "order": 1,
+          "start_sec": 0,
+          "end_sec": 2,
+          "shot_size": "medium-shot",
+          "camera_angle": "eye-level",
+          "camera_movement": "static",
+          "transition": "切",
+          "purpose": "交代两人和信封的初始位置。",
+          "source_action_unit_ids": [
+            "ep01-sc01-a01"
+          ],
+          "source_emotion_unit_ids": [
+            "ep01-sc01-e01"
+          ],
+          "subject": "林岚与周宁",
+          "action": "林岚把信封递向周宁。",
+          "emotion": "林岚克制，周宁警惕。",
+          "continuity": {
+            "enter_state": "信封在林岚手中。",
+            "exit_state": "林岚抬手递出信封。"
+          }
+        },
+        {
+          "shot_id": "ep01-sc01-c01-s02",
+          "order": 2,
+          "start_sec": 2,
+          "end_sec": 5,
+          "shot_size": "close-up",
+          "camera_angle": "high-angle",
+          "camera_movement": "follow-focus",
+          "transition": "切",
+          "purpose": "强调信封离手和交接动作。",
+          "source_action_unit_ids": [
+            "ep01-sc01-a01"
+          ],
+          "source_emotion_unit_ids": [],
+          "subject": "信封与两人的手",
+          "action": "信封离开林岚的手，被周宁接住。",
+          "emotion": "",
+          "continuity": {
+            "enter_state": "林岚抬手递出信封。",
+            "exit_state": "周宁的手指触到信封。"
+          }
+        },
+        {
+          "shot_id": "ep01-sc01-c01-s03",
+          "order": 3,
+          "start_sec": 5,
+          "end_sec": 8,
+          "shot_size": "close-shot",
+          "camera_angle": "reverse-angle",
+          "camera_movement": "push-in",
+          "transition": "切",
+          "purpose": "表现周宁接住信封后的警惕。",
+          "source_action_unit_ids": [
+            "ep01-sc01-a01"
+          ],
+          "source_emotion_unit_ids": [
+            "ep01-sc01-e01"
+          ],
+          "subject": "周宁",
+          "action": "周宁接住信封并看向林岚。",
+          "emotion": "周宁保持警惕。",
+          "continuity": {
+            "enter_state": "周宁的手指触到信封。",
+            "exit_state": "周宁握住信封。"
+          }
+        },
+        {
+          "shot_id": "ep01-sc01-c01-s04",
+          "order": 4,
+          "start_sec": 8,
+          "end_sec": 10,
+          "shot_size": "medium-close-up",
+          "camera_angle": "two-shot",
+          "camera_movement": "static",
+          "transition": "切",
+          "purpose": "落在交接完成和两人的对峙状态。",
+          "source_action_unit_ids": [
+            "ep01-sc01-a01"
+          ],
+          "source_emotion_unit_ids": [
+            "ep01-sc01-e01"
+          ],
+          "subject": "林岚与周宁",
+          "action": "周宁握住信封，林岚没有松手或解释。",
+          "emotion": "两人保持对峙。",
+          "continuity": {
+            "enter_state": "周宁握住信封。",
+            "exit_state": "信封在周宁手中。"
+          }
+        }
+      ],
+      "dialogue": [
+        {
+          "dialogue_segment_id": "ep01-sc01-d01-seg01",
+          "dialogue_unit_id": "ep01-sc01-d01",
+          "speaker_id": "character-a",
+          "start_offset": 0,
+          "end_offset": 3,
+          "start_sec": 0.5,
+          "end_sec": 2.5,
+          "text": "给你。"
+        }
+      ],
+      "setting": "同一间客厅，门窗和家具位置保持不变。",
+      "time": "day",
+      "lighting": "柔和顶光，人物面部保持可辨识。",
+      "color": "低饱和暖灰。",
+      "style": "短剧写实电影感。",
       "audio": {
-        "ambience": ["前厅的空旷回声"],
-        "sfx": ["铁门被推开"],
-        "music": "低沉弦乐"
+        "ambience": [
+          {
+            "cue_id": "ep01-sc01-c01-amb01",
+            "text": "客厅环境声持续。",
+            "start_sec": 0,
+            "end_sec": 10,
+            "source_refs": [
+              {
+                "kind": "scene",
+                "id": "ep01-sc01"
+              }
+            ]
+          }
+        ],
+        "sfx": [
+          {
+            "cue_id": "ep01-sc01-c01-sfx01",
+            "text": "信封交接时纸张轻响。",
+            "start_sec": 5.2,
+            "end_sec": 5.7,
+            "source_refs": [
+              {
+                "kind": "unit",
+                "id": "ep01-sc01-a01"
+              }
+            ]
+          }
+        ],
+        "music": []
       },
       "continuity": {
-        "character_state": "角色A站在门内，手扶铁门",
-        "environment_state": "门缝透出冷光"
+        "previous_clip_id": null,
+        "enter_state": "信封在林岚手中。",
+        "exit_state": "信封在周宁手中。"
       },
-      "negative_prompt": ["画面抖动", "人物变形"],
+      "negative_prompt": [],
       "knowledge_refs": []
     },
     {
-      "shot_id": "ep01-sc01-sh02",
-      "target_model": "seedance-2.0",
-      "duration": 4,
-      "aspect_ratio": "16:9",
-      "shot_size": "medium-full-shot",
-      "subject": "角色B",
-      "action": "从舞台后方走到追光里",
-      "emotion": "",
-      "dialogue": [],
-      "setting": "剧院舞台区，幕布半垂",
-      "time": "dawn",
-      "camera_angle": "over-the-shoulder",
-      "camera_movement": "tracking",
-      "lighting": "舞台追光",
-      "color": "暖黄与深褐",
-      "style": "写实电影质感",
+      "clip_id": "ep01-sc02-c01",
+      "scene_id": "ep01-sc02",
+      "process_id": "ep01-p02",
+      "duration_sec": 6,
+      "aspect_ratio": "9:16",
+      "generation_goal": "周宁从信封中取出项链并质问，林岚沉默。",
+      "reference_bindings": [
+        {
+          "asset_id": "asset-character-a",
+          "media_type": "image",
+          "entity_ids": [
+            "character-a"
+          ],
+          "tag": "@图片1",
+          "status": "placeholder",
+          "adopt": [
+            "面部与剧本已明确的服装"
+          ],
+          "exclude": [
+            "背景"
+          ]
+        },
+        {
+          "asset_id": "asset-character-b",
+          "media_type": "image",
+          "entity_ids": [
+            "character-b"
+          ],
+          "tag": "@图片2",
+          "status": "placeholder",
+          "adopt": [
+            "面部与剧本已明确的服装"
+          ],
+          "exclude": [
+            "背景"
+          ]
+        },
+        {
+          "asset_id": "asset-scene-living-room",
+          "media_type": "image",
+          "entity_ids": [
+            "scene-living-room"
+          ],
+          "tag": "@图片3",
+          "status": "placeholder",
+          "adopt": [
+            "空间布局、门窗和固定家具位置"
+          ],
+          "exclude": [
+            "图中人物"
+          ]
+        },
+        {
+          "asset_id": "asset-prop-envelope",
+          "media_type": "image",
+          "entity_ids": [
+            "prop-envelope"
+          ],
+          "tag": "@图片4",
+          "status": "placeholder",
+          "adopt": [
+            "信封的形状、颜色和封口状态"
+          ],
+          "exclude": [
+            "手部和背景"
+          ]
+        },
+        {
+          "asset_id": "asset-prop-necklace",
+          "media_type": "image",
+          "entity_ids": [
+            "prop-necklace"
+          ],
+          "tag": "@图片5",
+          "status": "placeholder",
+          "adopt": [
+            "项链形状和吊坠外观"
+          ],
+          "exclude": [
+            "手部和背景"
+          ]
+        }
+      ],
+      "subjects_and_relations": "主体为周宁与林岚。周宁站在客厅中央，林岚位于其对面；项链从周宁手中的信封转移到周宁手中。",
+      "shots": [
+        {
+          "shot_id": "ep01-sc02-c01-s01",
+          "order": 1,
+          "start_sec": 0,
+          "end_sec": 3,
+          "shot_size": "close-up",
+          "camera_angle": "high-angle",
+          "camera_movement": "follow-focus",
+          "transition": "切",
+          "purpose": "展示周宁打开信封并取出项链。",
+          "source_action_unit_ids": [
+            "ep01-sc02-a01"
+          ],
+          "source_emotion_unit_ids": [],
+          "subject": "周宁的双手、信封与项链",
+          "action": "周宁打开信封，从里面取出项链。",
+          "emotion": "",
+          "continuity": {
+            "enter_state": "信封在周宁手中，尚未打开。",
+            "exit_state": "项链被取出。"
+          }
+        },
+        {
+          "shot_id": "ep01-sc02-c01-s02",
+          "order": 2,
+          "start_sec": 3,
+          "end_sec": 6,
+          "shot_size": "close-shot",
+          "camera_angle": "eye-level",
+          "camera_movement": "static",
+          "transition": "切",
+          "purpose": "表现周宁的震惊和林岚的沉默。",
+          "source_action_unit_ids": [
+            "ep01-sc02-a01"
+          ],
+          "source_emotion_unit_ids": [
+            "ep01-sc02-e01"
+          ],
+          "subject": "周宁与林岚",
+          "action": "周宁看着项链质问，林岚保持沉默。",
+          "emotion": "周宁震惊，林岚沉默。",
+          "continuity": {
+            "enter_state": "项链被取出。",
+            "exit_state": "项链在周宁手中，林岚保持沉默。"
+          }
+        }
+      ],
+      "dialogue": [
+        {
+          "dialogue_segment_id": "ep01-sc02-d01-seg01",
+          "dialogue_unit_id": "ep01-sc02-d01",
+          "speaker_id": "character-b",
+          "start_offset": 0,
+          "end_offset": 6,
+          "start_sec": 3.4,
+          "end_sec": 5.6,
+          "text": "你一直留着？"
+        }
+      ],
+      "setting": "同一间客厅，门窗和家具位置保持不变。",
+      "time": "day",
+      "lighting": "柔和顶光，项链反光可见。",
+      "color": "低饱和暖灰。",
+      "style": "短剧写实电影感。",
       "audio": {
-        "ambience": [],
+        "ambience": [
+          {
+            "cue_id": "ep01-sc02-c01-amb01",
+            "text": "客厅环境声持续。",
+            "start_sec": 0,
+            "end_sec": 6,
+            "source_refs": [
+              {
+                "kind": "scene",
+                "id": "ep01-sc02"
+              }
+            ]
+          }
+        ],
         "sfx": [],
-        "music": ""
+        "music": []
       },
       "continuity": {
-        "previous_shot": "ep01-sc01-sh01",
-        "character_state": "角色B停在舞台中央",
-        "environment_state": "幕布轻微摆动"
+        "previous_clip_id": null,
+        "enter_state": "信封在周宁手中，项链仍在信封内。",
+        "exit_state": "项链在周宁手中，林岚保持沉默。"
       },
       "negative_prompt": [],
       "knowledge_refs": []
     }
   ],
-  "generated_at": "2026-10-22T09:00:00+08:00"
+  "generated_at": "2026-10-26T12:02:00+08:00"
 }

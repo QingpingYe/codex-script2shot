@@ -1,64 +1,82 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ShotPlan",
-  "description": "shot-planning 阶段产物 shot_plan.json 的冻结结构（docs/architecture.md §9.5、§11.2，references/stage-conventions.md §1、§4）。",
+  "title": "ShotPlanV2",
+  "description": "shot-planning v2：scenes → clips → shots。",
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema_version",
     "run_id",
     "project_id",
     "target_model",
+    "input_hashes",
     "scenes",
     "knowledge_refs",
     "generated_at"
   ],
   "properties": {
-    "run_id": {
-      "type": "string",
-      "pattern": "^run-\\d{8}-\\d{6}$"
-    },
-    "project_id": {
-      "type": "string"
-    },
-    "target_model": {
-      "type": "string",
-      "enum": ["seedance-2.0", "seedance-2.5"]
-    },
-    "scenes": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/scene"
-      }
-    },
-    "knowledge_refs": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/knowledge_ref"
-      }
-    },
-    "generated_at": {
-      "type": "string",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
-    }
-  },
-  "$defs": {
-    "string_list": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "continuity": {
+    "schema_version": { "const": 2 },
+    "run_id": { "type": "string", "pattern": "^run-\\d{8}-\\d{6}$" },
+    "project_id": { "type": "string", "minLength": 1 },
+    "target_model": { "type": "string", "enum": ["seedance-2.0", "seedance-2.5"] },
+    "input_hashes": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enter_state", "exit_state"],
+      "required": ["script_analysis"],
+      "properties": { "script_analysis": { "$ref": "#/$defs/hash" } }
+    },
+    "scenes": { "type": "array", "items": { "$ref": "#/$defs/scene" } },
+    "knowledge_refs": { "type": "array", "items": { "$ref": "#/$defs/knowledge_ref" } },
+    "generated_at": { "$ref": "#/$defs/timestamp" }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "string_list": { "type": "array", "items": { "type": "string" } },
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
       "properties": {
-        "enter_state": {
-          "type": "string"
-        },
-        "exit_state": {
-          "type": "string"
-        }
+        "kind": { "type": "string", "enum": ["scene", "unit", "knowledge"] },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "audio_cue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cue_id", "text", "start_sec", "end_sec", "source_refs"],
+      "properties": {
+        "cue_id": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 },
+        "start_sec": { "type": "number", "minimum": 0 },
+        "end_sec": { "type": "number", "exclusiveMinimum": 0 },
+        "source_refs": { "type": "array", "items": { "$ref": "#/$defs/source_ref" } }
+      }
+    },
+    "dialogue_segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dialogue_segment_id",
+        "dialogue_unit_id",
+        "speaker_id",
+        "start_offset",
+        "end_offset",
+        "start_sec",
+        "end_sec"
+      ],
+      "properties": {
+        "dialogue_segment_id": { "type": "string", "minLength": 1 },
+        "dialogue_unit_id": { "type": "string", "minLength": 1 },
+        "speaker_id": { "type": "string", "minLength": 1 },
+        "start_offset": { "type": "integer", "minimum": 0 },
+        "end_offset": { "type": "integer", "minimum": 0 },
+        "start_sec": { "type": "number", "minimum": 0 },
+        "end_sec": { "type": "number", "exclusiveMinimum": 0 }
       }
     },
     "shot": {
@@ -67,153 +85,129 @@
       "required": [
         "shot_id",
         "order",
-        "duration_sec",
+        "start_sec",
+        "end_sec",
         "shot_size",
         "camera_angle",
         "camera_movement",
         "transition",
-        "continuity",
-        "source_shot_group_ids"
+        "purpose",
+        "source_action_unit_ids",
+        "source_emotion_unit_ids",
+        "continuity"
       ],
       "properties": {
-        "shot_id": {
-          "type": "string"
-        },
-        "order": {
-          "type": "integer"
-        },
-        "duration_sec": {
-          "type": "number",
-          "description": "规划时长，整数秒；取值由 validate_stage_artifact 按目标模型规则的范围校验。"
-        },
+        "shot_id": { "type": "string", "minLength": 1 },
+        "order": { "type": "integer", "minimum": 1 },
+        "start_sec": { "type": "number", "minimum": 0 },
+        "end_sec": { "type": "number", "exclusiveMinimum": 0 },
         "shot_size": {
           "type": "string",
-          "enum": [
-            "大远景",
-            "远景",
-            "全景",
-            "中全景",
-            "中景",
-            "中近景",
-            "近景",
-            "特写",
-            "插入镜头"
-          ]
+          "enum": ["大远景", "远景", "全景", "中全景", "中景", "中近景", "近景", "特写", "插入镜头"]
         },
         "camera_angle": {
           "type": "string",
-          "enum": [
-            "平视",
-            "仰视",
-            "俯视",
-            "鸟瞰",
-            "虫视",
-            "荷兰角",
-            "过肩",
-            "主观视角",
-            "反打",
-            "侧面",
-            "四分之三侧面",
-            "背身",
-            "双人镜头"
-          ]
+          "enum": ["平视", "仰视", "俯视", "鸟瞰", "虫视", "荷兰角", "过肩", "主观视角", "反打", "侧面", "四分之三侧面", "背身", "双人镜头"]
         },
         "camera_movement": {
           "type": "string",
-          "enum": [
-            "固定",
-            "横摇",
-            "竖摇",
-            "推近",
-            "拉远",
-            "平移",
-            "升降",
-            "摇臂",
-            "变焦",
-            "跟拍",
-            "环绕",
-            "手持",
-            "稳定器",
-            "甩镜",
-            "滑动变焦",
-            "跟焦"
-          ]
+          "enum": ["固定", "横摇", "竖摇", "推近", "拉远", "平移", "升降", "摇臂", "变焦", "跟拍", "环绕", "手持", "稳定器", "甩镜", "滑动变焦", "跟焦"]
         },
-        "transition": {
-          "type": "string",
-          "enum": ["切", "叠化", "淡入淡出", "无"]
-        },
+        "transition": { "type": "string", "enum": ["切", "叠化", "淡入淡出", "无"] },
+        "purpose": { "type": "string", "minLength": 1 },
+        "source_action_unit_ids": { "$ref": "#/$defs/string_list" },
+        "source_emotion_unit_ids": { "$ref": "#/$defs/string_list" },
+        "continuity": { "$ref": "#/$defs/clip_continuity" }
+      }
+    },
+    "clip_continuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enter_state", "exit_state"],
+      "properties": {
+        "enter_state": { "type": "string" },
+        "exit_state": { "type": "string" }
+      }
+    },
+    "clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clip_id",
+        "order",
+        "scene_id",
+        "process_id",
+        "goal",
+        "duration_sec",
+        "entity_ids",
+        "reference_asset_ids",
+        "continuity",
+        "split_reason",
+        "shots",
+        "dialogue",
+        "audio"
+      ],
+      "properties": {
+        "clip_id": { "type": "string", "minLength": 1 },
+        "order": { "type": "integer", "minimum": 1 },
+        "scene_id": { "type": "string", "minLength": 1 },
+        "process_id": { "type": "string", "minLength": 1 },
+        "goal": { "type": "string", "minLength": 1 },
+        "duration_sec": { "type": "integer", "minimum": 1 },
+        "entity_ids": { "$ref": "#/$defs/string_list" },
+        "reference_asset_ids": { "$ref": "#/$defs/string_list" },
         "continuity": {
-          "$ref": "#/$defs/continuity"
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["previous_clip_id", "enter_state", "exit_state"],
+          "properties": {
+            "previous_clip_id": { "type": ["string", "null"] },
+            "enter_state": { "type": "string" },
+            "exit_state": { "type": "string" }
+          }
         },
-        "source_shot_group_ids": {
-          "$ref": "#/$defs/string_list"
+        "split_reason": {
+          "type": "string",
+          "enum": ["none", "duration_limit", "reference_limit", "explicit_user_request"]
         },
-        "notes": {
-          "type": "string"
+        "shots": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/shot" } },
+        "dialogue": { "type": "array", "items": { "$ref": "#/$defs/dialogue_segment" } },
+        "audio": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ambience", "sfx", "music"],
+          "properties": {
+            "ambience": { "type": "array", "items": { "$ref": "#/$defs/audio_cue" } },
+            "sfx": { "type": "array", "items": { "$ref": "#/$defs/audio_cue" } },
+            "music": { "type": "array", "items": { "$ref": "#/$defs/audio_cue" } }
+          }
         }
       }
     },
     "scene": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["scene_id", "shots"],
+      "required": ["scene_id", "clips"],
       "properties": {
-        "scene_id": {
-          "type": "string"
-        },
-        "shots": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/shot"
-          }
-        }
+        "scene_id": { "type": "string", "minLength": 1 },
+        "clips": { "type": "array", "items": { "$ref": "#/$defs/clip" } }
       }
     },
     "knowledge_ref": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "card_id",
-        "scene_id",
-        "shot_id",
-        "query",
-        "usage",
-        "source_doc_token",
-        "source_path",
-        "source_revision",
-        "last_synced_at"
-      ],
+      "required": ["card_id", "scene_id", "clip_id", "shot_id", "query", "usage", "source_doc_token", "source_path", "source_revision", "last_synced_at"],
       "properties": {
-        "card_id": {
-          "type": "string"
-        },
-        "scene_id": {
-          "type": "string"
-        },
-        "shot_id": {
-          "type": ["string", "null"]
-        },
-        "query": {
-          "type": "string"
-        },
-        "usage": {
-          "type": "string",
-          "enum": ["used", "dropped_by_budget"]
-        },
-        "source_doc_token": {
-          "type": "string"
-        },
-        "source_path": {
-          "type": "string"
-        },
-        "source_revision": {
-          "type": "integer"
-        },
-        "last_synced_at": {
-          "type": "string",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
-        }
+        "card_id": { "type": "string", "minLength": 1 },
+        "scene_id": { "type": "string", "minLength": 1 },
+        "clip_id": { "type": ["string", "null"] },
+        "shot_id": { "type": ["string", "null"] },
+        "query": { "type": "string" },
+        "usage": { "type": "string", "enum": ["used", "dropped_by_budget"] },
+        "source_doc_token": { "type": "string" },
+        "source_path": { "type": "string" },
+        "source_revision": { "type": "integer" },
+        "last_synced_at": { "$ref": "#/$defs/timestamp" }
       }
     }
   }

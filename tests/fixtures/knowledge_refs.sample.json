@@ -1,44 +1,8 @@
 {
-  "run_id": "run-20261020-120000",
+  "run_id": "run-20261026-120000",
   "stages": {
-    "script_breakdown": [
-      {
-        "card_id": "src:doc-token:character_bible:001",
-        "scene_id": "ep01-sc01",
-        "shot_id": null,
-        "query": "角色A 外观 服装",
-        "usage": "used",
-        "source_doc_token": "doc-token",
-        "source_path": "项目知识/demo/角色圣经/角色A",
-        "source_revision": 12,
-        "last_synced_at": "2026-10-20T12:00:00+08:00"
-      }
-    ],
-    "shot_planning": [
-      {
-        "card_id": "src:doc-token:camera_lexicon:001",
-        "scene_id": "ep01-sc01",
-        "shot_id": "ep01-sc01-sh01",
-        "query": "旧公寓 夜 角色A 镜头语言",
-        "usage": "used",
-        "source_doc_token": "doc-token",
-        "source_path": "通用知识/镜头语言/景别词典",
-        "source_revision": 12,
-        "last_synced_at": "2026-10-20T12:00:00+08:00"
-      }
-    ],
-    "shot_prompting": [
-      {
-        "card_id": "src:doc-token:camera_lexicon:001",
-        "scene_id": "ep01-sc01",
-        "shot_id": "ep01-sc01-sh01",
-        "query": "雨夜巷道 低角度 手持运镜",
-        "usage": "used",
-        "source_doc_token": "doc-token",
-        "source_path": "通用知识/镜头语言/景别词典",
-        "source_revision": 12,
-        "last_synced_at": "2026-10-20T12:00:00+08:00"
-      }
-    ]
+    "script_breakdown": [],
+    "shot_planning": [],
+    "shot_prompting": []
   }
 }

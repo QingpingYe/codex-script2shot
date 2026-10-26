@@ -132,6 +132,40 @@ describe("shot-prompting skill content contract", () => {
   });
 });
 
+
+describe("shortdrama v2 skill content contract", () => {
+  const read = (name: string) => readFileSync(path.join(skillsRoot, name, "SKILL.md"), "utf8");
+
+  test("entry documents references, display preference and versioned hashes", () => {
+    const markdown = read("script2shot");
+    for (const token of ["input_references", "display_timeline", "run_context_hash", "content_hash", "ARTIFACT_VERSION_UNSUPPORTED", "【生成目标】", "【保持一致】"]) {
+      expect(markdown).toContain(token);
+    }
+  });
+
+  test("breakdown documents entities, placeholders and processes", () => {
+    const markdown = read("script-breakdown");
+    for (const token of ["entities[]", "reference_assets[]", "processes[]", "placeholder", "input_hashes.run_context"]) {
+      expect(markdown).toContain(token);
+    }
+  });
+
+  test("planning documents clips, internal seconds and continuity", () => {
+    const markdown = read("shot-planning");
+    for (const token of ["clip", "shots[]", "start_sec", "end_sec", "split_reason", "AudioCue", "source_action_unit_ids"]) {
+      expect(markdown).toContain(token);
+    }
+  });
+
+  test("prompting removes one-shot-per-prompt rules and documents five modules", () => {
+    const markdown = read("shot-prompting");
+    for (const token of ["【生成目标】", "【参考素材职责】", "【主体与关系】", "【事件脚本】", "【保持一致】", "display_timeline", "dialogue_segment_id"]) {
+      expect(markdown).toContain(token);
+    }
+    expect(markdown).not.toContain("一个镜头一段");
+    expect(markdown).not.toContain("禁止自建秒数");
+  });
+});
 function launcherCommand(scriptPath: string): { command: string; args: string[] } {
   if (isWindows) {
     return { command: "cmd.exe", args: ["/d", "/c", scriptPath] };

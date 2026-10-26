@@ -29,6 +29,9 @@ import {
   validate_stage_artifact,
   type StageArtifactValidationError,
 } from "./validate_stage_artifact.js";
+import { check_artifact_version } from "../artifact_version.js";
+import { validate_run_artifact_links, type ArtifactSemanticError } from "../artifact_semantics.js";
+import { hash_artifact_document, hash_run_context } from "../artifact_hash.js";
 import {
   validate_prompt,
   type PromptValidationError,
@@ -42,6 +45,7 @@ export interface ReadRunInput {
 }
 
 export interface RunArtifactError {
+  clip_id?: string;
   code: string;
   message: string;
   path?: string;
@@ -82,6 +86,7 @@ export interface ReadRunSuccess {
   run: RunDocument;
   artifacts: RunArtifacts;
   warnings: RunWarning[];
+  run_context_hash: string;
 }
 
 const RUN_IDENTITY_FIELDS: readonly RunIdentityField[] = [
@@ -114,17 +119,25 @@ export function read_run(input: ReadRunInput): ReadRunSuccess | RunToolFailure {
       return loaded;
     }
 
+    const version_error = check_all_artifact_versions(loaded.path);
+    if (version_error !== undefined) {
+      return version_error;
+    }
+
     const collected = collect_artifacts(loaded.path);
     const identity = compare_identities(loaded.value, collected.identities);
-    const reconciled = reconcile_stages(
+    const link = identity.conflicts.length === 0 ? collect_link_errors(loaded.path, loaded.value) : { errors: [], stale_stages: [] };
+    const has_conflicts = identity.conflicts.length > 0;
+    const reconciled_base = reconcile_stages(
       loaded.value,
       collected.artifacts,
       identity.conflicted_stages,
     );
-    const has_conflicts = identity.conflicts.length > 0;
-    if (reconciled.changed_stages.length === 0 && !has_conflicts) {
+    const reconciled = apply_stale_stages(reconciled_base, link.stale_stages);
+    if (reconciled.changed_stages.length === 0 && !has_conflicts && link.errors.length === 0) {
       return {
         run: loaded.value,
+        run_context_hash: hash_run_context(loaded.value),
         artifacts: collected.artifacts,
         warnings: [],
       };
@@ -152,8 +165,10 @@ export function read_run(input: ReadRunInput): ReadRunSuccess | RunToolFailure {
 
     return {
       run: next_run,
+      run_context_hash: hash_run_context(next_run),
       artifacts: collected.artifacts,
       warnings: [
+        ...(link.errors.length === 0 ? [] : [{ code: "RUN_ARTIFACT_STALE", message: "上游内容指纹已变化，受影响下游标记为待重跑。", refs: [...link.stale_stages], details: { errors: link.errors } }]),
         {
           code: "RUN_STATE_RECONCILED",
           message: reconciliation_message(
@@ -175,6 +190,87 @@ export function read_run(input: ReadRunInput): ReadRunSuccess | RunToolFailure {
   }
 }
 
+function check_all_artifact_versions(run_json_path: string): RunToolFailure | undefined {
+  const run_dir = path.dirname(run_json_path);
+  for (const stage of RUN_STAGE_VALUES) {
+    const artifact_path = path.join(run_dir, RUN_STAGE_ARTIFACTS[stage]);
+    if (!existsSync(artifact_path)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(artifact_path, "utf8")) as unknown;
+    } catch (error) {
+      return run_failure("RUN_INVALID_JSON", `阶段产物 JSON 非法：${artifact_path}`, { path: artifact_path, reason: describe_error(error) });
+    }
+    const version = check_artifact_version(parsed);
+    if (!version.ok) {
+      return run_failure("ARTIFACT_VERSION_UNSUPPORTED", `阶段产物 schema_version 不受支持：${artifact_path}`, { path: artifact_path, found_version: version.found_version });
+    }
+  }
+  return undefined;
+}
+
+function collect_link_errors(run_json_path: string, run: RunDocument): { errors: ArtifactSemanticError[]; stale_stages: RunStage[] } {
+  const run_dir = path.dirname(run_json_path);
+  const paths = {
+    script_breakdown: path.join(run_dir, RUN_STAGE_ARTIFACTS.script_breakdown),
+    shot_planning: path.join(run_dir, RUN_STAGE_ARTIFACTS.shot_planning),
+    shot_prompting: path.join(run_dir, RUN_STAGE_ARTIFACTS.shot_prompting),
+  };
+  const documents: Partial<Record<RunStage, unknown>> = {};
+  const errors: ArtifactSemanticError[] = [];
+  try {
+    for (const stage of RUN_STAGE_VALUES) {
+      if (existsSync(paths[stage])) documents[stage] = JSON.parse(readFileSync(paths[stage], "utf8")) as unknown;
+    }
+  } catch {
+    return { errors: [], stale_stages: [] };
+  }
+
+  const analysis = documents.script_breakdown;
+  const plan = documents.shot_planning;
+  const prompt = documents.shot_prompting;
+  if (is_record(analysis)) {
+    const hashes = is_record(analysis.input_hashes) ? analysis.input_hashes : undefined;
+    if (hashes?.run_context !== hash_run_context(run)) {
+      errors.push({ path: "script_analysis.input_hashes.run_context", code: "INPUT_HASH_MISMATCH", message: "解析产物的 run_context 指纹已过期。" });
+    }
+  }
+  if (is_record(analysis) && is_record(plan)) {
+    const hashes = is_record(plan.input_hashes) ? plan.input_hashes : undefined;
+    if (hashes?.script_analysis !== hash_artifact_document(analysis)) {
+      errors.push({ path: "shot_plan.input_hashes.script_analysis", code: "INPUT_HASH_MISMATCH", message: "规划产物保存的解析指纹已过期。" });
+    }
+  }
+  if (is_record(analysis) && is_record(plan) && is_record(prompt)) {
+    errors.push(...validate_run_artifact_links({ run, script_analysis: analysis, shot_plan: plan, prompt_ir: prompt }));
+  }
+
+  const stale = new Set<RunStage>();
+  for (const error of errors) {
+    if (error.path.startsWith("script_analysis") || error.path.includes("run_context")) {
+      stale.add("script_breakdown"); stale.add("shot_planning"); stale.add("shot_prompting");
+    }
+    if (error.path.startsWith("shot_plan")) {
+      stale.add("shot_planning"); stale.add("shot_prompting");
+    }
+    if (error.path.startsWith("prompt_ir")) stale.add("shot_prompting");
+  }
+  return { errors, stale_stages: RUN_STAGE_VALUES.filter((stage) => stale.has(stage)) };
+}
+
+function apply_stale_stages(reconciled: ReconciledStages, stale_stages: readonly RunStage[]): ReconciledStages {
+  if (stale_stages.length === 0) return reconciled;
+  const now = new Date().toISOString();
+  const changed = new Set(reconciled.changed_stages);
+  const stages = { ...reconciled.stages };
+  for (const stage of stale_stages) {
+    if (stages[stage].status === "failed") continue;
+    stages[stage] = { status: "pending", artifact: RUN_STAGE_ARTIFACTS[stage], updated_at: now };
+    changed.add(stage);
+  }
+  return { stages, changed_stages: RUN_STAGE_VALUES.filter((stage) => changed.has(stage)) };
+}
+
 function collect_artifacts(run_json_path: string): CollectedArtifacts {
   const run_dir = path.dirname(run_json_path);
   const artifacts = {} as RunArtifacts;
@@ -184,7 +280,7 @@ function collect_artifacts(run_json_path: string): CollectedArtifacts {
     const artifact = RUN_STAGE_ARTIFACTS[stage];
     const artifact_path = path.join(run_dir, artifact);
     const exists = existsSync(artifact_path);
-    const validation = validate_artifact(stage, artifact_path);
+    const validation = validate_artifact(stage, artifact_path, run_dir);
     artifacts[stage] = {
       artifact,
       path: artifact_path,
@@ -232,16 +328,26 @@ type ArtifactValidation = {
   errors: RunArtifactError[];
 };
 
-function validate_artifact(stage: RunStage, artifact_path: string): ArtifactValidation {
+function validate_artifact(stage: RunStage, artifact_path: string, run_dir: string): ArtifactValidation {
+  const analysis_path = path.join(run_dir, RUN_STAGE_ARTIFACTS.script_breakdown);
+  const plan_path = path.join(run_dir, RUN_STAGE_ARTIFACTS.shot_planning);
   if (stage === "shot_prompting") {
-    const result = validate_prompt({ prompt_ir_path: artifact_path });
+    const result = validate_prompt({
+      prompt_ir_path: artifact_path,
+      ...(existsSync(plan_path) ? { shot_plan_path: plan_path } : {}),
+      ...(existsSync(analysis_path) ? { script_analysis_path: analysis_path } : {}),
+    });
     return {
       ok: result.ok,
       errors: result.errors.map(to_prompt_error),
     };
   }
 
-  const result = validate_stage_artifact({ stage, path: artifact_path });
+  const result = validate_stage_artifact({
+    stage,
+    path: artifact_path,
+    ...(stage === "shot_planning" && existsSync(analysis_path) ? { script_analysis_path: analysis_path } : {}),
+  });
   return {
     ok: result.ok,
     errors: result.errors.map(to_stage_artifact_error),
@@ -349,6 +455,7 @@ function reconcile_stages(
       artifact,
       current,
       now,
+      dependencies_ready(artifacts, stage),
       conflicted.has(stage),
     );
     stages[stage] = desired;
@@ -360,14 +467,26 @@ function reconcile_stages(
   return { stages, changed_stages };
 }
 
+function dependencies_ready(artifacts: RunArtifacts, stage: RunStage): boolean {
+  if (stage === "script_breakdown") return true;
+  if (stage === "shot_planning") return artifacts.script_breakdown.valid;
+  return artifacts.script_breakdown.valid && artifacts.shot_planning.valid;
+}
+
 function desired_stage_state(
   stage: RunStage,
   artifact: RunArtifactStatus,
   current: RunStageState,
   now: string,
+  dependencies_ready: boolean,
   identity_conflict: boolean,
 ): RunStageState {
   const canonical_artifact = RUN_STAGE_ARTIFACTS[stage];
+
+  if (!dependencies_ready) {
+    if (current.status === "pending" && current.artifact === null) return current;
+    return { status: "pending", artifact: canonical_artifact, updated_at: now };
+  }
 
   if (identity_conflict) {
     return failed_stage_state(current, canonical_artifact, now);
@@ -452,4 +571,16 @@ function same_stage_state(left: RunStageState, right: RunStageState): boolean {
     left.artifact === right.artifact &&
     left.updated_at === right.updated_at
   );
+}
+
+
+
+
+function describe_error(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+
+function is_record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

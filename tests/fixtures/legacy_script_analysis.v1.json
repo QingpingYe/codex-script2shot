@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "run_id": "run-20261020-120000",
+  "input_mode": "single_episode",
+  "project_id": "demo",
+  "target_model": "seedance-2.5",
+  "episodes": [],
+  "continuity": { "characters": [], "scenes": [], "style": [] },
+  "missing_info": [],
+  "knowledge_refs": [],
+  "generated_at": "2026-10-20T12:00:00+08:00"
+}

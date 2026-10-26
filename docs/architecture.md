@@ -75,54 +75,19 @@ AI 库中维护一个 `SyncState` 表，记录原始库中每个原始文档的�
 ## 3. 总体架构
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│ 飞书知识库（原始资料）                                       │
-│                                                              │
-│ 通用知识                                                     │
-│   拆镜方法、分镜知识、提示词技巧、Seedance 使用经验          │
-│                                                              │
-│ 项目知识                                                     │
-│   角色圣经、场景说明、视觉风格、项目术语                     │
-│                                                              │
-│ 用户直接维护，插件只读取                                     │
-└──────────────────────────────────────────────────────────────┘
-                         │
-                         │ 节点元数据扫描 + 变更文档读取
-                         ▼
-┌──────────────────────────────────────────────────────────────┐
-│ Codex 本地插件                                               │
-│                                                              │
-│ knowledge-sync Skill                                         │
-│   读取原始库 -> AI 归纳 -> 生成结构化知识卡 -> 写入 AI 库    │
-│                                                              │
-│ script2shot Skill（入口编排）                                │
-│   刷新本地索引 -> 顺序调用三个阶段 Skill -> 聚合输出         │
-│                                                              │
-│ script-breakdown：剧本 -> script_analysis.json               │
-│ shot-planning：解析 + 项目知识 -> shot_plan.json             │
-│ shot-prompting：镜头计划 + 知识 -> PromptIR -> 提示词        │
-│                                                              │
-│ 本地 MCP Server                                              │
-│   lark-cli 适配器                                            │
-│   本地缓存和本地关键词索引                                   │
-│   关键词检索和规则排序                                       │
-│   阶段产物校验、PromptIR 校验和 Seedance 渲染                │
-│   运行目录与阶段状态管理                                     │
-└──────────────────────────────────────────────────────────────┘
-                         │
-                         │ 写入知识卡并更新 SyncState
-                         ▼
-┌──────────────────────────────────────────────────────────────┐
-│ 飞书知识库（AI）                                             │
-│                                                              │
-│ 数据表 KnowledgeCards                                        │
-│   只保存最新结构化知识卡                                     │
-│                                                              │
-│ 数据表 SyncState                                             │
-│   保存原始库每个文档的同步状态                               │
-└──────────────────────────────────────────────────────────────┘
+剧本 + 可选参考素材
+  → script-breakdown
+      script_analysis.json（实体、参考图占位、原文单元、完整过程）
+  → shot-planning
+      shot_plan.json（scenes[] → clips[] → shots[]、对白轨、AudioCue）
+  → shot-prompting
+      prompts.ir.json（clips[]）→ prompts.<model>.md（五模块）
+  → knowledge_refs.json + warnings.md
 ```
 
+最终交付单位是一个待生成视频的一段提示词。一个 clip 可以包含多个电影镜头，以完成
+一个独立、连续的叙事过程为优先；只有超过模型时长或参考素材上限时，才在自然节点拆分。
+四个基础产物统一使用 `schema_version: 2`，并用 SHA-256 内容指纹检查上游失效。
 ## 4. 飞书知识库（原始资料）
 
 ### 4.1 用途
@@ -503,114 +468,17 @@ $knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
 
 ### 7.1 插件组成
 
-```text
-codex-script2shot/
-  plugin.json
-  mcp.json
-  skills/
-    setup/
-      SKILL.md
-    knowledge-sync/
-      SKILL.md
-    script2shot/
-      SKILL.md
-    script-breakdown/
-      SKILL.md
-    shot-planning/
-      SKILL.md
-    shot-prompting/
-      SKILL.md
-  references/
-    stage-conventions.md
-  scripts/
-    launch_script2shot_mcp.cmd
-    launch_script2shot_mcp
-    setup_bootstrap.cmd
-    setup_bootstrap
-    setup_bootstrap.mjs
-  server/
-    src/
-    tests/
-    dist/
-  schemas/
-    knowledge_card.schema.json
-    sync_state.schema.json
-    run.schema.json
-    script_analysis.schema.json
-    shot_plan.schema.json
-    prompt_ir.schema.json
-  rules/
-    models/
-      seedance-2.0.json
-      seedance-2.5.json
-  tests/
-    fixtures/
-  assets/
-```
-
-根目录 `plugin.json` 是唯一主清单。`.codex-plugin/plugin.json` 不进入第一版
-目录，避免两份元数据同时维护。
-
-MCP Server 技术栈（2026-10-20 确认）：
-
-- 语言与运行时：TypeScript，Node.js >= 24。Codex 桌面端自带 Node 24.19.0
-  （本机实测），开发机使用系统 Node。
-- 构建：esbuild 打包为单文件 `server/dist/server.mjs`，命令
-  `npm --prefix server run build`。
-- 运行：`scripts/launch_script2shot_mcp.cmd`（Windows）与
-  `scripts/launch_script2shot_mcp`（POSIX）定位 Node 运行时后启动
-  `server/dist/server.mjs`。解析顺序与官方插件启动脚本一致
-  （codex-app-tools 0.1.6 启动脚本，2026-10-20 核对本机插件缓存）：
-  `CODEX_MCP_NODE_PATH` -> Codex 资源目录中的 Node -> Codex 缓存 runtime
-  -> 系统 `node`；全部缺失时提示更新 Codex 或安装 Node.js >= 24。
-- 依赖：`@modelcontextprotocol/sdk`、`ajv`、`smol-toml` 打包进单文件；
-  关键词索引使用 Node 内置 `node:sqlite`，不引入原生编译模块；
-  开发依赖为 `typescript`、`esbuild`、`vitest`、`@types/node`。
-- 测试：`npm --prefix server test -- <过滤词>`（`test` 脚本为 `vitest run`）。
-- 目录补充：`scripts/`（启动脚本）、`server/tests/`（含 fixtures）、
-  `tests/fixtures/`（跨模块 fixture）。
-
-**分发与自举（2026-10-23）。** 插件是纯源码分发：`server/dist/` 不入库
-（`.gitignore` 保留 `server/dist/` 与 `server/node_modules/`），市场安装只得到
-git checkout。首次初始化因此由插件自带的 `scripts/setup_bootstrap.mjs` 承担：
-纯 ESM、零依赖，可在 `server/node_modules` 不存在时运行；配套
-`scripts/setup_bootstrap`（POSIX）与 `scripts/setup_bootstrap.cmd`（Windows）
-两个薄包装。包装脚本的 Node 运行时解析顺序与 `launch_script2shot_mcp*` 完全一致
-（`CODEX_MCP_NODE_PATH` -> Codex 资源目录中的 Node -> Codex 缓存 runtime ->
-系统 `node`），解析不到时提示更新 Codex。
-
-子命令（全部输出 JSON 到 stdout；进度与人类可读信息走 stderr；敏感值一律掩码）：
-
-| 子命令 | 作用 | 关键输出 |
-| --- | --- | --- |
-| `doctor` | 只读探测：平台、Node 版本与来源、插件目录可写性、网络可达性、`~/.codex-script2shot` 可写性、lark-cli 路径/版本、配置与 `dist` 是否存在、索引状态 | `checks[]` + `next_actions[]` + `capabilities`（`can_write_home` / `can_write_plugin_dir` / `can_reach_network` / `can_build`） |
-| `ensure-runtime` | 准备构建用 Node：系统 `node` + `npm` 满足 `>= 24` 则复用，否则补装私有运行时 | `node_path` / `npm_path` / `version` / `source`（`system` / `private`）/ `archive_url` / `checksum_source` |
-| `install-cli` | 安装或修复 lark-cli：复用（`>= 1.0.98`）→ 私有 prefix 安装固定 `1.0.98` → 包内 `scripts/install.js` → 官方归档 + 校验后解压；`--allow-global` 才允许系统级安装 | `cli_path` / `version` / `source` |
-| `build-server` | 在插件 `server/` 下 `npm ci`（缓存指向系统临时目录）+ `npm run build`，失败按类别返回，并以 stdio 握手自检 | `dist_path` / `tools_count` |
-| `ensure-app` | 应用守卫：解析 `config show` 的 stdout JSON，有 `appId` 即复用；否则引导一次浏览器内应用创建 | `status`（`reused` / `created` / `pending_human`）/ `app_id` |
-| `auth-login` | 设备码登录编排：`auth login --no-wait --json` 发起、`--device-code` 续跑，以 `identities.user.status == "ready"` 复核身份 | `status`（`pending_human` / `ready`）/ `verification_url` / `user_code` |
-| `profile` | 只读 `profile list`，返回唯一 `active: true` 的 `name` | `profile` |
-| `call-tool <name>` | 以子进程启动已构建的 MCP Server，走 stdio JSON-RPC 调用指定工具；入参默认从 stdin 读取 | 工具的原始 JSON 结果（脚本不把入参内容写进 stdout / stderr / 日志） |
-
-退出码固定为 `0` 成功、`1` 失败（AI 读 `error.code` 处置）、`2` 需要人类动作或
-提权（`APP_REGISTRATION_PENDING` / `AUTH_LOGIN_PENDING` / `NEEDS_ESCALATION`）。
-
-私有运行时与下载：系统 `node` + `npm` 满足 `>= 24` 时复用；否则从
-`https://nodejs.org/dist/index.json` 解析满足 `>= 24` 的最新 LTS，下载同版本
-目录下的平台归档（`win-x64` 用 `.zip`，`darwin-arm64` / `darwin-x64` 用
-`.tar.gz`，其余平台返回 `NPM_UNAVAILABLE`），用同版本目录的 `SHASUMS256.txt`
-校验 sha256 后才解压到 `~/.codex-script2shot/runtime/node-<version>/`。校验
-不符立即中止（`NODE_CHECKSUM_MISMATCH`），不落地半成品；具体版本号与校验值在
-运行期解析并回显到输出。私有运行时只服务于脚本自身与构建，不加入 MCP 启动器
-的候选顺序，`server/dist/server.mjs` 的路径与启动顺序不变。
-
-构建自检：`build-server` 在 `npm ci` + `npm run build` 之后，以 stdio JSON-RPC
-完成 `initialize`（协议版本 `2025-11-25`）→ `notifications/initialized` →
-`tools/list` 握手；工具列表为空返回 `SERVER_HANDSHAKE_FAILED`，插件目录不可写
-返回 `PLUGIN_DIR_READONLY`，构建器安装脚本被宿主策略拦截返回
-`BUILD_TOOL_BLOCKED`（不静默绕过）。启动器脚本只补一句提示：尚未构建时可由
-`scripts/setup_bootstrap build-server` 自动完成。
-
+- `artifact_version.ts`：v2 版本识别；旧版本返回 `ARTIFACT_VERSION_UNSUPPORTED`。
+- `artifact_hash.ts`：递归排序对象键、保留数组顺序的内容指纹；运行输入单独取
+  `hash_run_context`。
+- `artifact_semantics.ts`：实体、素材、过程、clip、shot、对白分片、AudioCue 和跨产物
+  链接的语义校验。
+- `schemas.ts` / `validate_stage_artifact.ts`：schema 校验、阶段语义校验和
+  `content_hash` 返回。
+- `validate_prompt.ts` / `render_prompt.ts`：PromptIR 校验、五模块渲染和失败前不写输出。
+- `init_run.ts` / `read_run.ts` / `update_run_state.ts`：v2 run 生命周期、输入指纹和
+  下游待重跑判断。
+- `aggregate.ts`：带 `clip_id` 的知识引用聚合与 warning 汇总。
 ### 7.2 本地数据目录
 
 ```text
@@ -761,66 +629,25 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 
 ## 8. MCP Tool
 
-本地 MCP Server 只负责确定性操作，不负责 LLM 归纳。
+运行工具：
 
-| Tool | 作用 |
-| --- | --- |
-| `health` | 检查 lark-cli、登录状态、知识库配置和本地索引；可选 `pending_config` 替代磁盘配置（只读，不受 dry-run 限制） |
-| `read_config` | 只读返回配置是否存在、路径与掩码后的配置快照（`base_b` 只保留前 6 位加 `…`）；供 setup 的「保留既有配置」决策与预览使用，不写任何文件 |
-| `write_config` | dry-run 预览并写入本地配置、初始化本地目录；`preserve_existing`（缺省 `true`）决定是否保留既有非空字段 |
-| `scan_knowledge_a` | 只扫描原始库的节点元数据，不读取文档正文 |
-| `fetch_knowledge_a_doc` | 只读取一个指定文档的正文和 revision；可选展开正文里的飞书文档引用与网页链接，返回 `references[]`（§6.5） |
-| `read_sync_state` | 读取 AI 库的按文档 SyncState |
-| `build_sync_plan` | 纯函数工具：输入 `scan_knowledge_a` 的 `nodes[]` 与 `read_sync_state` 的 `records[]`，输出 `to_add` / `to_update` / `to_move` / `to_delete` / `unchanged` / `warnings` |
-| `init_knowledge_b` | 创建或校验 `KnowledgeCards` 和 `SyncState`，返回固定 table_id；可选 `pending_config`（仅 `dry_run: true`）替代磁盘配置 |
-| `replace_doc_cards` | 两种模式（二选一）：①替换模式接收 Skill 生成的新卡，执行顺序固定为「先记录该 `source_doc_token` 现有卡片的 `record_id` 集合 → 写入新卡（每 200 条一批）→ 只删除第 ① 步记录的旧 `record_id`」，写入失败不执行删除；②`metadata_patch` 模式只批量更新现有卡片的来源元数据（`source_path`/`source_title`/`scope`/`project_id`），不写新卡、不删卡 |
-| `update_doc_sync_state` | 只更新一个来源文档的 SyncState 记录 |
-| `delete_doc_cards` | 删除已移除文档对应的知识卡和状态 |
-| `refresh_local_index` | 只刷新发生变化的文档对应的本地索引 |
-| `search_knowledge` | 执行过滤、关键词检索和 priority 排序 |
-| `load_knowledge_pack` | 加载通用知识、项目知识和 Seedance 规则 |
-| `init_run` | 在显式 `workspace_root` 下创建运行目录和 `run.json`，记录输入模式、项目 ID、目标模型和可选画幅 |
-| `read_run` | 在显式 `workspace_root` 下读取 `run.json` 和阶段状态，用于续跑和聚合输出；同时核对产物身份字段与 `run.json` 及产物之间是否一致，冲突时写 `RUN_STATE_RECONCILED` warning（`details.conflicts[]`）并把冲突产物所属阶段置 `failed`，不重写身份字段 |
-| `update_run_state` | 在显式 `workspace_root` 下更新阶段状态、产物路径和警告 |
-| `validate_stage_artifact` | 按 schema 校验 `script_analysis.json` 和 `shot_plan.json`；模型规则文件缺失、损坏或与请求的模型不一致（安装损坏）时返回文档级 `MODEL_RULES_UNAVAILABLE` |
-| `validate_prompt` | 校验 PromptIR 和 Seedance 硬规则；同类安装损坏同样返回文档级 `MODEL_RULES_UNAVAILABLE` |
-| `render_prompt` | 渲染 Seedance 2.0 或 Seedance 2.5 提示词 |
-| `aggregate_knowledge_refs` | 入参 `run_id`、三个阶段产物路径与 `output_path`；按阶段固定顺序聚合三个阶段引用写出 `knowledge_refs.json`，PromptIR 的逐镜头引用按镜头顺序展平，成功返回 `{ output_path, counts }` |
-| `write_warnings` | 入参 `run_id`、`run.json` 路径、三个阶段产物路径与 `output_path`；汇总 `run.json` 的运行级 warnings 与阶段产物 `missing_info`（按 `code` + `message` 去重）写出中文 `warnings.md`，成功返回 `{ output_path, count }`；没有 `warnings` 入参，工具 warning 必须先用 `update_run_state` 持久化；写入前压平 CR/LF 并转义反斜杠、反引号与行首块级前缀，warning 文本不能改写 `warnings.md` 结构 |
+- `init_run`：创建 v2 run，接收 `input_references`、`display_timeline`，返回
+  `run_context_hash`。
+- `read_run`：先做版本检查，再校验阶段产物、身份、上游指纹；返回
+  `run_context_hash`，内容变化时把下游标为待重跑。
+- `update_run_state`：只更新状态和 warning，不改变运行输入。
 
-`aggregate_knowledge_refs` 与 `write_warnings` 成功时只带 `output_path` 等字段，**不带
-`ok: true`**；只有失败才返回 `{ ok: false, error }`，调用方按 `error` / `output_path`
-是否存在分支，不要用 `ok` 的真值判断。
+校验与渲染：
 
-**`pending_config` 契约（2026-10-23）。** `health` 与 `init_knowledge_b` 接受
-可选入参 `pending_config`，形状与 `write_config` 的 `config` 完全相同，并复用
-同一个 normalizer（同一份默认值、trim、必填与 `project_roots` 校验），不出现
-第二套规则。
+- `validate_stage_artifact`：解析/规划 schema 与语义校验；规划可传
+  `script_analysis_path`；成功返回 `content_hash`。
+- `validate_prompt`：PromptIR schema、模型规则、clip/shot/对白/素材/指纹校验；可传
+  `shot_plan_path` 和 `script_analysis_path`；错误形状为
+  `{ clip_id, shot_id, field, code, message }`。
+- `render_prompt`：一个 clip 渲染一份五模块 Markdown；2.5 强制秒数，2.0 按
+  `display_timeline`；失败不创建或覆盖输出。
 
-- 替代语义：提供且校验通过时，本次调用**完全不读磁盘配置**；`base_b`、
-  `cli_path`（含 `resolve_lark_cli()` 的路径解析）、`project_roots`、`retrieval`
-  一律取自 `pending_config`。磁盘配置缺失、损坏或无效都不影响本次调用。
-- 模式限制：`init_knowledge_b` 只在 `dry_run: true` 时接受；`dry_run: false`
-  携带 `pending_config` 直接返回 `CONFIG_INVALID`（`details.field` 为
-  `pending_config`），fail-closed，避免"配置没写就先建表"。`health` 是只读
-  工具，不受 dry-run 限制。
-- 必填：`pending_config` 必须显式含 `lark.profile`（profile 已无默认值）；缺失
-  时返回 `CONFIG_INVALID` 与 `details.missing_keys`。
-- 回执：两侧成功结果都带 `config_source`：`init_knowledge_b` 为
-  `"pending" | "disk"`，`health` 为 `"pending" | "disk" | "none"`。
-- schema：两个工具的 `inputSchema.properties` 都声明 `pending_config`
-  （`type: "object"`），并保持 `additionalProperties: false`。
-
-`read_config` 与 `write_config` 一起支撑"重跑不覆盖既有配置"：setup 先
-`read_config` 拿掩码快照用于预览，真正写入时只传显式替换项与本次解析出的
-`profile` / `cli_path`，其余字段由 `preserve_existing` 在服务端保留，`base_b`
-这类只回掩码的字段不经过对话。
-
-写操作默认先 dry-run。批量同步先生成整批影响清单，用户确认后执行整批；
-不逐文档反复确认。
-
-阶段产物校验由 MCP Tool 完成，Skill 不自行实现 schema 校验。
-
+聚合工具继续生成 `knowledge_refs.json` 和 `warnings.md`。
 ## 9. Skills
 
 Skill 分三层：入口编排（`script2shot`）、创作阶段（`script-breakdown`、`shot-planning`、
@@ -907,120 +734,29 @@ $knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
 
 ### 9.3 script2shot
 
-入口编排 Skill，本身不做创作判断。
-
-负责：
-
-- 接收一段剧本、一集剧本或多集剧本。
-- 要求用户提供 `project_id`、单一 `target_model` 和可选 `aspect_ratio`，并识别输入模式。
-- 读取 AI 库的按文档 SyncState。
-- 只刷新发生变化文档对应的本地索引。
-- 创建运行目录和 `run.json`。
-- 按顺序读取并执行 `script-breakdown`、`shot-planning`、`shot-prompting`
-  的 `SKILL.md`。
-- 每个阶段结束后校验产物并更新 `run.json`。
-- 聚合提示词、知识引用和警告。
-
-不负责：
-
-- 不解析剧本、不规划镜头、不生成 PromptIR。
-- 不实现检索、索引、校验和渲染逻辑。
-
-支持从任意阶段续跑。以下内容是用户请求中的参数示例，不是 shell 命令：
-
-```text
-$script2shot 从 shot-planning 继续，run_id 是 <run_id>
-$script2shot 只执行 shot-prompting，run_id 是 <run_id>
-```
+收集 `project_id`、单一目标模型、可选画幅、`input_references` 和
+`display_timeline`；创建 v2 run 后依次执行三个创作 Skill。每阶段校验成功后才更新
+`run.json`，并把工具返回的 `content_hash` 交给下游。续跑时先由 `read_run` 识别版本、
+混合版本和内容指纹；v1 不迁移。入口最后汇总知识引用与 warning。
 
 ### 9.4 script-breakdown
 
-负责把剧本变成结构化解析结果。
-
-输入：剧本文本和 `project_id`。运行上下文可以携带 `target_model`，但本阶段
-检索不使用目标模型过滤。
-
-输出：`script_analysis.json`，其中包含本阶段的 `knowledge_refs`。
-
-- 判定输入模式：片段、单集或多集。
-- 拆成集、场景、节拍、动作单元、情绪单元、对白单元和镜头组建议。
-- 保持原文边界，不新增剧情、角色、事件和结局。
-- 输出缺失信息警告。
-- 开场加载一次通用知识 `剧本解析`（`shot_breakdown`），不按目标模型过滤。
-- 按角色或场景首次出现检索项目知识中的角色、场景、风格和项目术语。
-
-职责边界：解析到镜头组建议为止。具体镜头数量、时长和组接交给 `shot-planning`。
-
-独立使用场景：只要场次表、角色表或时长估算，不要提示词。
+把剧本解析为实体台账、参考素材槽、原文单元和完整过程。仅剧本输入时为每个角色、
+场景、关键道具建立 image 占位；用户提供素材时记录真实来源和采用/排除职责。每个动作、
+情绪、对白单元记录实体引用，每个应表现单元归入且仅归入一个过程。
 
 ### 9.5 shot-planning
 
-负责把结构化解析结果变成镜头计划。
-
-输入：`script_analysis.json` 和当前项目知识。
-
-输出：`shot_plan.json`，其中包含本阶段的 `knowledge_refs`。
-
-- 把镜头组建议落实为镜头清单：景别、机位、运镜、时长、转场和连贯性。
-- 单镜头时长为整数秒（`duration_sec` 非整数即 `OUT_OF_RANGE`）。
-- 检查目标模型的时长和镜头拆分边界。
-- 记录每个镜头的进入状态和离开状态。
-- 依赖通用知识 `镜头语言` 和 `Seedance 模型提示词说明`。
-
-职责边界：只产出镜头计划，不写提示词正文。
-
-独立使用场景：分镜讨论，或人工修改镜头计划后继续生成提示词。
+按「完整过程 → 对白/动作时间 → 内部切镜 → 上限检查 → 自然拆段」规划
+`scenes[].clips[].shots[]`。clip 总时长使用模型整数秒边界；内部 shot 允许小数秒。
+规划对白轨、AudioCue、参考绑定和前后状态；完整过程默认一个 clip，切镜本身不拆段。
 
 ### 9.6 shot-prompting
 
-负责把镜头计划变成 PromptIR 和模型提示词。
-
-输入：`shot_plan.json`、同 run 的 `script_analysis.json`（只读，提供
-`subject`/`action`/`setting`/`time`/`lighting`/`color`/`style` 等画面文本要素，
-必须先通过 `validate_stage_artifact(script_breakdown)`）和知识包。
-
-输出：`prompts.ir.json` 和 `prompts.<model>.md`。`prompts.ir.json`
-包含按镜头记录的知识引用；`knowledge_refs.json` 由入口最后聚合。
-
-- 为每个镜头构造检索查询，执行过滤和关键词检索，按镜头组装知识上下文。
-- 生成 PromptIR。
-- 台词只取 `script_analysis.json` 的 `dialogue_units.text` 原文：不扩写、不改写、
-  不翻译、不补旁白；只有意图没有台词原文时不编造，改为可观察的口型、停顿与反应。
-  多人对话逐句标说话人；无对白镜头的 `dialogue` 留空数组。
-- `dialogue[].language` 只在台词文本为非中文且语种可由文字直接判定时填写；
-  `dialogue[].delivery` 只在原文或检索卡片有依据时填写。两者都用中文短词，
-  没有依据就省略对应片段。
-- 情绪只取材 `script_analysis.json` 的 `emotion_units.tone` /
-  `emotion_units.description` 与同镜头已有的 `action_units` 动作线索；无来源支撑时
-  `emotion` 留空，禁止由抽象情绪反推未发生的身体动作。写作可参考检索到的
-  「情绪具象外化」类卡片。
-- 声音只取 `script_analysis.json` 已有线索（例如原文的雨、脚步、门响）与本阶段检索
-  卡片；`ambience` / `sfx` / `music` 无依据时留空，不得编造原文没有的声音事件。
-  渲染时音效用 `<>` 包裹、音乐用 `()` 包裹（见 `docs/model-rules-notes.md` §2.4）。
-- 调用 `validate_prompt` 校验硬规则，失败时按结构化错误重新生成。
-- 调用 `render_prompt` 渲染目标模型提示词。
-- 只读目标模型规则文件的 `prompt_guidance`，作为 `shot_structure` / `dialogue` /
-  `sound` / `negative` 的写作口径参考；`long_shot_staging_threshold_sec` 是长镜头
-  阶段化判定的参考阈值。该字段**只指导写作，不参与 `validate_prompt` 判定**，
-  硬规则数值仍由 `validate_prompt` 按规则文件判定。此处明确选择**本地文件读取**，
-  不新增 MCP 工具。
-- 长镜头按目标模型 `prompt_guidance.long_shot_staging_threshold_sec` 阶段化，
-  Skill 不写数值；`shot_split.multi_action_rule` 管边界，Skill 管写法。
-- 负面约束按目标模型 `prompt_guidance.negative` 与通用原则执行：不自动添加用户未
-  要求的画质包、稳定包、水印、Logo、字幕或分身类约束，没有依据时留空数组，措辞
-  只用规则文件里已核实的句式。
-- 渲染前完成一次逐镜头语义自检（台词、镜头决策、画面要素、连续性、声音与负面约束
-  的依据）；自检不替代 `validate_prompt`，确定性的必填、枚举、范围、禁止项与模型
-  一致性校验仍由 `validate_prompt` 承担。
-- 依赖提示词技巧、Seedance 2.0 和 2.5 软知识和模型规则文件。
-
-职责边界：不修改镜头计划。需要改镜头时回到 `shot-planning`。除只读目标模型规则
-文件的 `prompt_guidance` 外，不读取模型规则文件，也不在 Skill 或产物里另写硬规则
-数值。
-
-独立使用场景：用户自带镜头计划，只出提示词；此时仍需要同一 run 里通过校验的
-`script_analysis.json`，或由调用方提供等价的画面文本要素。
-
+为每个 clip 写 PromptIR，并渲染固定五模块：【生成目标】【参考素材职责】【主体与关系】
+【事件脚本】【保持一致】。Seedance 2.5 每个视觉镜头、对白片段和 AudioCue 都有秒数；
+2.0 按运行偏好显示。素材标签按本段连续编号，asset ID 跨视频稳定；台词按 UTF-16 offset
+切片但逐字保真。PromptIR 和 Markdown 均由确定性工具校验/渲染，最多两轮定点修复。
 ## 10. 检索设计
 
 每阶段的查询配方、上下文上限和知识引用聚合规则见 `references/stage-conventions.md`。
@@ -1101,208 +837,37 @@ general / project 块重复归类。
 
 ### 11.1 支持的输入
 
-| 输入类型 | 说明 |
-| --- | --- |
-| `script_segment` | 一段剧本或一个片段 |
-| `single_episode` | 一集完整剧本 |
-| `multiple_episodes` | 多集剧本，作为一次任务输入，不自动拆分为多个 run |
+一次 run 支持片段、单集或多集剧本，指定一个 `project_id`、一个目标模型和可选
+`aspect_ratio`。用户可以补充 `input_references[]`（本地路径或素材标识、职责、排除范围）
+和 `display_timeline`。没有实际素材时仍继续，由解析阶段生成参考图占位并写入 warning。
 
-插件不要求用户输入整部剧，也不承担整部剧的世界观管理。跨集一致性主要依赖项目知识中的角色圣经、场景说明和视觉风格。
+### 11.2 生成流程与续跑
 
-多集输入不设置硬性镜头上限，也不做自动按集拆分。入口在识别到多集或长输入时
-写入 warnings，建议用户按集运行以控制单次会话长度。
+1. `read_run` / `init_run` 返回 `run_context_hash`。
+2. 解析阶段写 `script_analysis.json` 和 `input_hashes.run_context`。
+3. 规划阶段读取解析校验返回的 `content_hash`，写
+   `input_hashes.script_analysis`。
+4. 提示词阶段写入解析和规划两个指纹。
+5. `read_run` 在任何状态写回前检查四个 schema 版本、身份和指纹；上游变化未同步时，
+   受影响的规划或提示词阶段标为待重跑，原文件保留。
+6. v1、缺版本、未来版本或混合版本返回 `ARTIFACT_VERSION_UNSUPPORTED`，不自动迁移。
 
-### 11.2 生成流程
+### 11.3 PromptIR v2
 
-端到端默认路径由 `script2shot` 入口编排，三个阶段各有一个稳定产物：
-
-```text
-剧本文本
-  -> script-breakdown -> script_analysis.json
-  -> shot-planning    -> shot_plan.json
-  -> shot-prompting   -> prompts.ir.json -> prompts.<model>.md
-```
-
-1. 入口读取剧本文本，识别输入模式，要求用户提供 `project_id`、单一
-   `target_model` 和可选 `aspect_ratio`。
-2. 入口读取 AI 库的 `SyncState`，只刷新发生变化文档对应的本地索引。
-3. 入口创建运行目录和 `run.json`。
-4. `script-breakdown` 输出 `script_analysis.json`，入口调用 `validate_stage_artifact` 校验。
-5. `shot-planning` 加载项目知识包，输出 `shot_plan.json`，入口校验。
-6. `shot-prompting` 为每个镜头构造检索查询，执行过滤和关键词检索，组装知识上下文。
-7. `shot-prompting` 生成 PromptIR，调用 `validate_prompt` 校验硬规则，失败时按结构化错误重新生成。
-8. `shot-prompting` 调用 `render_prompt` 渲染目标模型提示词。
-9. 入口读取三个阶段产物中的引用，生成 `knowledge_refs.json`，聚合提示词和
-   警告，并更新 `run.json`。
-
-#### 阶段契约与续跑
-
-三个阶段只通过文件产物交接，不依赖会话上下文。
-
-`run.json` 记录一次运行的上下文和阶段状态；`aspect_ratio` 是可选运行级参数，
-取值为 `16:9`、`4:3`、`1:1`、`3:4`、`9:16`、`21:9`，缺失时由调用方在提示词阶段补充：
-
-```json
-{
-  "run_id": "run-20261020-120000",
-  "input_mode": "single_episode",
-  "project_id": "demo",
-  "target_model": "seedance-2.5",
-  "aspect_ratio": "16:9",
-  "stages": {
-    "script_breakdown": {
-      "status": "done",
-      "artifact": "script_analysis.json",
-      "updated_at": "2026-10-20T12:00:00+08:00"
-    },
-    "shot_planning": {
-      "status": "done",
-      "artifact": "shot_plan.json",
-      "updated_at": "2026-10-20T12:05:00+08:00"
-    },
-    "shot_prompting": {
-      "status": "pending",
-      "artifact": null,
-      "updated_at": null
-    }
-  }
-}
-```
-
-规则：
-
-- 每个阶段可以独立运行，但要求上游产物存在且通过 schema 校验。
-- 用户请求中的 `from` 参数从指定阶段开始并复用上游产物；`only` 参数只执行一个阶段。
-- 阶段产物被人工修改后，必须重新校验再运行后续阶段。
-- `script_analysis.schema.json` 和 `shot_plan.schema.json` 是阶段之间的冻结接口，修改视为不兼容变更。
-- 阶段之间的路径、命名和状态约定写在 `references/stage-conventions.md`，三个阶段 Skill 引用同一份。
-
-### 11.3 PromptIR
-
-```json
-{
-  "shot_id": "s01-sh03",
-  "target_model": "seedance-2.5",
-  "duration": 8,
-  "aspect_ratio": "16:9",
-  "shot_size": "medium-shot",
-  "subject": "角色A",
-  "action": "在雨夜穿过旧城区巷道",
-  "emotion": "握伞的手收紧，视线扫过巷道暗处",
-  "dialogue": [
-    {
-      "speaker": "角色A",
-      "text": "你一个外人"
-    }
-  ],
-  "setting": "狭窄巷道，湿润砖墙，霓虹灯反射",
-  "time": "night",
-  "camera_angle": "low-angle",
-  "camera_movement": "handheld",
-  "lighting": "low-key neon lighting",
-  "color": "cool cyan and red accents",
-  "style": "neo-noir cinematic realism",
-  "audio": {
-    "ambience": ["雨声"],
-    "sfx": ["远处雷声"],
-    "music": "低沉弦乐"
-  },
-  "continuity": {
-    "previous_shot": "s01-sh02",
-    "character_state": "wet coat, holding black umbrella",
-    "environment_state": "heavy rain"
-  },
-  "negative_prompt": [],
-  "knowledge_refs": []
-}
-```
-
-镜头字段的口径：
-
-- 结构性枚举（`aspect_ratio`、`shot_size`、`camera_angle`、`camera_movement`）
-  使用英文标识，取值集合冻结在 `schemas/prompt_ir.schema.json`。
-- `emotion` 是必填字符串，允许空字符串；位置口径为 `action` 之后、`dialogue` 之前，
-  schema 的 `properties` / `required` 与 `validate_prompt.ts` 的 `SHOT_FIELD_ORDER`
-  三处一致。只取材上游 `emotion_units.tone` 与 `emotion_units.description`，并可引用
-  同镜头已有 `action_units` 的动作线索（例如视线、停顿、手部动作）；只有这些来源已
-  支持可观察表现时才填写，否则留空。禁止由抽象情绪反推未发生的身体动作。渲染时在
-  「主体与动作」节追加子标签「情绪：…」，空值省略该子标签（沿用渲染层 `field()` 的
-  空值省略语义，动作文本原样输出）。写作可参考「情绪具象外化」类卡片，例如
-  `src:RpJHdwWB5onT8qx5fWqcw6Qnn9c:prompt_technique:007`「情绪具象外化：可直接写入
-  提示词的身体细节」（来源 `https://docs.volcengine.com/docs/ark/seedance-2-0-prompt-guide?lang=zh`，
-  检索日期 2026-10-22）。
-- `dialogue` 是必填数组（可为空），条目为
-  `{ speaker: 非空字符串, text: 非空字符串, language?: 字符串, delivery?: 字符串 }`，
-  `additionalProperties: false`。渲染节标签为「对白」，条目按
-  `{speaker}用{language}{delivery}说：{text}` 拼接（`text` 用 `{}` 包裹，
-  `language` / `delivery` 缺失或为纯空白串时省略对应片段），条目间用「；」连接；
-  空数组渲染为「无对白；人物自然闭口，无旁白」。
-- `dialogue` 是**原文保真豁免区**：台词取自上游 `dialogue_units.text` 原文，
-  `validate_prompt` 的禁止项（`forbidden`）扫描不覆盖 `dialogue`，不得为通过校验
-  改写、删词或屏蔽台词原文。禁止项扫描的范围口径见 `docs/model-rules-notes.md`
-  §2.3.2 / §3。
-- `audio` 是必填对象（`additionalProperties: false`），结构为
-  `{ ambience: string[], sfx: string[], music: string }`，三项均可为空；位置口径为
-  `style` 之后、`continuity` 之前，schema 的 `properties` / `required` 与
-  `validate_prompt.ts` 的 `SHOT_FIELD_ORDER` 三处一致。`ambience` / `sfx` / `music`
-  只从上游已有声音线索（例如原文的雨、脚步、门响）与检索卡片提炼，不得编造原文没有的
-  声音事件；没有依据时 `ambience` / `sfx` 写空数组、`music` 写空字符串。渲染为「声音」
-  节，子项格式为「环境声：…；音效：<…>；音乐：(…)」；空子项省略，三项全空时整行省略，
-  不输出「无声音」类负向暗示。
-- `shot_size` 取自上游 `shot_plan.json` 的 9 值中文景别枚举，按冻结映射译成英文，
-  顺序一一对应：大远景=`extreme-long-shot`、远景=`long-shot`、全景=`full-shot`、
-  中全景=`medium-full-shot`、中景=`medium-shot`、中近景=`medium-close-up`、
-  近景=`close-shot`、特写=`close-up`、插入镜头=`insert-shot`。
-- 自由文本字段（`subject`、`action`、`setting`、`lighting`、`color`、
-  `style` 与 `continuity` 的状态字段）渲染时原样输出，渲染层不补写内容。
-- `time` 由渲染层按 `TIME_LABELS` 本地化为中文（未收录词原样输出），PromptIR 与
-  schema 中仍保留英文术语。
-
-PromptIR 的结构化枚举和字段标识使用英文；最终渲染的 Seedance 提示词正文
-统一使用中文。用户没有额外指定语言时不生成英文提示词。
+顶层为 `clips[]`，每个 clip 对应一份视频提示词，包含生成目标、素材职责、主体关系、
+多镜头事件脚本、对白轨、AudioCue、连续性、风格和 negative_prompt。PromptIR 不另存
+自由文本时间轴；渲染完全从结构化的 clip/shot/dialogue/audio 数据生成。
 
 ### 11.4 Seedance 模型适配
 
-插件内置两个模型规则文件：
-
-- `rules/models/seedance-2.0.json`
-- `rules/models/seedance-2.5.json`
-
-规则文件负责：
-
-- 模型名称和标识。
-- 支持的输入字段。
-- 时长和画幅等硬约束。
-- 必填字段。
-- 禁止项。
-- 提示词渲染模板。
-- `prompt_guidance`：只供 `shot-prompting` 只读参考的模型差异化写作指导，含
-  `long_shot_staging_threshold_sec`（正有限数）与 `shot_structure` / `dialogue` /
-  `sound` / `negative` 四个非空文案键；不参与 `validate_prompt` 判定；
-  `shot-prompting` 以本地文件读取方式只读该字段，不新增 MCP 工具。
-- `source`：规则来源。
-- `checked_at`：规则核对日期。
-
-原始库和 AI 库可以保存 Seedance 的软知识、经验和技巧。硬规则由插件规则文件负责，避免只依赖模型记忆。
+时长、画幅、参考图片上限和时间轴强制只以 `rules/models/*.json` 为运行时事实来源。
+Seedance 2.0 为 4–15 秒、最多 9 张图片，秒数默认关闭；Seedance 2.5 为 4–30 秒、
+最多 30 张图片，秒数强制开启。内部 shot 不受模型时长下限单独限制。
 
 ### 11.5 输出
 
-```text
-.script2shot/outputs/<run_id>/
-  run.json
-  script_analysis.json
-  shot_plan.json
-  prompts.ir.json
-  prompts.<model>.md
-  knowledge_refs.json
-  warnings.md
-```
-
-`run.json` 记录本次运行的输入模式、项目、目标模型、可选画幅和各阶段状态，用于续跑和排查。
-
-`knowledge_refs.json` 由入口根据三个阶段产物中的引用记录生成，只包含
-`used` 和 `dropped_by_budget`。
-
+七个文件名保持不变；新增版本、指纹和 `clip_id` 字段。`knowledge_refs.json` 按阶段 →
+视频 → 镜头聚合；`warnings.md` 包含参考图待提供等非阻断信息。
 ## 12. 多用户模式
 
 所有用户共用同一套飞书知识库。
@@ -1328,106 +893,31 @@ Base 权限，而不是依赖 `project_id` 过滤承担访问控制。
 
 ## 13. 失败处理
 
-| 场景 | 处理方式 |
+| 情形 | 处理 |
 | --- | --- |
-| 找不到 lark-cli | AI 运行 `$setup` 的 `install-cli`（私有 prefix 优先），不把安装命令转交给用户 |
-| 未登录飞书 | AI 运行 `$setup` 的 `auth-login` 发起设备码登录，人类只在浏览器里完成授权；退出码与顶层字段都不作为判据 |
-| 自举脚本：Node 缺失 / 下载失败 / 校验不符（`NODE_UNAVAILABLE` / `NODE_DOWNLOAD_FAILED` / `NODE_CHECKSUM_MISMATCH`） | `ensure-runtime` 先复用系统 `node` + `npm`；补装失败时中止且不落地半成品，校验不符不得解压 |
-| 自举脚本：平台 / 架构不受支持（`NPM_UNAVAILABLE`） | 说明当前平台无法自动补装运行时，停止并等用户处理；不降级为把命令交给用户执行 |
-| 自举脚本：需要提权或网络被阻断（`NEEDS_ESCALATION` / `NETWORK_BLOCKED`） | AI 说明影响并申请提权（或列出需放行的域名），等用户允许后重跑；宿主完全不允许提权时是终态，不得降级为让用户手动执行 |
-| 自举脚本：插件目录只读 / npm 源失败 / 构建器被拦截（`PLUGIN_DIR_READONLY` / `NPM_SOURCE_FAILED` / `NPM_INSTALL_FAILED` / `BUILD_TOOL_BLOCKED`） | 分别按目录权限、源可达性、安装脚本策略处理；`BUILD_TOOL_BLOCKED` 不得用 `--ignore-scripts` 之类静默绕过后再宣称成功 |
-| 自举脚本：lark-cli 下载失败 / 校验不符 / 版本过旧（`CLI_DOWNLOAD_FAILED` / `CLI_CHECKSUM_MISMATCH` / `CLI_VERSION_TOO_OLD`） | 复用门槛是 1.0.98、安装版本固定 1.0.98；下载与解压都必须先通过官方校验文件，失败不返回成功 |
-| 自举脚本：应用未配置 / 注册待人类 / 注册失败（`APP_NOT_CONFIGURED` / `APP_REGISTRATION_PENDING` / `APP_REGISTRATION_FAILED`） | 有 `appId` 即复用（只解析 `config show` 的 stdout，`appSecret` 一律丢弃）；需要新建时由人类在浏览器完成，取得明确同意后才用 `--force-init` |
-| 自举脚本：登录待人类 / 登录失败 / profile 不唯一（`AUTH_LOGIN_PENDING` / `AUTH_LOGIN_FAILED` / `PROFILE_AMBIGUOUS`） | 等用户完成浏览器授权后用 `identities.user.status == "ready" && available == true` 复核；profile 不唯一时停止并说明冲突，不自动切换 profile |
-| 自举脚本：构建失败 / 握手失败 / 工具调用失败 / 用法错误（`SERVER_BUILD_FAILED` / `SERVER_HANDSHAKE_FAILED` / `TOOL_CALL_FAILED` / `USAGE_ERROR`） | 构建产物不可用或 `tools/list` 为空时不得宣称成功；`call-tool` 按工具原始 JSON 错误原样透出，不得丢弃 `ok: false` |
-| AI 库不存在 SyncState | 提示先运行 `knowledge-sync` |
-| AI 库不可达 | 有本地缓存时继续运行并写 warning；无缓存时停止 |
-| SyncState 全表为空但本地有文档 | 删除行为不变；产生删除前写 `SYNC_STATE_EMPTY` warning，提示可能是 SyncState 表为空或 `lark.sync_state_table_id` 指向空表 |
-| 卡片 `source_revision` 与 SyncState 不一致 | fail-closed 返回 `KB_READ_FAILED`，`details` 记录文档、行号与两侧 revision；不写本地缓存或索引 |
-| 原始库元数据读取失败 | 停止扫描并提示失败原因 |
-| 单个文档正文读取失败 | 跳过该文档，其他文档继续同步 |
-| 单个文档知识卡写入失败 | 不更新该文档 SyncState，下次只重试该文档 |
-| 本地缓存过期 | 只刷新发生变化文档对应的索引数据 |
-| 关键词索引 missing / corrupt / unreadable | 回退到本地缓存并写 `INDEX_UNAVAILABLE` warning：`search_knowledge` 按 `priority` 降序返回缓存候选，`load_knowledge_pack` 用缓存卡片按同一套来源块 / target model 规则组装知识包；warning 与错误 `details` 保留 `index_state` / `index_read_failed`；缓存也不可用时才报错 |
-| 关键词索引 ready 后读取失败 | 与索引 missing / corrupt / unreadable 一样回退缓存并写 `INDEX_UNAVAILABLE`；warning 说明并发重建或占用可能；`refresh_local_index` 写路径 fail-closed，保留索引文件 |
-| 本地索引卡片归属不一致 | 索引写入在事务开始前拒绝并保持索引原样；工具层同时给出文档与行号上下文 |
-| 阶段产物缺失或 schema 校验失败 | 停止该阶段，提示缺少的上游产物或字段，不进入下一阶段 |
-| `shot_plan.json` 的 `duration_sec` 非整数 | 返回 `OUT_OF_RANGE`，回退 `shot-planning` 修正为整数秒后重新校验；不进入下一阶段 |
-| 阶段产物被人工修改 | 重新校验通过后，从该阶段之后继续运行 |
-| `run.json` 与产物不一致 | 阶段状态以产物为准重新校验并修正；身份字段（`run_id`、`input_mode`、`project_id`、`target_model`）与产物冲突时 fail-closed：冲突产物所属阶段置 `failed`，写 `RUN_STATE_RECONCILED` warning（`details.conflicts[]` 逐条记录 `artifact` / `field` / 两侧取值），不重写 `run.json` 的身份字段 |
-| 目标模型未知 | 只支持 `seedance-2.0` 和 `seedance-2.5` |
-| 硬规则校验失败 | 返回结构化错误并重新生成 |
-
+| 版本缺失、v1、未来版本或混合版本 | 返回 `ARTIFACT_VERSION_UNSUPPORTED`，不改写文件 |
+| 上游内容指纹变化 | 下游标记为待重跑；不直接用旧下游继续 |
+| clip 总时长或内部时间轴非法 | 返回 `TIMELINE_INVALID`，在规划阶段定点修复 |
+| 原文单元、过程、对白或声音来源未覆盖 | 返回 `SOURCE_COVERAGE_INVALID` |
+| 素材身份、状态、绑定或职责非法 | 返回 `REFERENCE_ASSET_INVALID` |
+| 单视频图片数超过模型上限 | 返回 `REFERENCE_LIMIT_EXCEEDED`，先按自然过程边界拆分 |
+| 2.5 关闭时间轴 | 返回时间轴错误；知识卡或风格偏好不能覆盖强制规则 |
+| 参考图待提供 | 不阻断；保留占位并在 warning 中标记待提供 |
+| 渲染校验失败 | 不创建或覆盖输出文件，保留 PromptIR 供修复 |
 ## 14. 最小落地顺序
 
 ### 验证基线
 
-实现各阶段时至少建立以下验证：
+- 版本与内容指纹纯函数测试。
+- v2 schema、实体/过程、clip 时间轴、对白分片和 AudioCue 测试。
+- 跨产物指纹和待重跑测试。
+- 两模型五模块 golden、2.5 强制秒数和 2.0 时间轴偏好测试。
+- MCP 广告 schema、无输出写入失败路径和完整构建测试。
 
-- schema fixture 能拒绝缺失必填字段和错误枚举。
-- 同一文档重复执行 `replace_doc_cards` 不产生重复卡。
-- 分类、项目、目标模型过滤各有正例和反例。
-- Seedance 2.0、2.5 渲染结果有快照测试。
+### Phase 4 完成状态
 
-### Phase 1：插件和飞书连接
-
-- 创建 Codex 插件骨架。
-- 实现 `setup` Skill。
-- 实现 `health`。
-- 支持 lark-cli 路径发现和登录检查。
-- 配置原始库和 AI 库。
-- 记录 lark-cli 版本，并检查 Wiki 节点扫描、文档读取和 Base 批量记录写入能力。
-- 在实现 MCP Server 前确定其语言、构建工具和运行方式并写入第 7.1 节。
-
-### Phase 2：知识库同步
-
-- 由 `setup` 建立或校验 AI 库的 `KnowledgeCards` 和 `SyncState`。
-- 实现原始库节点元数据扫描和变化比较。
-- 实现单文档正文读取。
-- 实现 `knowledge-sync` Skill。
-- 实现 `replace_doc_cards` 和 `update_doc_sync_state`。
-- 实现删除文档对应的知识卡和状态清理。
-
-### Phase 3：本地检索
-
-- 实现本地缓存。
-- 实现 SQLite 关键词索引。
-- 实现 `refresh_local_index`、`search_knowledge` 和 `load_knowledge_pack`。
-
-### Phase 4：阶段技能与提示词生成
-
-#### 4a：剧本解析
-
-- 定义 `script_analysis.schema.json`。
-- 实现 `script-breakdown` Skill，支持片段、单集和多集输入。
-- 实现 `validate_stage_artifact` 的解析产物校验。
-
-#### 4b：镜头规划
-
-- 定义 `shot_plan.schema.json`。
-- 实现 `shot-planning` Skill。
-- 落地目标模型的时长和镜头拆分边界。
-
-#### 4c：提示词生成
-
-- 实现 PromptIR 和 Seedance 2.0、Seedance 2.5 规则文件。
-- 实现 `shot-prompting` Skill。
-- 实现硬规则校验、修复循环和提示词渲染。
-
-#### 4d：入口编排
-
-- 定义 `run.schema.json`。
-- 实现 `init_run`、`read_run` 和 `update_run_state`。
-- 实现 `script2shot` 入口编排、`from` 和 `only` 续跑。
-- 跑通端到端输出聚合。
-
-### Phase 5：可选增强
-
-- 为 `search_knowledge` 和 `load_knowledge_pack` 实现 `explain` 输出，约定见 10.4。
-- 可选实现 `knowledge-inspect` 诊断技能：回答「为什么这条知识没被用上」和
-  「某项目的角色圣经是否已同步」，只读 AI 库，不参与主流程。
-- `knowledge-inspect` 不进入第 9 章的 Skill 主列表，只在排查知识问题时按需加载。
-
+剧本解析、规划、提示词与入口均已升级到 v2：`process → clip → shot` 数据层级、素材
+占位、五模块渲染、内容和运行指纹、v1 拒绝续跑均已实现。Phase 5 仍是可选增强项。
 ## 15. 外部参考
 
 - OpenAI Docs: Plugin architecture
@@ -1440,4 +930,3 @@ Base 权限，而不是依赖 `project_id` 过滤承担访问控制。
   https://developers.openai.com/plugins/deploy/desktop-only
 - OpenAI Docs: Package your plugin
   https://developers.openai.com/plugins/build/plugins
-

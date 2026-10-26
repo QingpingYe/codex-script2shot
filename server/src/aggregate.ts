@@ -26,6 +26,7 @@ export type KnowledgeRefUsage = "used" | "dropped_by_budget";
 export interface KnowledgeRefEntry {
   card_id: string;
   scene_id: string;
+  clip_id: string | null;
   shot_id: string | null;
   query: string;
   usage: KnowledgeRefUsage;
@@ -434,39 +435,53 @@ function read_top_level_refs(
 }
 
 function read_prompt_refs(value: unknown, file_path: string): KnowledgeRefsResult {
-  if (!is_record(value) || !Array.isArray(value.shots)) {
+  if (!is_record(value) || !Array.isArray(value.clips)) {
     return invalid_artifact(
       "shot_prompting",
       file_path,
-      "shots",
-      "PromptIR 缺少 shots 数组。",
+      "clips",
+      "PromptIR 缺少 clips 数组。",
     );
   }
 
   const refs: KnowledgeRefEntry[] = [];
-  for (const [shot_index, shot] of value.shots.entries()) {
-    if (!is_record(shot) || !Array.isArray(shot.knowledge_refs)) {
+  for (const [clip_index, clip] of value.clips.entries()) {
+    if (!is_record(clip) || !Array.isArray(clip.knowledge_refs)) {
       return invalid_artifact(
         "shot_prompting",
         file_path,
-        `shots[${shot_index}].knowledge_refs`,
-        `PromptIR 的 shots[${shot_index}] 缺少 knowledge_refs 数组。`,
+        `clips[${clip_index}].knowledge_refs`,
+        `PromptIR 的 clips[${clip_index}] 缺少 knowledge_refs 数组。`,
       );
     }
     const normalized = normalize_refs(
-      shot.knowledge_refs,
+      clip.knowledge_refs,
       "shot_prompting",
       file_path,
-      `shots[${shot_index}].knowledge_refs`,
+      `clips[${clip_index}].knowledge_refs`,
     );
-    if (!normalized.ok) {
-      return normalized;
+    if (!normalized.ok) return normalized;
+    const clipId = is_record(clip) && typeof clip.clip_id === "string" ? clip.clip_id : "";
+    const shotOrder = new Map<string, number>();
+    if (is_record(clip) && Array.isArray(clip.shots)) {
+      for (const [shot_index, shot] of clip.shots.entries()) {
+        if (is_record(shot) && typeof shot.shot_id === "string") shotOrder.set(shot.shot_id, shot_index);
+      }
     }
+    for (const entry of normalized.value) {
+      if (entry.clip_id !== clipId || (entry.shot_id !== null && !shotOrder.has(entry.shot_id))) {
+        return invalid_artifact("shot_prompting", file_path, `clips[${clip_index}].knowledge_refs`, "PromptIR 引用归属的 clip_id 或 shot_id 不存在。");
+      }
+    }
+    normalized.value.sort((left, right) => {
+      const leftIndex = left.shot_id === null ? -1 : (shotOrder.get(left.shot_id) ?? Number.MAX_SAFE_INTEGER);
+      const rightIndex = right.shot_id === null ? -1 : (shotOrder.get(right.shot_id) ?? Number.MAX_SAFE_INTEGER);
+      return leftIndex - rightIndex;
+    });
     refs.push(...normalized.value);
   }
   return { ok: true, value: refs };
 }
-
 function normalize_refs(
   raw: unknown[],
   stage: KnowledgeRefStage,
@@ -513,6 +528,14 @@ function normalize_ref(
     }
   }
 
+  if (value.clip_id !== null && typeof value.clip_id !== "string") {
+    return invalid_artifact(
+      stage,
+      file_path,
+      `${field_name}.clip_id`,
+      'knowledge_ref 字段 "clip_id" 期望字符串或 null。',
+    );
+  }
   if (value.shot_id !== null && typeof value.shot_id !== "string") {
     return invalid_artifact(
       stage,
@@ -543,6 +566,7 @@ function normalize_ref(
     value: {
       card_id: value.card_id as string,
       scene_id: value.scene_id as string,
+      clip_id: value.clip_id as string | null,
       shot_id: value.shot_id as string | null,
       query: value.query as string,
       usage: value.usage,

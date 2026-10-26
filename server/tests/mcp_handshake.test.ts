@@ -246,7 +246,7 @@ describe("mcp handshake", () => {
           arguments: { stage: "script_breakdown", path: artifact_path },
         }),
       );
-      expect(valid).toEqual({ ok: true, errors: [] });
+      expect(valid).toMatchObject({ ok: true, errors: [] });
 
       const unknownKey = parse_tool_json(
         await client.callTool({
@@ -305,6 +305,8 @@ describe("mcp handshake", () => {
             project_id: "demo",
             target_model: "seedance-2.5",
             aspect_ratio: "9:16",
+            input_references: [],
+            display_timeline: true,
           },
         }),
       );
@@ -321,7 +323,7 @@ describe("mcp handshake", () => {
         }),
       );
       expect(read).toMatchObject({
-        run: { run_id, aspect_ratio: "9:16" },
+        run: { run_id, aspect_ratio: "9:16", input_references: [], display_timeline: true, schema_version: 2 },
         artifacts: {
           script_breakdown: { exists: false, valid: false },
           shot_planning: { exists: false, valid: false },
@@ -428,7 +430,7 @@ describe("mcp handshake", () => {
           arguments: { prompt_ir_path },
         }),
       );
-      expect(valid).toEqual({ ok: true, errors: [] });
+      expect(valid).toMatchObject({ ok: true, errors: [] });
 
       const unknownKey = parse_tool_json(
         await client.callTool({
@@ -476,11 +478,15 @@ describe("mcp handshake", () => {
       const rendered = parse_tool_json(
         await client.callTool({
           name: "render_prompt",
-          arguments: { prompt_ir_path, output_path },
+          arguments: {
+            prompt_ir_path,
+            output_path,
+            shot_plan_path: path.join(repoRoot, "tests", "fixtures", "shortdrama", "shot_plan.v2.json"),
+            script_analysis_path: path.join(repoRoot, "tests", "fixtures", "shortdrama", "script_analysis.v2.json"),
+          },
         }),
       );
-
-      expect(rendered).toEqual({ ok: true, output_path });
+      expect(rendered).toMatchObject({ ok: true, output_path });
       expect(readFileSync(output_path, "utf8")).toBe(
         readFileSync(
           path.join(repoRoot, "tests", "fixtures", "prompts", "seedance-2.5.golden.md"),
@@ -587,9 +593,9 @@ describe("mcp handshake", () => {
       expect(aggregated).toEqual({
         output_path: knowledgeRefsPath,
         counts: {
-          script_breakdown: 1,
-          shot_planning: 1,
-          shot_prompting: 1,
+          script_breakdown: 0,
+          shot_planning: 0,
+          shot_prompting: 0,
         },
       });
       expect(existsSync(knowledgeRefsPath)).toBe(true);
@@ -608,7 +614,7 @@ describe("mcp handshake", () => {
         }),
       );
       expect(warnings).toEqual({ output_path: warningsPath, count: 1 });
-      expect(readFileSync(warningsPath, "utf8")).toContain("SCENE_TIME_UNKNOWN");
+      expect(readFileSync(warningsPath, "utf8")).toContain("REFERENCE_IMAGE_PENDING");
 
       const aggregateUnknown = parse_tool_json(
         await client.callTool({

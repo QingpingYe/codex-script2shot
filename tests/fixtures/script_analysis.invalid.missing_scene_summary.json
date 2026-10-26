@@ -13,7 +13,9 @@
           "heading": "内景 旧公寓 夜",
           "location": "旧公寓",
           "time_of_day": "night",
-          "characters": ["角色A"],
+          "characters": [
+            "角色A"
+          ],
           "beats": [],
           "action_units": [],
           "emotion_units": [],
@@ -30,5 +32,6 @@
   },
   "missing_info": [],
   "knowledge_refs": [],
-  "generated_at": "2026-10-20T12:00:00+08:00"
+  "generated_at": "2026-10-20T12:00:00+08:00",
+  "schema_version": 1
 }

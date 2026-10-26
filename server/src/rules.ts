@@ -33,6 +33,14 @@ export interface ModelRulesDuration {
   default_sec: number;
 }
 
+export interface ModelRulesReferenceLimits {
+  max_images: number;
+}
+
+export interface ModelRulesTimeline {
+  required_in_prompt: boolean;
+}
+
 export interface ModelRulesShotSplit {
   /** 单段提示词建议时长上限，供 shot-planning 决定拆分边界。 */
   prefer_max_sec: number;
@@ -48,8 +56,8 @@ export interface ModelRulesShotSplit {
 export interface ModelRulesRender {
   /** 文档一级标题，逐字输出。 */
   title: string;
-  /** 单镜头分节标题模板；占位符 `{shot_id}` / `{duration}` / `{aspect_ratio}`。 */
-  shot_heading: string;
+  /** 单段视频标题模板；占位符 `{clip_id}` / `{duration}` / `{aspect_ratio}`。 */
+  clip_heading: string;
   /** 节 key → 中文节标签；key 与渲染层的节组装表一一对应。 */
   section_labels: Record<string, string>;
   /** 节输出顺序；元素必须出现在 section_labels 中且不重复。 */
@@ -83,6 +91,8 @@ export interface ModelRules {
   duration: ModelRulesDuration;
   aspect_ratios: string[];
   shot_split: ModelRulesShotSplit;
+  reference_limits: ModelRulesReferenceLimits;
+  timeline: ModelRulesTimeline;
   /** 提示词正文必须非空的 PromptIR 镜头字段（字段名与 schemas/prompt_ir.schema.json 对齐）。 */
   required_fields: string[];
   /** 提示词正文字段不得命中的禁止项；validate_prompt 按大小写不敏感子串匹配。 */
@@ -209,6 +219,24 @@ function parse_model_rules(raw: unknown, file_path: string, model_id: ModelRuleI
     }
   }
 
+  const reference_limits = value.reference_limits;
+  if (reference_limits === null || typeof reference_limits !== "object" || Array.isArray(reference_limits)) {
+    fail("缺少对象字段 reference_limits");
+  }
+  const reference_limits_value = reference_limits as Record<string, unknown>;
+  if (typeof reference_limits_value.max_images !== "number" || !Number.isInteger(reference_limits_value.max_images) || reference_limits_value.max_images <= 0) {
+    fail("reference_limits.max_images 必须是正整数");
+  }
+
+  const timeline = value.timeline;
+  if (timeline === null || typeof timeline !== "object" || Array.isArray(timeline)) {
+    fail("缺少对象字段 timeline");
+  }
+  const timeline_value = timeline as Record<string, unknown>;
+  if (typeof timeline_value.required_in_prompt !== "boolean") {
+    fail("timeline.required_in_prompt 必须是布尔值");
+  }
+
   const shot_split = value.shot_split;
   if (shot_split === null || typeof shot_split !== "object" || Array.isArray(shot_split)) {
     fail("缺少对象字段 shot_split");
@@ -240,6 +268,12 @@ function parse_model_rules(raw: unknown, file_path: string, model_id: ModelRuleI
       prefer_max_sec: shot_split_value.prefer_max_sec as number,
       multi_action_rule: shot_split_value.multi_action_rule as string,
     },
+    reference_limits: {
+      max_images: reference_limits_value.max_images as number,
+    },
+    timeline: {
+      required_in_prompt: timeline_value.required_in_prompt as boolean,
+    },
     required_fields: value.required_fields as string[],
     forbidden: value.forbidden as string[],
     render,
@@ -259,7 +293,7 @@ function parse_render_template(
   }
   const value = raw as Record<string, unknown>;
 
-  for (const key of ["title", "shot_heading", "empty_negative", "empty_dialogue"] as const) {
+  for (const key of ["title", "clip_heading", "empty_negative", "empty_dialogue"] as const) {
     if (typeof value[key] !== "string" || (value[key] as string).trim() === "") {
       fail(`render.${key} 必须是非空字符串`);
     }
@@ -298,7 +332,7 @@ function parse_render_template(
 
   return {
     title: value.title as string,
-    shot_heading: value.shot_heading as string,
+    clip_heading: value.clip_heading as string,
     // 上面已逐条校验为非空字符串；此处用断言收敛 unknown 值。
     section_labels: labels as Record<string, string>,
     section_order,
