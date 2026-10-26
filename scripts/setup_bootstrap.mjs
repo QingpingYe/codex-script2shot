@@ -1088,7 +1088,7 @@ async function default_mcp_session(call) {
       params: {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "setup_bootstrap", version: "0.1.0" },
+        clientInfo: { name: "setup_bootstrap", version: "0.1.1" },
       },
     });
 

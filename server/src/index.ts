@@ -65,7 +65,7 @@ import {
 } from "./aggregate.js";
 
 const server = new Server(
-  { name: "script2shot", version: "0.1.0" },
+  { name: "script2shot", version: "0.1.1" },
   { capabilities: { tools: {} } },
 );
 
