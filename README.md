@@ -5,7 +5,9 @@
 用户提交一段剧本、一集剧本或多集剧本，插件通过剧本解析、镜头规划和知识检索，
 为 Seedance 2.0 或 Seedance 2.5 生成视频提示词。
 
-当前状态：设计阶段。仓库中已有架构设计和通用知识文档，插件代码尚未实现。
+当前状态：Phase 1-4 已实现。插件包含六个 Skill、本地 MCP Server、阶段 schema 和
+Seedance 2.0 / 2.5 规则文件，主流程可端到端产出提示词。Phase 5（检索诊断）与 I4
+前瞻项（跨产物语义校验、多模态参考绑定等）尚未落地，见文末路线图。
 
 ## 工作原理
 
@@ -38,7 +40,7 @@
 设计原则：原始库与 AI 库职责分离、剧本不进知识库、同步状态以 AI 库为准、
 增量同步优先、插件不在服务端运行。
 
-## 主要能力（规划）
+## 主要能力
 
 插件提供六个 Skill，其中 `script2shot` 是薄入口，创作工作由三个阶段 Skill 承担：
 
@@ -83,15 +85,15 @@ $script2shot 从 shot-planning 继续，run_id 是 <run_id>
 $script2shot 只执行 shot-prompting，run_id 是 <run_id>
 ```
 
-## 快速开始（规划）
+## 快速开始
 
-1. 安装并登录 `lark-cli`。
-2. 运行 `$setup`，配置原始库、AI 库、Base 表和本地目录。
-3. 运行 `$knowledge-sync`，把原始库归纳到 AI 库。
-4. 在 Codex 会话中提交剧本，指定 `project_id` 和目标模型，
+1. 在 Codex 中安装插件并运行 `$setup`。环境自举、`lark-cli` 安装、登录编排和配置
+   写入都由 AI 执行；人类只做浏览器操作与一次写入确认。
+2. 运行 `$knowledge-sync`，完成首次同步并刷新本地索引。
+3. 在 Codex 会话中提交剧本，指定 `project_id` 和目标模型，
    `$script2shot` 默认按顺序跑完三个阶段。
 
-具体命令以插件实现后的文档为准。
+初始化流程与人机边界见 [skills/setup/SKILL.md](skills/setup/SKILL.md)。
 
 ## 文档
 
@@ -103,12 +105,15 @@ $script2shot 只执行 shot-prompting，run_id 是 <run_id>
 
 ## 路线图
 
-1. Phase 1：插件骨架、`setup`、`health`、飞书连接。
-2. Phase 2：AI 库建表、增量同步、`knowledge-sync`。
-3. Phase 3：本地缓存、SQLite 关键词索引和规则排序。
-4. Phase 4：阶段技能与提示词生成。
+1. Phase 1（已完成）：插件骨架、`setup`、`health`、飞书连接。
+2. Phase 2（已完成）：AI 库建表、增量同步、`knowledge-sync`。
+3. Phase 3（已完成）：本地缓存、SQLite 关键词索引和规则排序。
+4. Phase 4（已完成）：阶段技能与提示词生成。
    - 4a：`script-breakdown` 与 `script_analysis` schema。
    - 4b：`shot-planning` 与 `shot_plan` schema。
    - 4c：`shot-prompting`、PromptIR、Seedance 规则文件和渲染。
    - 4d：`script2shot` 入口编排、续跑和输出聚合。
-5. Phase 5（可选）：检索诊断 `explain` 输出和 `knowledge-inspect` 诊断技能。
+5. Phase 5（可选，未开始）：检索诊断 `explain` 输出和 `knowledge-inspect` 诊断技能。
+
+当前未完成：Phase 5，以及 I4 四项前瞻能力（跨产物语义校验、多模态参考绑定、
+素材规格上限进规则、编辑 / 延长任务路由）；I4 需要先完成架构裁决再排期。
