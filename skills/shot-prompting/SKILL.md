@@ -39,7 +39,7 @@ clips[]
 generated_at
 ```
 
-每个 clip 复制上游身份、时间、镜头决策、`dialogue_segment_id`、声音和连续性，不修改计划。
+每个 clip 复制上游身份、时间、镜头决策、`dialogue_segment_id`、声音和连续性，不修改计划。PromptIR 中的 shot、对白和 AudioCue 时间必须保持整数秒；同时复制规划中的 `long_take_reason`，不得改写或丢弃。小数时间必须回到上游修复，不能在下游四舍五入。
 
 ## 参考素材职责
 
@@ -88,6 +88,7 @@ generated_at
 - 每个 clip 是否恰好五模块、名称和顺序正确；
 - 2.5 是否每条镜头/对白/声音都有秒数；
 - 2.0 的 `display_timeline` 是否符合运行偏好；
+- 所有 shot、对白和 AudioCue 是否保持整数秒，`long_take_reason` 是否与规划一致；
 - 素材标签是否唯一、编号连续、职责同时说明采用和排除；
 - 对白是否逐字还原、只消费一次；
 - 声音是否有来源和时间；
@@ -106,7 +107,7 @@ generated_at
 ## 失败处理
 
 - `INPUT_HASH_MISMATCH`：上游内容已变化，回到对应阶段重验，不自行改指纹。
-- `TIMELINE_INVALID`：修正 clip 时长、秒数或显示偏好；2.5 不能关闭时间轴。
+- `TIMELINE_INVALID`：修正整数秒、clip 时长、`long_take_reason` 或显示偏好；2.5 不能关闭时间轴。
 - `REFERENCE_ASSET_INVALID`：修正素材身份、标签、职责或绑定。
 - `REFERENCE_LIMIT_EXCEEDED`：回到规划拆分，不删除必要实体。
 - `SOURCE_COVERAGE_INVALID`：修正镜头、对白、声音或覆盖关系，不补剧情。

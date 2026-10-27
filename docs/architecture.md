@@ -87,6 +87,7 @@ AI 库中维护一个 `SyncState` 表，记录原始库中每个原始文档的�
 
 最终交付单位是一个待生成视频的一段提示词。一个 clip 可以包含多个电影镜头，以完成
 一个独立、连续的叙事过程为优先；只有超过模型时长或参考素材上限时，才在自然节点拆分。
+clip 时长等于本批 shot 的整数秒时长之和，并必须处于模型 `min_sec..max_sec`。
 四个基础产物统一使用 `schema_version: 2`，并用 SHA-256 内容指纹检查上游失效。
 ## 4. 飞书知识库（原始资料）
 
@@ -762,7 +763,7 @@ $knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
 ### 9.5 shot-planning
 
 按「完整过程 → 对白/动作时间 → 内部切镜 → 上限检查 → 自然拆段」规划
-`scenes[].clips[].shots[]`。clip 总时长使用模型整数秒边界；内部 shot 允许小数秒。
+`scenes[].clips[].shots[]`。clip 总时长使用模型整数秒边界；内部 shot、对白和 AudioCue 也统一使用整数秒。规划顺序为：节拍估算 → 整数秒 shot → 过程镜头序列 → 在自然边界分批装入 clip → clip 内时间轴归零。单镜超过 6 秒必须写 `long_take_reason`。
 规划对白轨、AudioCue、参考绑定和前后状态；完整过程默认一个 clip，切镜本身不拆段。
 
 ### 9.6 shot-prompting
@@ -877,7 +878,7 @@ general / project 块重复归类。
 
 时长、画幅、参考图片上限和时间轴强制只以 `rules/models/*.json` 为运行时事实来源。
 Seedance 2.0 为 4–15 秒、最多 9 张图片，秒数默认关闭；Seedance 2.5 为 4–30 秒、
-最多 30 张图片，秒数强制开启。运行时画幅默认 9:16。内部 shot 不受模型时长下限单独限制。
+最多 30 张图片，秒数强制开启。运行时画幅默认 9:16。内部 shot 不受模型时长下限单独限制，但所有时间仍使用整数秒，超过 6 秒必须有 `long_take_reason`。
 
 ### 11.5 输出
 
@@ -912,7 +913,7 @@ Base 权限，而不是依赖 `project_id` 过滤承担访问控制。
 | --- | --- |
 | 版本缺失、v1、未来版本或混合版本 | 返回 `ARTIFACT_VERSION_UNSUPPORTED`，不改写文件 |
 | 上游内容指纹变化 | 下游标记为待重跑；不直接用旧下游继续 |
-| clip 总时长或内部时间轴非法 | 返回 `TIMELINE_INVALID`，在规划阶段定点修复 |
+| clip 总时长、整数秒或内部时间轴非法 | 返回 `TIMELINE_INVALID`，在规划阶段定点修复；不得自动四舍五入 |
 | 原文单元、过程、对白或声音来源未覆盖 | 返回 `SOURCE_COVERAGE_INVALID` |
 | 素材身份、状态、绑定或职责非法 | 返回 `REFERENCE_ASSET_INVALID` |
 | 单视频图片数超过模型上限 | 返回 `REFERENCE_LIMIT_EXCEEDED`，先按自然过程边界拆分 |

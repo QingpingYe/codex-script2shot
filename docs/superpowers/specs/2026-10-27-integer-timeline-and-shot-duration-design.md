@@ -1,6 +1,6 @@
 # 整数秒时间轴与镜头时长估算设计
 
-- 状态：Proposed
+- 状态：Approved
 - 日期：2026-10-27
 - 输入复盘：`E:\视频提示词\script2shot-时间轴问题复盘-2026-10-27.md`
 - 目标版本：plugin `0.2.2`，artifact `schema_version: 2`

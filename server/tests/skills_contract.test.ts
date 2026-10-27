@@ -178,6 +178,10 @@ describe("shortdrama v2 skill content contract", () => {
     for (const token of ["clip", "shots[]", "start_sec", "end_sec", "split_reason", "AudioCue", "source_action_unit_ids"]) {
       expect(markdown).toContain(token);
     }
+    for (const token of ["整数秒", "节拍", "long_take_reason", "自然边界", "min_sec", "max_sec", "本批 shot 整数时长之和", "30+2", "15+3"]) {
+      expect(markdown).toContain(token);
+    }
+    expect(markdown).not.toContain("允许小数秒");
   });
 
   test("prompting removes one-shot-per-prompt rules and documents five modules", () => {
@@ -185,6 +189,8 @@ describe("shortdrama v2 skill content contract", () => {
     for (const token of ["【生成目标】", "【参考素材职责】", "【主体与关系】", "【事件脚本】", "【保持一致】", "display_timeline", "dialogue_segment_id"]) {
       expect(markdown).toContain(token);
     }
+    expect(markdown).toContain("整数秒");
+    expect(markdown).toContain("long_take_reason");
     expect(markdown).not.toContain("一个镜头一段");
     expect(markdown).not.toContain("禁止自建秒数");
   });
