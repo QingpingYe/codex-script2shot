@@ -26,6 +26,17 @@ function write_temp(value: unknown, name = "artifact.json"): string {
   return file_path;
 }
 
+function make_first_clip_long_shot(value: Record<string, any>, duration_sec: number): Record<string, any> {
+  const clip = value.scenes[0].clips[0];
+  clip.duration_sec = 10;
+  clip.shots = [
+    { ...clip.shots[0], start_sec: 0, end_sec: duration_sec },
+    { ...clip.shots[1], start_sec: duration_sec, end_sec: duration_sec + 1 },
+    { ...clip.shots[2], start_sec: duration_sec + 1, end_sec: duration_sec + 2 },
+    { ...clip.shots[3], start_sec: duration_sec + 2, end_sec: 10 },
+  ];
+  return value;
+}
 describe("stage artifact v2 validation", () => {
   test("valid script analysis returns content_hash", () => {
     const result = validate_stage_artifact({
@@ -70,6 +81,33 @@ describe("stage artifact v2 validation", () => {
     );
   });
 
+  test("requires a long-take reason for a seven-second shot", () => {
+    const missing = make_first_clip_long_shot(
+      read_json(path.join(shortdramaDir, "shot_plan.v2.json")),
+      7,
+    );
+    const missingResult = validate_stage_artifact({
+      stage: "shot_planning",
+      path: write_temp(missing),
+      script_analysis_path: path.join(shortdramaDir, "script_analysis.v2.json"),
+    });
+    expect(missingResult.ok).toBe(false);
+    expect(missingResult.errors).toContainEqual(
+      expect.objectContaining({ code: "TIMELINE_INVALID" }),
+    );
+
+    const allowed = make_first_clip_long_shot(
+      read_json(path.join(shortdramaDir, "shot_plan.v2.json")),
+      7,
+    );
+    allowed.scenes[0].clips[0].shots[0].long_take_reason = "连续跟拍角色走到床边。";
+    const allowedResult = validate_stage_artifact({
+      stage: "shot_planning",
+      path: write_temp(allowed),
+      script_analysis_path: path.join(shortdramaDir, "script_analysis.v2.json"),
+    });
+    expect(allowedResult.ok).toBe(true);
+  });
   test("rejects an internal shot timeline gap", () => {
     const edited = read_json(path.join(shortdramaDir, "shot_plan.v2.json"));
     edited.scenes[0].clips[0].shots[1].start_sec = 2.1;

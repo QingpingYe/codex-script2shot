@@ -455,6 +455,7 @@ export interface SemanticModelRules {
 }
 
 const TIME_TOLERANCE_SEC = 0.001;
+const MAX_NORMAL_SHOT_SEC = 6;
 
 function is_integer_second(value: unknown): boolean {
   return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
@@ -886,6 +887,29 @@ function validate_clip_continuity(
   void scene;
 }
 
+function validate_shot_long_take_reason(
+  shot: JsonRecord,
+  duration_sec: number,
+  path: string,
+  clip_id: string | undefined,
+  shot_id: string | undefined,
+  errors: ArtifactSemanticError[],
+): void {
+  if (
+    duration_sec > MAX_NORMAL_SHOT_SEC &&
+    as_non_empty_string(shot.long_take_reason) === undefined
+  ) {
+    errors.push(
+      semantic_error(
+        `${path}.long_take_reason`,
+        "TIMELINE_INVALID",
+        "超过 6 秒的 shot 必须提供 long_take_reason。",
+        clip_id,
+        shot_id,
+      ),
+    );
+  }
+}
 function validate_clip_timeline(
   clip: JsonRecord,
   path: string,
@@ -1012,6 +1036,14 @@ function validate_clip_timeline(
         ),
       );
     }
+    validate_shot_long_take_reason(
+      shot,
+      end_sec - start_sec,
+      shot_path,
+      clip_id,
+      shot_reference,
+      errors,
+    );
     previous_end = end_sec;
 
     const process_id = as_non_empty_string(clip.process_id);

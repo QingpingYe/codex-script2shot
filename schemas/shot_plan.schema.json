@@ -115,6 +115,7 @@
         },
         "transition": { "type": "string", "enum": ["切", "叠化", "淡入淡出", "无"] },
         "purpose": { "type": "string", "minLength": 1 },
+        "long_take_reason": { "type": "string", "minLength": 1 },
         "source_action_unit_ids": { "$ref": "#/$defs/string_list" },
         "source_emotion_unit_ids": { "$ref": "#/$defs/string_list" },
         "continuity": { "$ref": "#/$defs/clip_continuity" }

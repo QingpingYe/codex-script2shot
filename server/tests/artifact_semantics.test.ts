@@ -203,7 +203,13 @@ function add_split_clip(
   const secondDialogue = dialogue.slice(1);
 
   first.duration_sec = duration;
-  first.shots = [{ ...first.shots[0], start_sec: 0, end_sec: duration }];
+  const long_take_reason = duration > 6 ? "连续跨段动作保持同一空间。" : undefined;
+  first.shots = [{
+    ...first.shots[0],
+    start_sec: 0,
+    end_sec: duration,
+    ...(long_take_reason === undefined ? {} : { long_take_reason }),
+  }];
   first.dialogue = firstDialogue.map((segment: Record<string, any>, index: number) => ({
     ...first.dialogue[index],
     ...segment,
@@ -229,6 +235,7 @@ function add_split_clip(
     shot_id: "ep01-sc01-c02-s01",
     start_sec: 0,
     end_sec: duration,
+    ...(long_take_reason === undefined ? {} : { long_take_reason }),
     continuity: {
       enter_state: first.continuity.exit_state,
       exit_state: first.continuity.exit_state,
@@ -249,6 +256,16 @@ function add_split_clip(
   plan.scenes[0].clips.push(second);
 }
 
+function rebuildFirstClipWithFirstShotDuration(plan: Record<string, any>, duration_sec: number): void {
+  const clip = plan.scenes[0].clips[0];
+  clip.duration_sec = 10;
+  clip.shots = [
+    { ...clip.shots[0], start_sec: 0, end_sec: duration_sec },
+    { ...clip.shots[1], start_sec: duration_sec, end_sec: duration_sec + 1 },
+    { ...clip.shots[2], start_sec: duration_sec + 1, end_sec: duration_sec + 2 },
+    { ...clip.shots[3], start_sec: duration_sec + 2, end_sec: 10 },
+  ];
+}
 describe("shot plan v2 semantics", () => {
   test("accepts a ten-second four-shot clip for both models", () => {
     const plan = planFixture();
@@ -312,6 +329,35 @@ describe("shot plan v2 semantics", () => {
     );
   });
 
+  test("enforces long-take reasons for shots longer than six seconds", () => {
+    const missing = planFixture();
+    rebuildFirstClipWithFirstShotDuration(missing, 7);
+    expect(validate_shot_plan_semantics(missing, RULES_25, analysisFixture())).toContainEqual(
+      expect.objectContaining({
+        path: "scenes[0].clips[0].shots[0].long_take_reason",
+        code: "TIMELINE_INVALID",
+      }),
+    );
+
+    const blank = planFixture();
+    rebuildFirstClipWithFirstShotDuration(blank, 7);
+    blank.scenes[0].clips[0].shots[0].long_take_reason = "   ";
+    expect(validate_shot_plan_semantics(blank, RULES_25, analysisFixture())).toContainEqual(
+      expect.objectContaining({
+        path: "scenes[0].clips[0].shots[0].long_take_reason",
+        code: "TIMELINE_INVALID",
+      }),
+    );
+
+    const allowed = planFixture();
+    rebuildFirstClipWithFirstShotDuration(allowed, 7);
+    allowed.scenes[0].clips[0].shots[0].long_take_reason = "连续跟拍角色走到床边，中间没有新信息点。";
+    expect(validate_shot_plan_semantics(allowed, RULES_25, analysisFixture())).toEqual([]);
+
+    const sixSeconds = planFixture();
+    rebuildFirstClipWithFirstShotDuration(sixSeconds, 6);
+    expect(validate_shot_plan_semantics(sixSeconds, RULES_25, analysisFixture())).toEqual([]);
+  });
   test("rejects duplicate shot IDs", () => {
     const plan = planFixture();
     plan.scenes[0].clips[0].shots[1].shot_id = plan.scenes[0].clips[0].shots[0].shot_id;
@@ -328,6 +374,7 @@ describe("shot plan v2 semantics", () => {
         ...clip.shots[0],
         start_sec: 0,
         end_sec: 20,
+        long_take_reason: "连续二十秒动作保持在同一空间。",
       },
     ];
     clip.audio.ambience[0].end_sec = 20;
