@@ -454,7 +454,6 @@ export interface SemanticModelRules {
   timeline: { required_in_prompt: boolean };
 }
 
-const TIME_TOLERANCE_SEC = 0.001;
 const MAX_NORMAL_SHOT_SEC = 6;
 
 function is_integer_second(value: unknown): boolean {
@@ -2067,7 +2066,8 @@ function validate_prompt_shots(
         errors,
       );
     }
-    if (typeof end_sec === "number") previous_end = end_sec;    if (as_non_empty_string(shot.subject) === undefined || as_non_empty_string(shot.action) === undefined) {
+    if (typeof end_sec === "number") previous_end = end_sec;
+    if (as_non_empty_string(shot.subject) === undefined || as_non_empty_string(shot.action) === undefined) {
       errors.push(semantic_error(`${path}[${index}]`, "SOURCE_COVERAGE_INVALID", `shot "${shot_id ?? ""}" 缺少有依据的主体或动作。`, clip_id, shot_id));
     }
     if (context !== undefined) {

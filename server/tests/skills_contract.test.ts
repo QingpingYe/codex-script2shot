@@ -178,7 +178,7 @@ describe("shortdrama v2 skill content contract", () => {
     for (const token of ["clip", "shots[]", "start_sec", "end_sec", "split_reason", "AudioCue", "source_action_unit_ids"]) {
       expect(markdown).toContain(token);
     }
-    for (const token of ["整数秒", "节拍", "long_take_reason", "自然边界", "min_sec", "max_sec", "本批 shot 整数时长之和", "30+2", "15+3"]) {
+    for (const token of ["整数秒", "节拍", "long_take_reason", "自然边界", "min_sec", "max_sec", "本批 shot 整数时长之和", "30+2", "15+3", "6 秒及以下"]) {
       expect(markdown).toContain(token);
     }
     expect(markdown).not.toContain("允许小数秒");

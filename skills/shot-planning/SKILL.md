@@ -131,5 +131,5 @@ process → clip（一个待生成视频）→ shot（视频内部镜头）
 - `SOURCE_COVERAGE_INVALID`：补齐原文单元覆盖、process 归属或前后状态。
 - `REFERENCE_LIMIT_EXCEEDED`：在自然节点拆分或报告无法满足，不删必要实体。
 - `REFERENCE_ASSET_INVALID`：修正占位/提供状态、实体绑定或采用排除范围。
-- `long_take_reason` 缺失：补写合理的长镜头说明，或把镜头拆到 6 秒以内。
+- `long_take_reason` 缺失：补写合理的长镜头说明，或把镜头拆到 6 秒及以下。
 - 上游指纹过期：停止，回到解析阶段重新校验，不直接覆盖。
