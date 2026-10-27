@@ -576,6 +576,19 @@ function linkedDocuments(model: "seedance-2.0" | "seedance-2.5" = "seedance-2.5"
   return { run, analysis, plan, prompt };
 }
 
+function rebuildPromptFirstClipWithFirstShotDuration(
+  prompt: Record<string, any>,
+  duration_sec: number,
+): void {
+  const clip = prompt.clips[0];
+  clip.duration_sec = 10;
+  clip.shots = [
+    { ...clip.shots[0], start_sec: 0, end_sec: duration_sec },
+    { ...clip.shots[1], start_sec: duration_sec, end_sec: duration_sec + 1 },
+    { ...clip.shots[2], start_sec: duration_sec + 1, end_sec: duration_sec + 2 },
+    { ...clip.shots[3], start_sec: duration_sec + 2, end_sec: 10 },
+  ];
+}
 describe("prompt IR v2 semantics", () => {
   test("accepts a valid multi-shot video prompt bound to plan and analysis", () => {
     expect(
@@ -583,6 +596,62 @@ describe("prompt IR v2 semantics", () => {
     ).toEqual([]);
   });
 
+  test("rejects fractional PromptIR shot, dialogue and audio times", () => {
+    const shot = promptFixture();
+    shot.clips[0].shots[0].end_sec = 2.5;
+    expect(validate_prompt_semantics(shot, RULES_25)).toContainEqual(
+      expect.objectContaining({
+        path: "clips[0].shots[0].end_sec",
+        code: "TIMELINE_INVALID",
+      }),
+    );
+
+    const dialogue = promptFixture();
+    dialogue.clips[0].dialogue[0].end_sec = 2.5;
+    expect(validate_prompt_semantics(dialogue, RULES_25)).toContainEqual(
+      expect.objectContaining({
+        path: "clips[0].dialogue[0].end_sec",
+        code: "TIMELINE_INVALID",
+      }),
+    );
+
+    const audio = promptFixture();
+    audio.clips[0].audio.sfx[0].end_sec = 5.5;
+    expect(validate_prompt_semantics(audio, RULES_25)).toContainEqual(
+      expect.objectContaining({
+        path: "clips[0].audio.sfx[0].end_sec",
+        code: "TIMELINE_INVALID",
+      }),
+    );
+  });
+
+  test("enforces PromptIR long-take reasons and plan parity", () => {
+    const missing = promptFixture();
+    rebuildPromptFirstClipWithFirstShotDuration(missing, 7);
+    expect(validate_prompt_semantics(missing, RULES_25)).toContainEqual(
+      expect.objectContaining({
+        path: "clips[0].shots[0].long_take_reason",
+        code: "TIMELINE_INVALID",
+      }),
+    );
+
+    const allowed = promptFixture();
+    rebuildPromptFirstClipWithFirstShotDuration(allowed, 7);
+    allowed.clips[0].shots[0].long_take_reason = "连续跟拍角色走到床边。";
+    expect(validate_prompt_semantics(allowed, RULES_25)).toEqual([]);
+
+    const plan = planFixture();
+    rebuildFirstClipWithFirstShotDuration(plan, 7);
+    plan.scenes[0].clips[0].shots[0].long_take_reason = "规划中的长镜头说明。";
+    const drifted = promptFixture();
+    rebuildPromptFirstClipWithFirstShotDuration(drifted, 7);
+    drifted.clips[0].shots[0].long_take_reason = "PromptIR 中不同的长镜头说明。";
+    expect(
+      validate_prompt_semantics(drifted, RULES_25, plan, analysisFixture()).map(
+        (error) => error.code,
+      ),
+    ).toContain("SOURCE_COVERAGE_INVALID");
+  });
   test("keeps stable asset IDs while local tags are unique and continuous per media type", () => {
     const prompt = promptFixture();
     const firstClipAsset = prompt.clips[0].reference_bindings[0];

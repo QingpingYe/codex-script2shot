@@ -81,7 +81,7 @@ describe("prompt validation v2", () => {
 
   test("rejects upstream shot drift when plan is provided", () => {
     const prompt = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
-    prompt.clips[0].shots[0].end_sec = 2.5;
+    prompt.clips[0].shots[0].end_sec = 3;
     const result = validate_prompt({
       prompt_ir_path: write_temp(prompt),
       shot_plan_path: path.join(shortdramaDir, "shot_plan.v2.json"),
@@ -93,13 +93,13 @@ describe("prompt validation v2", () => {
 
   test("validates structured timeline without requiring upstream paths", () => {
     const shotGap = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
-    shotGap.clips[0].shots[0].end_sec = 2.5;
+    shotGap.clips[0].shots[0].end_sec = 1;
     expect(validate_prompt_document(shotGap).errors.map((error) => error.code)).toContain("TIMELINE_INVALID");
     const dialogueOut = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
-    dialogueOut.clips[0].dialogue[0].end_sec = 10.5;
+    dialogueOut.clips[0].dialogue[0].end_sec = 11;
     expect(validate_prompt_document(dialogueOut).errors.map((error) => error.code)).toContain("TIMELINE_INVALID");
     const audioOut = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
-    audioOut.clips[0].audio.sfx[0].end_sec = 10.5;
+    audioOut.clips[0].audio.sfx[0].end_sec = 11;
     expect(validate_prompt_document(audioOut).errors.map((error) => error.code)).toContain("TIMELINE_INVALID");
   });
 

@@ -1755,7 +1755,8 @@ function compare_prompt_plan_structure(
         same_json(prompt_shot.purpose, plan_shot.purpose) &&
         same_json(prompt_shot.source_action_unit_ids, plan_shot.source_action_unit_ids) &&
         same_json(prompt_shot.source_emotion_unit_ids, plan_shot.source_emotion_unit_ids) &&
-        same_json(prompt_shot.continuity, plan_shot.continuity);
+        same_json(prompt_shot.continuity, plan_shot.continuity) &&
+        same_json(prompt_shot.long_take_reason, plan_shot.long_take_reason);
       if (!same_shot_decision) {
         errors.push(
           semantic_error(
@@ -2008,11 +2009,65 @@ function validate_prompt_shots(
     const shot_id = as_non_empty_string(shot.shot_id);
     const start_sec = shot.start_sec;
     const end_sec = shot.end_sec;
-    if (as_positive_integer(shot.order) !== index + 1 || typeof start_sec !== "number" || typeof end_sec !== "number" || !Number.isFinite(start_sec) || !Number.isFinite(end_sec) || start_sec < 0 || end_sec <= start_sec || Math.abs(start_sec - previous_end) > TIME_TOLERANCE_SEC || (typeof duration === "number" && end_sec > duration + TIME_TOLERANCE_SEC)) {
-      errors.push(semantic_error(`${path}[${index}]`, "TIMELINE_INVALID", `shot "${shot_id ?? ""}" 的时间轴无效或不连续。`, clip_id, shot_id));
+    if (!is_integer_second(start_sec)) {
+      errors.push(
+        semantic_error(
+          `${path}[${index}].start_sec`,
+          "TIMELINE_INVALID",
+          `shot "${shot_id ?? ""}" 的 start_sec 必须使用整数秒。`,
+          clip_id,
+          shot_id,
+        ),
+      );
     }
-    if (typeof end_sec === "number") previous_end = end_sec;
-    if (as_non_empty_string(shot.subject) === undefined || as_non_empty_string(shot.action) === undefined) {
+    if (!is_integer_second(end_sec)) {
+      errors.push(
+        semantic_error(
+          `${path}[${index}].end_sec`,
+          "TIMELINE_INVALID",
+          `shot "${shot_id ?? ""}" 的 end_sec 必须使用整数秒。`,
+          clip_id,
+          shot_id,
+        ),
+      );
+    }
+    if (
+      as_positive_integer(shot.order) !== index + 1 ||
+      typeof start_sec !== "number" ||
+      typeof end_sec !== "number" ||
+      !Number.isFinite(start_sec) ||
+      !Number.isFinite(end_sec) ||
+      start_sec < 0 ||
+      end_sec <= start_sec ||
+      start_sec !== previous_end ||
+      (typeof duration === "number" && end_sec > duration)
+    ) {
+      errors.push(
+        semantic_error(
+          `${path}[${index}]`,
+          "TIMELINE_INVALID",
+          `shot "${shot_id ?? ""}" 的时间轴无效或不连续。`,
+          clip_id,
+          shot_id,
+        ),
+      );
+    }
+    if (
+      typeof start_sec === "number" &&
+      typeof end_sec === "number" &&
+      is_integer_second(start_sec) &&
+      is_integer_second(end_sec)
+    ) {
+      validate_shot_long_take_reason(
+        shot,
+        end_sec - start_sec,
+        `${path}[${index}]`,
+        clip_id,
+        shot_id,
+        errors,
+      );
+    }
+    if (typeof end_sec === "number") previous_end = end_sec;    if (as_non_empty_string(shot.subject) === undefined || as_non_empty_string(shot.action) === undefined) {
       errors.push(semantic_error(`${path}[${index}]`, "SOURCE_COVERAGE_INVALID", `shot "${shot_id ?? ""}" 缺少有依据的主体或动作。`, clip_id, shot_id));
     }
     if (context !== undefined) {
@@ -2041,8 +2096,43 @@ function validate_prompt_dialogue(
     if (!is_record(segment)) continue;
     const start_sec = segment.start_sec;
     const end_sec = segment.end_sec;
-    if (typeof start_sec !== "number" || typeof end_sec !== "number" || !Number.isFinite(start_sec) || !Number.isFinite(end_sec) || start_sec < 0 || end_sec <= start_sec || (typeof duration === "number" && end_sec > duration + TIME_TOLERANCE_SEC)) {
-      errors.push(semantic_error(`${path}[${index}]`, "TIMELINE_INVALID", "对白时间区间无效或超出 clip。", clip_id));
+    if (!is_integer_second(start_sec)) {
+      errors.push(
+        semantic_error(
+          `${path}[${index}].start_sec`,
+          "TIMELINE_INVALID",
+          "对白 start_sec 必须使用整数秒。",
+          clip_id,
+        ),
+      );
+    }
+    if (!is_integer_second(end_sec)) {
+      errors.push(
+        semantic_error(
+          `${path}[${index}].end_sec`,
+          "TIMELINE_INVALID",
+          "对白 end_sec 必须使用整数秒。",
+          clip_id,
+        ),
+      );
+    }
+    if (
+      typeof start_sec !== "number" ||
+      typeof end_sec !== "number" ||
+      !Number.isFinite(start_sec) ||
+      !Number.isFinite(end_sec) ||
+      start_sec < 0 ||
+      end_sec <= start_sec ||
+      (typeof duration === "number" && end_sec > duration)
+    ) {
+      errors.push(
+        semantic_error(
+          `${path}[${index}]`,
+          "TIMELINE_INVALID",
+          "对白时间区间无效或超出 clip。",
+          clip_id,
+        ),
+      );
     }
     const dialogue_unit_id = as_non_empty_string(segment.dialogue_unit_id);
     const source = dialogue_unit_id === undefined ? undefined : context?.dialogue_by_id.get(dialogue_unit_id);
@@ -2071,11 +2161,57 @@ function validate_prompt_audio(
       if (!is_record(cue)) continue;
       const start_sec = cue.start_sec;
       const end_sec = cue.end_sec;
-      if (typeof start_sec !== "number" || typeof end_sec !== "number" || !Number.isFinite(start_sec) || !Number.isFinite(end_sec) || start_sec < 0 || end_sec <= start_sec || (typeof duration === "number" && end_sec > duration + TIME_TOLERANCE_SEC)) {
-        errors.push(semantic_error(`${path}.${track}[${index}]`, "TIMELINE_INVALID", "AudioCue 时间区间无效或超出 clip。", clip_id));
+      if (!is_integer_second(start_sec)) {
+        errors.push(
+          semantic_error(
+            `${path}.${track}[${index}].start_sec`,
+            "TIMELINE_INVALID",
+            "AudioCue start_sec 必须使用整数秒。",
+            clip_id,
+          ),
+        );
       }
-      if ((track === "ambience" || track === "music") && typeof duration === "number" && (Math.abs(Number(start_sec) - 0) > TIME_TOLERANCE_SEC || Math.abs(Number(end_sec) - duration) > TIME_TOLERANCE_SEC)) {
-        errors.push(semantic_error(`${path}.${track}[${index}]`, "TIMELINE_INVALID", "全程环境声或音乐必须覆盖 0 到 clip 总时长。", clip_id));
+      if (!is_integer_second(end_sec)) {
+        errors.push(
+          semantic_error(
+            `${path}.${track}[${index}].end_sec`,
+            "TIMELINE_INVALID",
+            "AudioCue end_sec 必须使用整数秒。",
+            clip_id,
+          ),
+        );
+      }
+      if (
+        typeof start_sec !== "number" ||
+        typeof end_sec !== "number" ||
+        !Number.isFinite(start_sec) ||
+        !Number.isFinite(end_sec) ||
+        start_sec < 0 ||
+        end_sec <= start_sec ||
+        (typeof duration === "number" && end_sec > duration)
+      ) {
+        errors.push(
+          semantic_error(
+            `${path}.${track}[${index}]`,
+            "TIMELINE_INVALID",
+            "AudioCue 时间区间无效或超出 clip。",
+            clip_id,
+          ),
+        );
+      }
+      if (
+        (track === "ambience" || track === "music") &&
+        typeof duration === "number" &&
+        (start_sec !== 0 || end_sec !== duration)
+      ) {
+        errors.push(
+          semantic_error(
+            `${path}.${track}[${index}]`,
+            "TIMELINE_INVALID",
+            "全程环境声或音乐必须覆盖 0 到 clip 总时长。",
+            clip_id,
+          ),
+        );
       }
       if (context !== undefined) {
         for (const [ref_index, ref] of as_array(cue.source_refs).entries()) {

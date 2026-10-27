@@ -95,4 +95,16 @@ describe("render prompt v2", () => {
     expect(result.ok).toBe(false);
     expect(existsSync(output_path)).toBe(false);
   });
-});
+
+  test("does not overwrite an existing output when decimal timeline validation fails", () => {
+    const decimal = read_json(path.join(shortdramaDir, "prompts_ir.v2.json"));
+    decimal.clips[0].shots[0].end_sec = 2.5;
+    const output_path = temp_path();
+    writeFileSync(output_path, "KEEP", "utf8");
+    const result = render_prompt({
+      prompt_ir_path: write_ir(decimal),
+      output_path,
+    });
+    expect(result.ok).toBe(false);
+    expect(readFileSync(output_path, "utf8")).toBe("KEEP");
+  });});
