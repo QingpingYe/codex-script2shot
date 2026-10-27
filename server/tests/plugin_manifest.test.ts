@@ -13,7 +13,7 @@ describe("plugin manifest", () => {
   test("plugin manifest declares identity, mcp server and skills path", () => {
     const plugin = readJson("plugin.json");
     expect(plugin.name).toBe("script2shot");
-    expect(plugin.version).toBe("0.2.1");
+    expect(plugin.version).toBe("0.2.2");
     expect(plugin.version).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/);
     expect(typeof plugin.description).toBe("string");
     expect((plugin.description as string).trim().length).toBeGreaterThan(0);
