@@ -181,8 +181,8 @@
           "speaker_id": "character-a",
           "start_offset": 0,
           "end_offset": 3,
-          "start_sec": 0.5,
-          "end_sec": 2.5,
+          "start_sec": 1,
+          "end_sec": 2,
           "text": "给你。"
         }
       ],
@@ -210,8 +210,8 @@
           {
             "cue_id": "ep01-sc01-c01-sfx01",
             "text": "信封交接时纸张轻响。",
-            "start_sec": 5.2,
-            "end_sec": 5.7,
+            "start_sec": 5,
+            "end_sec": 6,
             "source_refs": [
               {
                 "kind": "unit",
@@ -370,8 +370,8 @@
           "speaker_id": "character-b",
           "start_offset": 0,
           "end_offset": 6,
-          "start_sec": 3.4,
-          "end_sec": 5.6,
+          "start_sec": 3,
+          "end_sec": 6,
           "text": "你一直留着？"
         }
       ],

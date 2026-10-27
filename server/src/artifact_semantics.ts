@@ -456,6 +456,10 @@ export interface SemanticModelRules {
 
 const TIME_TOLERANCE_SEC = 0.001;
 
+function is_integer_second(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
+}
+
 interface PlanSceneRecord {
   scene_id: string;
   path: string;
@@ -945,6 +949,28 @@ function validate_clip_timeline(
 
     const start_sec = shot.start_sec;
     const end_sec = shot.end_sec;
+    if (!is_integer_second(start_sec)) {
+      errors.push(
+        semantic_error(
+          `${shot_path}.start_sec`,
+          "TIMELINE_INVALID",
+          "shot start_sec 必须使用整数秒。",
+          clip_id,
+          shot_reference,
+        ),
+      );
+    }
+    if (!is_integer_second(end_sec)) {
+      errors.push(
+        semantic_error(
+          `${shot_path}.end_sec`,
+          "TIMELINE_INVALID",
+          "shot end_sec 必须使用整数秒。",
+          clip_id,
+          shot_reference,
+        ),
+      );
+    }
     if (
       typeof start_sec !== "number" ||
       typeof end_sec !== "number" ||
@@ -964,7 +990,7 @@ function validate_clip_timeline(
       );
       continue;
     }
-    if (Math.abs(start_sec - previous_end) > TIME_TOLERANCE_SEC) {
+    if (start_sec !== previous_end) {
       errors.push(
         semantic_error(
           `${shot_path}.start_sec`,
@@ -975,7 +1001,7 @@ function validate_clip_timeline(
         ),
       );
     }
-    if (typeof duration === "number" && end_sec > duration + TIME_TOLERANCE_SEC) {
+    if (typeof duration === "number" && end_sec > duration) {
       errors.push(
         semantic_error(
           `${shot_path}.end_sec`,
@@ -1024,7 +1050,7 @@ function validate_clip_timeline(
     }
   }
 
-  if (typeof duration === "number" && Math.abs(previous_end - duration) > TIME_TOLERANCE_SEC) {
+  if (typeof duration === "number" && previous_end !== duration) {
     errors.push(
       semantic_error(
         `${path}.shots`,
@@ -1095,8 +1121,28 @@ function validate_clip_audio(
       if (!is_record(cue)) {
         continue;
       }
-      const start_sec = typeof cue.start_sec === "number" ? cue.start_sec : undefined;
-      const end_sec = typeof cue.end_sec === "number" ? cue.end_sec : undefined;
+      const start_sec = cue.start_sec;
+      const end_sec = cue.end_sec;
+      if (!is_integer_second(start_sec)) {
+        errors.push(
+          semantic_error(
+            `${cue_path}.start_sec`,
+            "TIMELINE_INVALID",
+            "AudioCue start_sec 必须使用整数秒。",
+            clip_id,
+          ),
+        );
+      }
+      if (!is_integer_second(end_sec)) {
+        errors.push(
+          semantic_error(
+            `${cue_path}.end_sec`,
+            "TIMELINE_INVALID",
+            "AudioCue end_sec 必须使用整数秒。",
+            clip_id,
+          ),
+        );
+      }
       if (
         typeof start_sec !== "number" ||
         typeof end_sec !== "number" ||
@@ -1104,7 +1150,7 @@ function validate_clip_audio(
         !Number.isFinite(end_sec) ||
         start_sec < 0 ||
         end_sec <= start_sec ||
-        (typeof duration === "number" && end_sec > duration + TIME_TOLERANCE_SEC)
+        (typeof duration === "number" && end_sec > duration)
       ) {
         errors.push(
           semantic_error(
@@ -1119,8 +1165,7 @@ function validate_clip_audio(
       if (
         (track === "ambience" || track === "music") &&
         typeof duration === "number" &&
-        (Math.abs(start_sec - 0) > TIME_TOLERANCE_SEC ||
-          Math.abs(end_sec - duration) > TIME_TOLERANCE_SEC)
+        (start_sec !== 0 || end_sec !== duration)
       ) {
         errors.push(
           semantic_error(
@@ -1186,6 +1231,24 @@ function validate_dialogue_segments(
       const speaker_id = entry.segment.speaker_id;
       const start_sec = entry.segment.start_sec;
       const end_sec = entry.segment.end_sec;
+      if (!is_integer_second(start_sec)) {
+        errors.push(
+          semantic_error(
+            `${entry.path}.start_sec`,
+            "TIMELINE_INVALID",
+            `对白 "${dialogue_unit_id}" 的 start_sec 必须使用整数秒。`,
+          ),
+        );
+      }
+      if (!is_integer_second(end_sec)) {
+        errors.push(
+          semantic_error(
+            `${entry.path}.end_sec`,
+            "TIMELINE_INVALID",
+            `对白 "${dialogue_unit_id}" 的 end_sec 必须使用整数秒。`,
+          ),
+        );
+      }
       if (
         typeof start_sec !== "number" ||
         typeof end_sec !== "number" ||
@@ -1193,7 +1256,7 @@ function validate_dialogue_segments(
         !Number.isFinite(end_sec) ||
         start_sec < 0 ||
         end_sec <= start_sec ||
-        (typeof entry.duration_sec === "number" && end_sec > entry.duration_sec + TIME_TOLERANCE_SEC)
+        (typeof entry.duration_sec === "number" && end_sec > entry.duration_sec)
       ) {
         errors.push(
           semantic_error(
@@ -1929,7 +1992,7 @@ function validate_prompt_shots(
       }
     }
   }
-  if (typeof duration === "number" && Math.abs(previous_end - duration) > TIME_TOLERANCE_SEC) {
+  if (typeof duration === "number" && previous_end !== duration) {
     errors.push(semantic_error(path, "TIMELINE_INVALID", `PromptIR 视觉轨结束于 ${previous_end}，与 clip 总时长 ${duration} 不一致。`, clip_id));
   }
 }

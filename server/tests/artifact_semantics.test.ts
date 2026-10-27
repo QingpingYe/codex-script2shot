@@ -266,12 +266,12 @@ describe("shot plan v2 semantics", () => {
 
   test("rejects timeline gaps, overlaps and out-of-order shots", () => {
     const gap = planFixture();
-    gap.scenes[0].clips[0].shots[1].start_sec = 2.1;
+    gap.scenes[0].clips[0].shots[1].start_sec = 3;
     expect(validate_shot_plan_semantics(gap, RULES_25, analysisFixture()).map((e) => e.code))
       .toContain("TIMELINE_INVALID");
 
     const overlap = planFixture();
-    overlap.scenes[0].clips[0].shots[1].start_sec = 1.9;
+    overlap.scenes[0].clips[0].shots[1].start_sec = 1;
     expect(validate_shot_plan_semantics(overlap, RULES_25, analysisFixture()).map((e) => e.code))
       .toContain("TIMELINE_INVALID");
 
@@ -281,15 +281,35 @@ describe("shot plan v2 semantics", () => {
       .toContain("TIMELINE_INVALID");
   });
 
-  test("uses 0.001 second tolerance for internal shot boundaries", () => {
-    const within = planFixture();
-    within.scenes[0].clips[0].shots[1].start_sec = 2.0005;
-    expect(validate_shot_plan_semantics(within, RULES_25, analysisFixture())).toEqual([]);
+  test("rejects fractional shot boundaries in all shot-plan time fields", () => {
+    const analysis = analysisFixture();
 
-    const beyond = planFixture();
-    beyond.scenes[0].clips[0].shots[1].start_sec = 2.002;
-    expect(validate_shot_plan_semantics(beyond, RULES_25, analysisFixture()).map((e) => e.code))
-      .toContain("TIMELINE_INVALID");
+    const shotPlan = planFixture();
+    shotPlan.scenes[0].clips[0].shots[0].end_sec = 2.5;
+    expect(validate_shot_plan_semantics(shotPlan, RULES_25, analysis)).toContainEqual(
+      expect.objectContaining({
+        path: "scenes[0].clips[0].shots[0].end_sec",
+        code: "TIMELINE_INVALID",
+      }),
+    );
+
+    const dialoguePlan = planFixture();
+    dialoguePlan.scenes[0].clips[0].dialogue[0].end_sec = 2.5;
+    expect(validate_shot_plan_semantics(dialoguePlan, RULES_25, analysis)).toContainEqual(
+      expect.objectContaining({
+        path: "scenes[0].clips[0].dialogue[0].end_sec",
+        code: "TIMELINE_INVALID",
+      }),
+    );
+
+    const audioPlan = planFixture();
+    audioPlan.scenes[0].clips[0].audio.sfx[0].end_sec = 5.5;
+    expect(validate_shot_plan_semantics(audioPlan, RULES_25, analysis)).toContainEqual(
+      expect.objectContaining({
+        path: "scenes[0].clips[0].audio.sfx[0].end_sec",
+        code: "TIMELINE_INVALID",
+      }),
+    );
   });
 
   test("rejects duplicate shot IDs", () => {
@@ -318,6 +338,28 @@ describe("shot plan v2 semantics", () => {
       .toContain("TIMELINE_INVALID");
   });
 
+
+  test("rejects clip splits that leave a tail below the model minimum", () => {
+    const plan25 = planFixture();
+    add_split_clip(plan25, 4);
+    const tail25 = plan25.scenes[0].clips[1];
+    tail25.duration_sec = 2;
+    tail25.shots[0].end_sec = 2;
+    tail25.audio.ambience[0].end_sec = 2;
+    tail25.dialogue = [];
+    expect(validate_shot_plan_semantics(plan25, RULES_25, analysisFixture()).map((e) => e.code))
+      .toContain("TIMELINE_INVALID");
+
+    const plan20 = planFixture();
+    add_split_clip(plan20, 15);
+    const tail20 = plan20.scenes[0].clips[1];
+    tail20.duration_sec = 3;
+    tail20.shots[0].end_sec = 3;
+    tail20.audio.ambience[0].end_sec = 3;
+    tail20.dialogue = [];
+    expect(validate_shot_plan_semantics(plan20, RULES_20, analysisFixture()).map((e) => e.code))
+      .toContain("TIMELINE_INVALID");
+  });
   test("accepts a 36-second process split into two 18-second clips with continuity", () => {
     const plan = planFixture();
     add_split_clip(plan, 18);
@@ -390,7 +432,7 @@ describe("shot plan v2 semantics", () => {
 
   test("rejects dialogue time intervals outside the clip", () => {
     const plan = planFixture();
-    plan.scenes[0].clips[0].dialogue[0].end_sec = 10.5;
+    plan.scenes[0].clips[0].dialogue[0].end_sec = 11;
     expect(validate_shot_plan_semantics(plan, RULES_25, analysisFixture()).map((e) => e.code))
       .toContain("TIMELINE_INVALID");
   });
@@ -401,7 +443,7 @@ describe("shot plan v2 semantics", () => {
     expect(validate_shot_plan_semantics(plan, RULES_25, analysisFixture())).toEqual([]);
 
     const out_of_bounds = planFixture();
-    out_of_bounds.scenes[0].clips[0].audio.sfx[0].end_sec = 10.5;
+    out_of_bounds.scenes[0].clips[0].audio.sfx[0].end_sec = 11;
     expect(
       validate_shot_plan_semantics(out_of_bounds, RULES_25, analysisFixture()).map(
         (e) => e.code,

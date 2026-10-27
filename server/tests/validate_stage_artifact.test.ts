@@ -82,6 +82,17 @@ describe("stage artifact v2 validation", () => {
     expect(result.errors).toContainEqual(expect.objectContaining({ code: "TIMELINE_INVALID" }));
   });
 
+  test("rejects fractional shot timeline through the stage validator", () => {
+    const edited = read_json(path.join(shortdramaDir, "shot_plan.v2.json"));
+    edited.scenes[0].clips[0].shots[0].end_sec = 2.5;
+    const result = validate_stage_artifact({
+      stage: "shot_planning",
+      path: write_temp(edited),
+      script_analysis_path: path.join(shortdramaDir, "script_analysis.v2.json"),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContainEqual(expect.objectContaining({ code: "TIMELINE_INVALID" }));
+  });
   test("reports missing and invalid JSON files structurally", () => {
     const missing = validate_stage_artifact({ stage: "script_breakdown", path: path.join(os.tmpdir(), "missing.json") });
     expect(missing).toMatchObject({ ok: false, errors: [{ code: "STAGE_ARTIFACT_MISSING" }] });

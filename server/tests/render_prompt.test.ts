@@ -63,9 +63,9 @@ describe("render prompt v2", () => {
       expect(markdown.match(new RegExp(`【${label}】`, "g"))).toHaveLength(clip_count);
     }
     expect(markdown).toContain("0–2秒：");
-    expect(markdown).toContain("5.2–5.7秒：音效：<信封交接时纸张轻响。>");
+    expect(markdown).toContain("5–6秒：音效：<信封交接时纸张轻响。>");
     expect(markdown).toContain("@图片1（待提供：林岚参考图）");
-    expect(markdown).toContain("0.5–2.5秒：林岚说：{给你。}");
+    expect(markdown).toContain("1–2秒：林岚说：{给你。}");
     expect(markdown.match(/给你。/g)).toHaveLength(1);
   });
 
@@ -76,7 +76,7 @@ describe("render prompt v2", () => {
     const no_timeline = render_fixture(prompt);
     expect(no_timeline).toContain("镜头1：中景，平视，固定");
     expect(no_timeline).not.toContain("0–2秒：");
-    expect(no_timeline).not.toContain("0.5–2.5秒：");
+    expect(no_timeline).not.toContain("1–2秒：");
     prompt.display_timeline = true;
     const timeline = render_fixture(prompt);
     expect(timeline).toContain("0–2秒：");
