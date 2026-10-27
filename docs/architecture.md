@@ -739,6 +739,17 @@ $knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
 `run.json`，并把工具返回的 `content_hash` 交给下游。续跑时先由 `read_run` 识别版本、
 混合版本和内容指纹；v1 不迁移。入口最后汇总知识引用与 warning。
 
+**参数收集是硬规则（入口 Skill 与代理共同遵守）。** 运行输入由用户给定，入口不得替用户假设：
+
+- 必填项 `project_id`、`input_mode` 和单一 `target_model` 缺失时，先向用户确认再创建 run；
+  不得用默认值、上一次 run 的值或推测顶替。用户一次给出多个目标模型时，先让用户选定一个，或按模型拆成多次 run。
+- `aspect_ratio` 未指定时先问用户；只有在确实无法询问的运行方式下，才允许使用显式默认，
+  并必须把默认值及其来源写进 run 级 warning，不得静默假设。
+- `input_references` 与 `display_timeline` 属可选输入：缺省即「无外部素材」与「不显示时间轴」，交付说明里要写明本次取值。
+- 这些字段参与 run 上下文指纹（`input_mode`、`project_id`、`target_model`、`aspect_ratio`、`input_references`、`display_timeline`），
+  run 创建后不可修改；要改只能新建 run，并用新的 `run_context_hash` 重发三个阶段产物。
+- 工具层不提供询问能力：`init_run` 只做参数校验与建目录，因此询问发生在调用 `init_run` 之前，由入口 Skill / 代理承担。
+
 ### 9.4 script-breakdown
 
 把剧本解析为实体台账、参考素材槽、原文单元和完整过程。仅剧本输入时为每个角色、

@@ -13,9 +13,13 @@ description: script2shot v2 入口编排：接收剧本与可选参考素材，�
 
 ## 新 run
 
-1. 收集 `project_id`、单一 `target_model`、可选 `aspect_ratio`、输入模式，以及可选的：
-   - `input_references[]`：用户提供的参考素材、本地路径或素材标识、职责和排除范围；
-   - `display_timeline`：2.0 是否显示秒数；2.5 由模型规则强制显示。
+1. 收集参数；缺必填项时先向用户确认，不得自行假设：
+   - 必填：`project_id`、`input_mode`、单一 `target_model`。任一缺失时先问用户，不得用默认值、上一次 run 的值或
+     推测代替；用户同时给出多个模型时，先让用户选定一个；
+   - 可选：`aspect_ratio`。未指定时先问用户；确实无法询问时才能用显式默认，并把默认值与
+     来源写进 run 级 warning；
+   - 可选：`input_references[]`：用户提供的参考素材、本地路径或素材标识、职责和排除范围；
+   - 可选：`display_timeline`：2.0 是否显示秒数；2.5 由模型规则强制显示。
 2. 刷新本地索引，按 dry-run 结果执行刷新。外部知识库只读。
 3. 调用：
    `init_run({ workspace_root, input_mode, project_id, target_model, aspect_ratio, input_references, display_timeline })`。

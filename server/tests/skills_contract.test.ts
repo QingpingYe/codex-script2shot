@@ -143,6 +143,13 @@ describe("shortdrama v2 skill content contract", () => {
     }
   });
 
+  test("entry requires asking for missing required run inputs", () => {
+    const markdown = read("script2shot");
+    for (const token of ["必填", "先向用户确认", "不得自行假设", "`target_model`", "`aspect_ratio`"]) {
+      expect(markdown).toContain(token);
+    }
+  });
+
   test("breakdown documents entities, placeholders and processes", () => {
     const markdown = read("script-breakdown");
     for (const token of ["entities[]", "reference_assets[]", "processes[]", "placeholder", "input_hashes.run_context"]) {
