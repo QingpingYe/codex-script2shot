@@ -23,13 +23,14 @@
     "target_model": { "type": "string", "enum": ["seedance-2.0", "seedance-2.5"] },
     "aspect_ratio": {
       "type": "string",
-      "enum": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"]
+      "enum": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+      "default": "9:16"
     },
     "input_references": {
       "type": "array",
       "items": { "$ref": "#/$defs/input_reference" }
     },
-    "display_timeline": { "type": "boolean" },
+    "display_timeline": { "type": "boolean", "default": false },
     "warnings": { "type": "array", "items": { "$ref": "#/$defs/warning" } },
     "stages": {
       "type": "object",

@@ -30,7 +30,8 @@
 5. 【保持一致】
 
 - Seedance 2.5：每个内部镜头、对白片段和声音 cue 必须带秒数。
-- Seedance 2.0：默认顺序叙述，用户开启 `display_timeline` 后显示秒数。
+- Seedance 2.0：默认顺序叙述，`display_timeline` 默认为 false，用户开启后显示秒数。
+- 视频宽高比默认 9:16；Seedance 2.5 固定显示秒数。
 - 仅剧本输入：为每个角色、场景、关键道具分别建立 image 占位，标记“待提供”。
 
 ## 主要能力

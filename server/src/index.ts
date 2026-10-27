@@ -48,6 +48,8 @@ import { validate_prompt, type ValidatePromptInput } from "./tools/validate_prom
 import { render_prompt, type RenderPromptInput } from "./tools/render_prompt.js";
 import {
   RUN_ASPECT_RATIO_VALUES,
+  RUN_DEFAULT_ASPECT_RATIO,
+  RUN_DEFAULT_DISPLAY_TIMELINE,
   RUN_INPUT_MODE_VALUES,
   RUN_STAGE_STATUS_VALUES,
   RUN_STAGE_VALUES,
@@ -65,7 +67,7 @@ import {
 } from "./aggregate.js";
 
 const server = new Server(
-  { name: "script2shot", version: "0.2.0" },
+  { name: "script2shot", version: "0.2.1" },
   { capabilities: { tools: {} } },
 );
 
@@ -400,7 +402,8 @@ const TOOLS = [
         aspect_ratio: {
           type: "string",
           enum: [...RUN_ASPECT_RATIO_VALUES],
-          description: "可选运行级画幅比例；shot-prompting 可从中恢复。",
+          default: RUN_DEFAULT_ASPECT_RATIO,
+          description: `可选运行级画幅比例；未提供时默认 ${RUN_DEFAULT_ASPECT_RATIO}。`,
         },
         input_references: {
           type: "array",
@@ -409,7 +412,8 @@ const TOOLS = [
         },
         display_timeline: {
           type: "boolean",
-          description: "可选：是否在 2.0 提示词中显示秒数；2.5 强制显示。",
+          default: RUN_DEFAULT_DISPLAY_TIMELINE,
+          description: "可选：是否在 2.0 提示词中显示秒数；默认 false；2.5 强制显示。",
         },
       },
       required: ["workspace_root", "input_mode", "project_id", "target_model"],
@@ -1133,7 +1137,7 @@ function parse_init_run_arguments(raw: unknown): Parsed<InitRunInput> {
     "input_mode",
     "project_id",
     "target_model",
-"aspect_ratio",
+    "aspect_ratio",
     "input_references",
     "display_timeline",
   ]);

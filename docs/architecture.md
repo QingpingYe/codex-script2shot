@@ -741,14 +741,17 @@ $knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
 
 **参数收集是硬规则（入口 Skill 与代理共同遵守）。** 运行输入由用户给定，入口不得替用户假设：
 
-- 必填项 `project_id`、`input_mode` 和单一 `target_model` 缺失时，先向用户确认再创建 run；
+- 必填项 `project_id`、`input_mode` 和单一 `target_model` 缺失时，先向用户确认再创建 run；询问时必须使用
+  “项目名称”“剧本范围”“视频模型”等容易理解的中文名称，不得只报内部字段名。
   不得用默认值、上一次 run 的值或推测顶替。用户一次给出多个目标模型时，先让用户选定一个，或按模型拆成多次 run。
-- `aspect_ratio` 未指定时先问用户；只有在确实无法询问的运行方式下，才允许使用显式默认，
-  并必须把默认值及其来源写进 run 级 warning，不得静默假设。
-- `input_references` 与 `display_timeline` 属可选输入：缺省即「无外部素材」与「不显示时间轴」，交付说明里要写明本次取值。
+- `aspect_ratio` 未指定时先问用户；默认值为 9:16（竖屏）。用户未提供或确实无法询问时，使用
+  9:16，并在 `run.json` 中落值；交付说明里要写明本次取值。其他可选值为 16:9（横屏）、4:3、
+  1:1（方形）、3:4、9:16、21:9。
+- `display_timeline` 默认为 false（不显示秒数）；Seedance 2.0 使用该偏好，Seedance 2.5 在提示词阶段强制显示。
+  `input_references` 缺省即「无外部素材」；交付说明里要写明本次取值。
 - 这些字段参与 run 上下文指纹（`input_mode`、`project_id`、`target_model`、`aspect_ratio`、`input_references`、`display_timeline`），
   run 创建后不可修改；要改只能新建 run，并用新的 `run_context_hash` 重发三个阶段产物。
-- 工具层不提供询问能力：`init_run` 只做参数校验与建目录，因此询问发生在调用 `init_run` 之前，由入口 Skill / 代理承担。
+- 工具层不提供询问能力：`init_run` 只做参数校验、应用缺省值并建目录，因此询问发生在调用 `init_run` 之前，由入口 Skill / 代理承担。
 
 ### 9.4 script-breakdown
 
@@ -849,8 +852,9 @@ general / project 块重复归类。
 ### 11.1 支持的输入
 
 一次 run 支持片段、单集或多集剧本，指定一个 `project_id`、一个目标模型和可选
-`aspect_ratio`。用户可以补充 `input_references[]`（本地路径或素材标识、职责、排除范围）
-和 `display_timeline`。没有实际素材时仍继续，由解析阶段生成参考图占位并写入 warning。
+`aspect_ratio`；未指定时默认 9:16。用户可以补充 `input_references[]`（本地路径或素材标识、
+职责、排除范围）和 `display_timeline`；后者未指定时默认 false，Seedance 2.5 仍强制显示。
+没有实际素材时仍继续，由解析阶段生成参考图占位并写入 warning。
 
 ### 11.2 生成流程与续跑
 
@@ -873,7 +877,7 @@ general / project 块重复归类。
 
 时长、画幅、参考图片上限和时间轴强制只以 `rules/models/*.json` 为运行时事实来源。
 Seedance 2.0 为 4–15 秒、最多 9 张图片，秒数默认关闭；Seedance 2.5 为 4–30 秒、
-最多 30 张图片，秒数强制开启。内部 shot 不受模型时长下限单独限制。
+最多 30 张图片，秒数强制开启。运行时画幅默认 9:16。内部 shot 不受模型时长下限单独限制。
 
 ### 11.5 输出
 

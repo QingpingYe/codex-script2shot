@@ -5,8 +5,8 @@ LLM 创作仍由四个 Skill 承担。
 
 ## 运行工具
 
-- `init_run`：创建 v2 run，保存 `input_references`、`display_timeline`，返回
-  `run_context_hash`。
+- `init_run`：创建 v2 run；未提供 `aspect_ratio` 时默认 9:16，未提供 `display_timeline` 时默认 false；
+  保存 `input_references`，返回 `run_context_hash`。
 - `read_run`：先拒绝旧/混合版本，再校验三阶段产物、身份和内容指纹；返回
   `run_context_hash`，上游变化时把下游标为待重跑。
 - `update_run_state`：只更新阶段状态与 warning，不改运行输入。

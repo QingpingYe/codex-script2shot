@@ -13,13 +13,14 @@ description: script2shot v2 入口编排：接收剧本与可选参考素材，�
 
 ## 新 run
 
-1. 收集参数；缺必填项时先向用户确认，不得自行假设：
-   - 必填：`project_id`、`input_mode`、单一 `target_model`。任一缺失时先问用户，不得用默认值、上一次 run 的值或
-     推测代替；用户同时给出多个模型时，先让用户选定一个；
-   - 可选：`aspect_ratio`。未指定时先问用户；确实无法询问时才能用显式默认，并把默认值与
-     来源写进 run 级 warning；
-   - 可选：`input_references[]`：用户提供的参考素材、本地路径或素材标识、职责和排除范围；
-   - 可选：`display_timeline`：2.0 是否显示秒数；2.5 由模型规则强制显示。
+1. 收集参数；缺必填项时先向用户确认，不得自行假设。向用户询问时必须使用容易理解的中文名称，不得只报内部字段名：
+   - 项目名称（project_id）：必填；用户未提供时先问项目名称。
+   - 剧本范围（input_mode）：必填；请用户在“片段 / 单集 / 多集”中选择。
+   - 视频模型（target_model）：必填；请用户在“Seedance 2.0 / Seedance 2.5”中选定一个。
+   - 视频宽高比（aspect_ratio）：未指定时先问；默认 9:16（竖屏）。可选 16:9（横屏）、4:3、1:1（方形）、3:4、9:16、21:9。
+   - 时间轴显示（display_timeline）：默认 false（不显示秒数）；2.0 可询问用户是否显示，2.5 固定显示。
+   - 参考素材（input_references）：可选；用户未提供时按无外部素材继续。
+   用户可以一次提供多项；多个缺失项应一次性询问，不得逐项反复追问。
 2. 刷新本地索引，按 dry-run 结果执行刷新。外部知识库只读。
 3. 调用：
    `init_run({ workspace_root, input_mode, project_id, target_model, aspect_ratio, input_references, display_timeline })`。

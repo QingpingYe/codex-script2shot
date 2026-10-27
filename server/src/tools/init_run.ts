@@ -37,6 +37,9 @@ export const RUN_ASPECT_RATIO_VALUES = [
 
 export type RunAspectRatio = (typeof RUN_ASPECT_RATIO_VALUES)[number];
 
+export const RUN_DEFAULT_ASPECT_RATIO: RunAspectRatio = "9:16";
+export const RUN_DEFAULT_DISPLAY_TIMELINE = false;
+
 export const RUN_STAGE_VALUES = [
   "script_breakdown",
   "shot_planning",
@@ -167,9 +170,9 @@ export function init_run(input: InitRunInput): InitRunSuccess | RunToolFailure {
     input_mode: input_mode.value,
     project_id: project_id.value,
     target_model: target_model.value,
-    ...(aspect_ratio.value === undefined ? {} : { aspect_ratio: aspect_ratio.value }),
+    aspect_ratio: aspect_ratio.value ?? RUN_DEFAULT_ASPECT_RATIO,
     ...(input_references.value === undefined ? {} : { input_references: input_references.value }),
-    ...(display_timeline.value === undefined ? {} : { display_timeline: display_timeline.value }),
+    display_timeline: display_timeline.value ?? RUN_DEFAULT_DISPLAY_TIMELINE,
     warnings: [],
     stages: initial_stages(),
   };

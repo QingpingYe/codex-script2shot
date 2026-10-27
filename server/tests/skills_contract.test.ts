@@ -145,7 +145,23 @@ describe("shortdrama v2 skill content contract", () => {
 
   test("entry requires asking for missing required run inputs", () => {
     const markdown = read("script2shot");
-    for (const token of ["必填", "先向用户确认", "不得自行假设", "`target_model`", "`aspect_ratio`"]) {
+    for (const token of ["必填", "先向用户确认", "不得自行假设", "target_model", "aspect_ratio"]) {
+      expect(markdown).toContain(token);
+    }
+  });
+
+  test("entry asks with user-facing Chinese labels and documents video defaults", () => {
+    const markdown = read("script2shot");
+    for (const token of [
+      "项目名称（project_id）",
+      "剧本范围（input_mode）",
+      "视频模型（target_model）",
+      "视频宽高比（aspect_ratio）",
+      "时间轴显示（display_timeline）",
+      "参考素材（input_references）",
+      "默认 9:16",
+      "默认 false",
+    ]) {
       expect(markdown).toContain(token);
     }
   });

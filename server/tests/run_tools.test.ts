@@ -88,6 +88,30 @@ describe("run directory tools v2", () => {
     expect(created.run_context_hash).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  test("init run defaults an omitted aspect ratio to 9:16", () => {
+    const created = success_init(init_run({
+      workspace_root: workspaceRoot,
+      input_mode: "script_segment",
+      project_id: "demo",
+      target_model: "seedance-2.0",
+    }));
+    const document = read_json(created.run_json_path);
+
+    expect(document.aspect_ratio).toBe("9:16");
+  });
+
+  test("init run defaults an omitted display timeline preference to false", () => {
+    const created = success_init(init_run({
+      workspace_root: workspaceRoot,
+      input_mode: "script_segment",
+      project_id: "demo",
+      target_model: "seedance-2.0",
+    }));
+    const document = read_json(created.run_json_path);
+
+    expect(document.display_timeline).toBe(false);
+  });
+
   test("run schema rejects an empty artifact string", () => {
     const created = init_v2();
     const document = read_json(created.run_json_path);
