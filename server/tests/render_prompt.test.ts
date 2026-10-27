@@ -56,9 +56,11 @@ function render_fixture(prompt: Record<string, any>): string {
 describe("render prompt v2", () => {
   test("renders one five-module prompt per video for Seedance 2.5", () => {
     const markdown = render_fixture(read_json(path.join(shortdramaDir, "prompts_ir.v2.json")));
-    expect(markdown.match(/^## 视频 /gm)).toHaveLength(2);
+    const clip_count = markdown.match(/^## 视频 /gm)?.length ?? 0;
+    expect(clip_count).toBe(2);
     for (const label of ["生成目标", "参考素材职责", "主体与关系", "事件脚本", "保持一致"]) {
-      expect(markdown).toContain(`【${label}】`);
+      // 五模块名称、顺序与数量都要准确：每段视频每个标题只能出现一次。
+      expect(markdown.match(new RegExp(`【${label}】`, "g"))).toHaveLength(clip_count);
     }
     expect(markdown).toContain("0–2秒：");
     expect(markdown).toContain("5.2–5.7秒：音效：<信封交接时纸张轻响。>");

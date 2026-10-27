@@ -86,7 +86,6 @@ function render_document(document: Record<string, unknown>, rules: ModelRules, a
     if (placeholders.length > 0) {
       lines.push("", `> 参考素材提示：本段有 ${placeholders.length} 张参考图待提供，正文只描述职责，不表示图片已就绪。`);
     }
-    lines.push("", `【${rules.render.section_labels.generation_goal}】`, as_string(clip.generation_goal));
     const references = as_array(clip.reference_bindings).filter(is_record);
     const sections: Record<string, string> = {
       generation_goal: as_string(clip.generation_goal),
