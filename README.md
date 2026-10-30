@@ -1,4 +1,4 @@
-# codex-script2shot
+# lvan-script2shot
 
 把剧本转换成 AI 视频生成提示词的插件，同时支持 Codex 与 Claude Code（同一仓库、
 同一套技能与 MCP Server，两个宿主各读各自的清单）。当前 v2 面向短剧：最终交付单位是
@@ -9,7 +9,7 @@
 Claude Code（含桌面端 Code tab；图形入口：输入框旁 **+ → Add plugins**）：
 
 ```bash
-claude plugin marketplace add QingpingYe/codex-script2shot && claude plugin install script2shot@script2shot-git
+claude plugin marketplace add QingpingYe/lvan-script2shot && claude plugin install script2shot@script2shot-git
 ```
 
 Codex：在 Codex 应用中打开 Plugins 侧栏，选择本仓库的 marketplace（`.agents/plugins/marketplace.json`），在 Coding 分类下安装 `Script2Shot`。

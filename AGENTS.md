@@ -1,4 +1,4 @@
-# AGENTS.md - codex-script2shot
+# AGENTS.md - lvan-script2shot
 
 本文件是仓库级常驻指令，与全局 `~/.codex/AGENTS.md` 叠加；子目录可用
 `AGENTS.override.md` 覆盖。
