@@ -36,11 +36,26 @@ if defined USERPROFILE if exist "%USERPROFILE%\.cache\codex-runtimes\codex-prima
   exit
 )
 
+rem Claude Code 等宿主不自带 Node：复用 setup 安装的私有运行时。ensure-runtime 只装
+rem >= 24 的版本，任意一个都满足；多个版本时目录枚举取到最后一个（字典序最大）。
+set "SCRIPT2SHOT_RUNTIME=%USERPROFILE%\.codex-script2shot\runtime"
+if defined SCRIPT2SHOT_HOME set "SCRIPT2SHOT_RUNTIME=%SCRIPT2SHOT_HOME%\runtime"
+set "SCRIPT2SHOT_PRIVATE_NODE="
+if exist "%SCRIPT2SHOT_RUNTIME%" for /d %%V in ("%SCRIPT2SHOT_RUNTIME%\node-*") do (
+  for /d %%D in ("%%~V\node-*") do (
+    if exist "%%~D\node.exe" set "SCRIPT2SHOT_PRIVATE_NODE=%%~D\node.exe"
+  )
+)
+if defined SCRIPT2SHOT_PRIVATE_NODE (
+  "%SCRIPT2SHOT_PRIVATE_NODE%" "%SCRIPT2SHOT_SERVER%" %*
+  exit
+)
+
 where node >nul 2>&1
 if not errorlevel 1 (
   node "%SCRIPT2SHOT_SERVER%" %*
   exit
 )
 
-echo 请更新 Codex 或安装 Node.js ^>= 24 1>&2
+echo 未找到可用的 Node 运行时；请安装 Node.js ^>= 24 后重试 1>&2
 exit /b 127

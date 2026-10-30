@@ -1,0 +1,18 @@
+{
+  "name": "script2shot-git",
+  "description": "script2shot 仓库自带 marketplace：同一插件同时支持 Codex 与 Claude Code。",
+  "owner": {
+    "name": "QingpingYe"
+  },
+  "plugins": [
+    {
+      "name": "script2shot",
+      "description": "把剧本转换成可直接使用的 AI 视频生成提示词（Seedance 2.0 / 2.5）",
+      "version": "0.3.0",
+      "source": "./",
+      "author": {
+        "name": "QingpingYe"
+      }
+    }
+  ]
+}

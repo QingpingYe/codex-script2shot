@@ -7,12 +7,13 @@ description: 安装后的一次性引导：由 AI 通过 scripts/setup_bootstrap
 
 插件安装后的初始化引导。AI 负责全部确定性步骤，人类只做三类动作。本 Skill 不写
 原始库；AI 库的建表由 `init_knowledge_b` 负责；不执行知识同步，只在最后提示用户
-可以在需要时运行一次 `$knowledge-sync`。
+可以在需要时运行一次知识同步（`script2shot:knowledge-sync`）。
 
 ## 环境前置与执行责任
 
 - 脚本位置：插件根目录下的 `scripts/setup_bootstrap.mjs`。从本 Skill 文件定位插件
-  根目录：`skills/setup/SKILL.md` 向上两层即插件根，再进 `scripts/`；Windows 用
+  根目录：`skills/setup/SKILL.md` 向上两层即插件根，再进 `scripts/`；Claude Code
+  下也可直接用 `${CLAUDE_PLUGIN_ROOT}` 作为插件根。Windows 用
   `scripts/setup_bootstrap.cmd`，POSIX 用 `scripts/setup_bootstrap`（两个薄包装
   与 MCP 启动器用同一套 Node 解析顺序）。
 - 必须由 AI 执行：环境探测、补装 Node 运行时、安装 lark-cli、构建并自检 MCP
@@ -24,31 +25,42 @@ description: 安装后的一次性引导：由 AI 通过 scripts/setup_bootstrap
 - 本会话即使 MCP 未注册也能走完：配置写入与建表都通过 `call-tool` 走 stdio 调用
   已构建的 server；构建完成后新开会话即可正常使用其余技能。
 
-## 流程（八步）
+## 流程（九步）
 
 每步都读脚本返回的 JSON；失败按 `error.code` 走「失败处理」表，不要自行改命
 令序列。
 
 1. `doctor`：只读探测，读 `checks[]` / `capabilities` / `next_actions`。`dist` 缺失
    或 Node 不满足要求时继续自愈，不用问用户。
-2. `ensure-runtime`：复用系统 `node` + `npm`（`>= 24`）；否则补装私有 Node
+2. **无 Node 前置（Claude Code 等不自带 Node 的宿主）**：如果启动器报「未找到可用
+   的 Node 运行时」（退出码 127），说明 `setup_bootstrap.mjs` 无法启动；先运行
+   `scripts/ensure_node.ps1`（Windows）或 `scripts/ensure_node.sh`（POSIX）完成首次
+   落地：它复用系统 node / 私有运行时，都没有时下载 `>= 24` 的最新 LTS 归档并校验
+   `SHASUMS256.txt`，解压到 `<home>/runtime/node-<version>/`，输出
+   `node_path` / `npm_path` 的 JSON。得到路径后用该 `node_path` 直接运行
+   `scripts/setup_bootstrap.mjs <子命令>`。
+3. `ensure-runtime`：复用系统 `node` + `npm`（`>= 24`）、私有运行时或当前进程运行时
+   （`source` 为 `system` / `private` / `process`）；都没有时补装私有 Node
    （下载 + `SHASUMS256.txt` 校验 + 解压），成功输出 `node_path` / `npm_path`。
-3. `build-server`：`npm ci` + `npm run build`，随后做 `initialize` + `tools/list`
+   之后的子命令一律用同一个 `node_path` 运行（如
+   `"<node_path>" scripts/setup_bootstrap.mjs build-server`）；`npm` 由脚本从
+   运行时的同目录自动解析，一般无需显式传。
+4. `build-server`：`npm ci` + `npm run build`，随后做 `initialize` + `tools/list`
    握手自检；成功输出 `dist_path` 与 `tools_count`（必须 >= 1）。
-4. `install-cli`：复用 `>= 1.0.98` 的 lark-cli，否则装到私有 prefix；只有用户
+5. `install-cli`：复用 `>= 1.0.98` 的 lark-cli，否则装到私有 prefix；只有用户
    明确同意系统级安装时才带 `--allow-global`。
-5. `ensure-app`：`config show` 的 stdout 里有 `appId` 就直接复用（其余字段一律
+6. `ensure-app`：`config show` 的 stdout 里有 `appId` 就直接复用（其余字段一律
    丢弃）；没有 `appId` 时先向用户说明，取得同意后带 `--create` 重跑，必要时再带
    `--force`。
-6. `auth-login`：默认返回 `status: "pending_human"` 与 `verification_url` /
+7. `auth-login`：默认返回 `status: "pending_human"` 与 `verification_url` /
    `user_code`；请用户在浏览器完成授权，然后用 `auth-login --device-code <code>`
    续跑，直到 `status: "ready"`（判定只看 `identities.user.status == "ready"` 且
    `available == true`，退出码不作判据）。
-7. 组装配置 → 只读预检 → 预览 → 一次确认 → 执行（见下一节）。
-8. `call-tool health`：逐项复查并汇报；`index` 为 `INDEX_NOT_BUILT` 在首次同步前
+8. 组装配置 → 只读预检 → 预览 → 一次确认 → 执行（见下一节）。
+9. `call-tool health`：逐项复查并汇报；`index` 为 `INDEX_NOT_BUILT` 在首次同步前
    属预期。
 
-### 第 7 步展开
+### 第 8 步展开
 
 1. `profile`：解析唯一活动 profile；`PROFILE_AMBIGUOUS` 时停止并说明冲突，不切换
    profile。
@@ -139,7 +151,7 @@ description: 安装后的一次性引导：由 AI 通过 scripts/setup_bootstrap
 | `CONFIG_MISSING` | 配置不存在：继续走本流程生成配置 |
 | `KB_TABLE_AMBIGUOUS` / `KB_READ_FAILED` / `KB_WRITE_FAILED` | AI 库同名表冲突、读取失败或建表失败：按 `details` 处理后再重跑 dry-run |
 | `drift`（不是错误） | `init_knowledge_b` 返回 `action: "drift"` 时停止执行，把 `drift[]` 讲清楚，等人工处理后再重跑 |
-| `INDEX_NOT_BUILT` | 首次 `$knowledge-sync` 前属预期；提示用户可在需要时运行该 Skill |
+| `INDEX_NOT_BUILT` | 首次知识同步（`script2shot:knowledge-sync`）前属预期；提示用户可在需要时运行该 Skill |
 
 ## 禁止项
 
@@ -150,5 +162,5 @@ description: 安装后的一次性引导：由 AI 通过 scripts/setup_bootstrap
   重新解析活动 profile 并更新本地配置值。
 - 不跳过 dry-run：`write_config` 与 `init_knowledge_b` 都必须先预览、展示摘要、
   得到用户确认后再执行 `dry_run: false`。
-- 不写原始库；不在 setup 内执行 `$knowledge-sync`。
+- 不写原始库；不在 setup 内执行知识同步（`script2shot:knowledge-sync`）。
 - 不把 `config show` 的输出整体回显或落盘：只取 `appId`，`appSecret` 一律丢弃。

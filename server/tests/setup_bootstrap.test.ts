@@ -363,7 +363,12 @@ describe("setup_bootstrap", () => {
     });
     const { ensure_runtime } = await import("../../scripts/setup_bootstrap.mjs");
 
-    const result = await ensure_runtime({ home_dir: home, env: {}, deps });
+    const result = await ensure_runtime({
+      home_dir: home,
+      env: {},
+      deps,
+      allow_process_runtime: false,
+    });
 
     expect(result.ok).toBe(true);
     expect(result.source).toBe("private");
@@ -393,7 +398,12 @@ describe("setup_bootstrap", () => {
     });
     const { ensure_runtime } = await import("../../scripts/setup_bootstrap.mjs");
 
-    const result = await ensure_runtime({ home_dir: home, env: {}, deps });
+    const result = await ensure_runtime({
+      home_dir: home,
+      env: {},
+      deps,
+      allow_process_runtime: false,
+    });
 
     expect(result.ok).toBe(false);
     expect(result.error.code).toBe("NODE_CHECKSUM_MISMATCH");
@@ -414,10 +424,89 @@ describe("setup_bootstrap", () => {
       deps,
       platform: "aix",
       arch: "ppc64",
+      allow_process_runtime: false,
     });
 
     expect(result.ok).toBe(false);
     expect(result.error.code).toBe("NPM_UNAVAILABLE");
+  });
+
+  test("ensure-runtime falls back to the current process runtime when npm-less hosts have no PATH node", async () => {
+    const home = path.join(tempRoot, "home");
+    mkdirSync(home, { recursive: true });
+    // 模拟 Claude Code 场景：PATH 上没有 node / npm；启动器已经用进程内的 Node 起了脚本。
+    const { deps, calls } = fake_deps({
+      run: async () => ({ code: 1, stdout: "", stderr: "not found" }),
+    });
+    const { ensure_runtime } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await ensure_runtime({ home_dir: home, env: {}, deps });
+
+    expect(result.ok).toBe(true);
+    expect(result.source).toBe("process");
+    expect(result.version).toBe(process.version.replace(/^v/, ""));
+    expect(result.node_path).toBe(process.execPath);
+    expect(result.major).toBeUndefined();
+    expect(calls.fetch_bytes, "进程回退命中时不得下载归档").toEqual([]);
+    expect(calls.fetch_json, "进程回退命中时不得读取 index.json").toEqual([]);
+  });
+
+  test("ensure-runtime reuses a private runtime directory when the process fallback is disabled", async () => {
+    const home = path.join(tempRoot, "home");
+    const version = "v24.9.0";
+    const platform = process.platform === "win32" ? "win" : process.platform;
+    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    const node_path = path.join(
+      home,
+      ".codex-script2shot",
+      "runtime",
+      `node-${version}`,
+      `node-${version}-${platform}-${arch}`,
+      extracted_node_relative(platform),
+    );
+    mkdirSync(path.dirname(node_path), { recursive: true });
+    writeFileSync(node_path, "node", "utf8");
+    // 系统 node 探测失败；私有运行时探测返回 24.9.0。
+    const { deps, calls } = fake_deps({
+      run: async (command) =>
+        command === node_path
+          ? { code: 0, stdout: "v24.9.0\n", stderr: "" }
+          : { code: 1, stdout: "", stderr: "not found" },
+    });
+    const { ensure_runtime } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await ensure_runtime({
+      home_dir: home,
+      env: {},
+      deps,
+      allow_process_runtime: false,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.source).toBe("private");
+    expect(result.version).toBe("24.9.0");
+    expect(result.node_path).toBe(node_path);
+    expect(calls.fetch_bytes, "私有运行时复用路径不得下载归档").toEqual([]);
+  });
+
+  test("doctor reports the process runtime when the PATH node is missing", async () => {
+    const home = path.join(tempRoot, "home");
+    mkdirSync(home, { recursive: true });
+    const { deps } = fake_deps({
+      run: async (command, args) =>
+        command === "node" && args[0] === "--version"
+          ? { code: 1, stdout: "", stderr: "not found" }
+          : { code: 0, stdout: "9.0.0\n", stderr: "" },
+    });
+    const { doctor } = await import("../../scripts/setup_bootstrap.mjs");
+
+    const result = await doctor({ home_dir: home, env: {}, deps });
+
+    const node_check = (result.checks as Array<{ id: string; status: string; detail?: { source?: string } }>).find(
+      (entry) => entry.id === "node",
+    );
+    expect(node_check?.status).toBe("pass");
+    expect(node_check?.detail?.source).toBe("process");
   });
 
   test("install-cli reuses a private cli at or above the minimum version", async () => {

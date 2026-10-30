@@ -1,2 +1,5 @@
 # 渲染快照按字节比较，行尾必须固定为 LF（Task 4c-3）。
 tests/fixtures/prompts/*.golden.md text eol=lf
+
+# 分发的构建产物：固定 LF 行尾，保证重建后工作区字节稳定。
+server/dist/server.mjs text eol=lf

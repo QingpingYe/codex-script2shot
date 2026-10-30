@@ -1,12 +1,13 @@
-# AI 视频提示词 Codex 插件与知识库架构
+# AI 视频提示词插件与知识库架构
 
 状态：Draft
 日期：2026-10-20
-最近修订：2026-10-22（统一知识库称呼为原始库 / AI 库；2026-10-20 按最小修正清单收敛同步、检索和阶段契约）
+最近修订：2026-10-30（双宿主：同一仓库同时支持 Codex 与 Claude Code；2026-10-22 统一知识库称呼为原始库 / AI 库）
 
 ## 1. 背景
 
-本项目要开发一个用于生成 AI 视频提示词的 Codex 插件。用户在 Codex 会话中提交剧本片段、一集剧本或多集剧本，插件通过剧本解析、镜头规划和知识检索，为 Seedance 2.0 或 Seedance 2.5 生成视频提示词。
+本项目要开发一个用于生成 AI 视频提示词的插件，同时支持 Codex 与 Claude Code 两个
+宿主（2026-10-30 起）。用户在宿主会话中提交剧本片段、一集剧本或多集剧本，插件通过剧本解析、镜头规划和知识检索，为 Seedance 2.0 或 Seedance 2.5 生成视频提示词。
 
 知识来源使用两个飞书知识库，本文档统一使用以下名称：
 
@@ -66,7 +67,7 @@ AI 库中维护一个 `SyncState` 表，记录原始库中每个原始文档的�
 
 ### 2.6 插件不在服务端运行
 
-插件由 Codex 本地加载。飞书读写通过用户电脑上的 `lark-cli` 完成，不增加独立服务端。
+插件由宿主（Codex 或 Claude Code）本地加载。飞书读写通过用户电脑上的 `lark-cli` 完成，不增加独立服务端。
 
 ### 2.7 简单优先
 
@@ -415,10 +416,11 @@ SyncState 保留旧值，下一次同步会再次处理该文档并通过重新�
 
 ### 6.4 指定文档同步
 
-除了扫描变化，用户可以在 `$knowledge-sync` 请求中指定一个文档：
+除了扫描变化，用户可以在知识同步（`script2shot:knowledge-sync`）请求中指定一个
+文档：
 
 ```text
-$knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
+只同步这个文档：<飞书文档 URL 或 token>
 ```
 
 该模式直接读取指定文档并更新对应的知识卡和 SyncState，不扫描其他文档。适合用户明确知道只修改了一个文档的场景。
@@ -469,6 +471,21 @@ $knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
 
 ### 7.1 插件组成
 
+双宿主：同一仓库同时是 Codex 插件与 Claude Code 插件（2026-10-30 起）。
+
+- Codex 清单：根 `plugin.json` + `mcp.json` + `.agents/plugins/marketplace.json`。
+- Claude Code 清单：`.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json`
+  + 根 `.mcp.json`（`command = ${CLAUDE_PLUGIN_ROOT}/scripts/launch_script2shot_mcp`）。
+- 两宿主共享同一份 `skills/`；技能正文只写中性引用 `script2shot:<skill>`，
+  不写 `$skill` 或 `/skill` 触发语法（触发方式由 README 分宿主说明）。
+- 版本纪律：`plugin.json`、`.claude-plugin/plugin.json`、marketplace 条目、
+  `server/package.json`（含 lockfile）与 MCP Server 汇报版本保持一致，
+  由 `plugin_manifest` 测试锁定；宿主只在版本变化时更新已安装插件。
+- 分发：`server/dist/server.mjs` 随仓库提交（任何宿主都不会为用户自动构建）；
+  其余 `server/dist/*` 与 `server/node_modules/` 仍被忽略。
+
+代码模块：
+
 - `artifact_version.ts`：v2 版本识别；旧版本返回 `ARTIFACT_VERSION_UNSUPPORTED`。
 - `artifact_hash.ts`：递归排序对象键、保留数组顺序的内容指纹；运行输入单独取
   `hash_run_context`。
@@ -480,6 +497,13 @@ $knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
 - `init_run.ts` / `read_run.ts` / `update_run_state.ts`：v2 run 生命周期、输入指纹和
   下游待重跑判断。
 - `aggregate.ts`：带 `clip_id` 的知识引用聚合与 warning 汇总。
+
+Node 运行时的三层解析（2026-10-30）：① 启动器（`scripts/launch_script2shot_mcp(.cmd)`
+与 `scripts/setup_bootstrap(.cmd)`）按 `CODEX_*` 链 → 私有运行时目录 → 系统 `node`
+解析；② 无 Node 宿主由 `scripts/ensure_node.ps1` / `ensure_node.sh` 完成首次落地
+（下载 + `SHASUMS256.txt` 校验 + 解压，布局与 ensure-runtime 一致）；③
+`doctor` 与 `ensure-runtime` 支持复用当前进程运行时（`source: "process"`），
+`allow_process_runtime: false` 可关闭。
 ### 7.2 本地数据目录
 
 ```text
@@ -489,6 +513,9 @@ $knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
     cards.json
   index/
     knowledge.sqlite
+  runtime/
+    node-<version>/
+      node-<version>-<platform>-<arch>/
   logs/
 ```
 
@@ -516,7 +543,7 @@ $knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
 3. 系统 `PATH`。
 4. 常见安装目录，其中包含私有 prefix：
    `~/.codex-script2shot/cli/node_modules/@larksuite/cli/bin`。
-5. 找不到时由 `$setup` 的 `install-cli` 子命令安装到私有 prefix，不要求用户执行命令。
+5. 找不到时由安装引导（`setup`）的 `install-cli` 子命令安装到私有 prefix，不要求用户执行命令。
 
 配置示例：
 
@@ -552,7 +579,7 @@ profile **没有默认值**：setup 先用 `profile` 子命令解析活动 profi
 且 CLI 明确要求 AI agents 不得自行切换或删除 profile；插件只通过只读的
 `lark-cli profile list` 读取活动 profile 并与配置比对，不调用 `profile use` /
 `profile remove`。不一致时 `health` 返回 warning（`LARK_PROFILE_MISMATCH`，
-结构化差异），处置是运行 `$setup` 重新解析活动 profile 并更新本地配置值；插件
+结构化差异），处置是运行安装引导（`setup`）重新解析活动 profile 并更新本地配置值；插件
 不得把任何 profile 切换命令转交给用户。
 
 **默认知识库（2026-10-21）。** 插件自带默认知识库配置，默认值唯一来源是
@@ -654,8 +681,10 @@ warning；条目非表，或 `node_token` / `project_id` 非字符串或为空�
 Skill 分三层：入口编排（`script2shot`）、创作阶段（`script-breakdown`、`shot-planning`、
 `shot-prompting`）和运维（`setup`、`knowledge-sync`）。
 
-Skill 是 Codex 读取并执行的流程说明，不是可执行 CLI。用户通过 `$skill-name`
-或自然语言触发 Skill；阶段之间的确定性状态由文件产物和 MCP Tool 维持。
+Skill 是宿主（Codex / Claude Code）读取并执行的流程说明，不是可执行 CLI。用户通过
+各宿主的触发方式（Codex `$skill-name`，Claude Code `/script2shot:<skill>`）或自然
+语言触发 Skill；阶段之间的确定性状态由文件产物和 MCP Tool 维持。技能正文只写中性
+引用 `script2shot:<skill>`，不分宿主改写正文。
 
 拆分原则：只有产物稳定、知识域独立、值得单独重跑的创作步骤才成为 Skill；
 索引刷新、检索、校验和渲染等确定性操作留在 MCP Tool 中。
@@ -672,10 +701,13 @@ Skill 是 Codex 读取并执行的流程说明，不是可执行 CLI。用户通
 - 配置原始库和 AI 库。
 - 创建或校验 `KnowledgeCards` 和 `SyncState`，保存固定 `table_id`。
 - 初始化本地目录。
-- 提示用户可在需要时运行 `$knowledge-sync` 完成首次同步与本地索引构建，不在 setup
-  内自动执行。
+- 提示用户可在需要时运行知识同步（`script2shot:knowledge-sync`）完成首次同步与
+  本地索引构建，不在 setup 内自动执行。
 
-**执行顺序（2026-10-23）。** `doctor` → `ensure-runtime` → `build-server` →
+**执行顺序（2026-10-23；2026-10-30 增补无 Node 前置）。** 若启动器报「未找到可用的
+Node 运行时」（退出码 127），先由 `scripts/ensure_node.ps1` / `ensure_node.sh`
+完成首次落地，再用返回的 `node_path` 运行后续子命令。之后：`doctor` →
+`ensure-runtime` → `build-server` →
 `install-cli` → `ensure-app` → `auth-login`（人类只做浏览器操作）→ `profile` →
 组装配置 → `call-tool read_config` 读既有配置 → `call-tool health(pending_config)`
 只读可达性预检 → `write_config` / `init_knowledge_b` 的 dry-run 预览 → **一次写入
@@ -728,7 +760,7 @@ MCP 连接未建立时 setup 也能走完；构建完成后新开会话即可正
 支持指定文档同步模式：
 
 ```text
-$knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>
+只同步这个文档：<飞书文档 URL 或 token>
 ```
 
 该 Skill 不写原始库，不读取用户剧本，不包含人工审核步骤。

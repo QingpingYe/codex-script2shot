@@ -19,10 +19,11 @@ description: 把原始库的变化同步到 AI 库：扫描或指定文档、生
 
 ## 输入模式
 
-**扫描模式（缺省）**：用户只说 `$knowledge-sync`。扫描原始库的节点元数据，与
+**扫描模式（缺省）**：用户只说知识同步（`script2shot:knowledge-sync`）。扫描原始库的节点元数据，与
 AI 库的 SyncState 对比，生成整批变化清单，确认一次后逐文档执行。
 
-**指定文档模式**：`$knowledge-sync 只同步这个文档：<飞书文档 URL 或 token>`。
+**指定文档模式**：用户请求对指定文档执行 `script2shot:knowledge-sync`，并给出文档
+URL 或 token。
 跳过扫描与整批确认，直接对给定文档强制重新归纳；仍要更新 SyncState。前置条件：
 该文档必须已有 SyncState 记录（此前至少同步过一次）；否则先用扫描模式同步一次。
 
@@ -106,8 +107,8 @@ AI 库的 SyncState 对比，生成整批变化清单，确认一次后逐文档
 ## 失败处理
 
 - 预检失败：`health` 有 `fail` 项就停在预检，按失败项引导用户处理（缺配置先运行
-  `$setup`；数据表缺失或 `table_id` 未配置时，由 `setup` 的 `init_knowledge_b`
-  先建表 / 校验并写回配置）后重跑本 Skill。
+  安装引导 `script2shot:setup`；数据表缺失或 `table_id` 未配置时，由 `setup` 的
+  `init_knowledge_b` 先建表 / 校验并写回配置）后重跑本 Skill。
 - 单文档失败：不更新该文档的 SyncState，明确报告「未更新 SyncState，可重试」，
   并继续处理其他文档，不阻塞整批。
 - `replace_doc_cards` 写入新卡失败：旧卡保持不变、未执行删除，卡片与 SyncState 都

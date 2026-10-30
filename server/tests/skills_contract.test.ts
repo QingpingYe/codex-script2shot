@@ -55,6 +55,29 @@ describe("skills contract", () => {
       }
     },
   );
+
+  // 双宿主设计（2026-10-30）：技能正文共享于 Codex 与 Claude Code，不得使用任一宿主
+  // 专属的触发语法（Codex 的 `$skill` / Claude Code 的 `/skill`）；互相引用一律写
+  // 中性形式 `script2shot:<skill>`。
+  test.skipIf(skillFiles.length === 0)(
+    "skill bodies avoid harness-specific invocation syntax",
+    () => {
+      for (const { skillDir, skillFile } of skillFiles) {
+        const markdown = readFileSync(skillFile, "utf8");
+        expect(
+          markdown,
+          `${skillDir}/SKILL.md 不得出现 Codex 的 $skill 触发写法`,
+        ).not.toMatch(/\$[a-z][a-z0-9-]*/);
+      }
+      const authoring = readFileSync(
+        path.join(skillsRoot, "knowledge-sync", "references", "card-authoring.md"),
+        "utf8",
+      );
+      expect(authoring, "card-authoring.md 不得出现 Codex 的 $skill 触发写法").not.toMatch(
+        /\$[a-z][a-z0-9-]*/,
+      );
+    },
+  );
 });
 
 /**

@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "core": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/launch_script2shot_mcp"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # 知识卡生成参考
 
-`$knowledge-sync` 生成知识卡时按本文件执行。知识卡写入 AI 库的 `KnowledgeCards`
+`script2shot:knowledge-sync` 生成知识卡时按本文件执行。知识卡写入 AI 库的 `KnowledgeCards`
 表，字段定义以 `schemas/knowledge_card.schema.json` 为准。
 
 ## 分类映射

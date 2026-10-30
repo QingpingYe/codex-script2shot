@@ -1,7 +1,22 @@
 # codex-script2shot
 
-把剧本转换成 AI 视频生成提示词的 Codex 插件。当前 v2 面向短剧：最终交付单位是一个
-待生成视频的一段提示词，一个视频可以包含多个电影镜头。
+把剧本转换成 AI 视频生成提示词的插件，同时支持 Codex 与 Claude Code（同一仓库、
+同一套技能与 MCP Server，两个宿主各读各自的清单）。当前 v2 面向短剧：最终交付单位是
+一个待生成视频的一段提示词，一个视频可以包含多个电影镜头。
+
+## 安装
+
+Claude Code（含桌面端 Code tab；图形入口：输入框旁 **+ → Add plugins**）：
+
+```bash
+claude plugin marketplace add QingpingYe/codex-script2shot && claude plugin install script2shot@script2shot-git
+```
+
+Codex：在 Codex 应用中打开 Plugins 侧栏，选择本仓库的 marketplace（`.agents/plugins/marketplace.json`），在 Coding 分类下安装 `Script2Shot`。
+
+首次使用前运行一次安装引导（Claude Code 里输入 `/script2shot:setup`，Codex 里输入
+`$setup`）：AI 会自动完成环境自举、lark-cli 安装、登录与配置写入，人类只做浏览器
+授权和一次写入确认。Claude Code 不自带 Node 运行时时，引导会先自动补装私有 Node。
 
 ## 主流程
 
@@ -70,6 +85,16 @@ warnings.md
 - [阶段约定](references/stage-conventions.md)
 - [模型规则说明](docs/model-rules-notes.md)
 - [本轮设计与计划](docs/superpowers/specs/2026-10-26-shortdrama-video-prompts-design.md)
+- [双宿主设计（Claude Code + Codex）](docs/superpowers/specs/2026-10-30-claude-code-dual-harness-design.md)
+
+## 权限（Claude Code）
+
+插件自身的 MCP 工具默认需要批准。若要减少确认次数，可在 `~/.claude/settings.json`
+预允许（工具全名为 `mcp__plugin_script2shot_core__<tool>`）：
+
+```json
+{ "permissions": { "allow": ["mcp__plugin_script2shot_core__*"] } }
+```
 
 ## 边界
 

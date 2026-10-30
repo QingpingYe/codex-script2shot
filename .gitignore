@@ -1,8 +1,10 @@
 # 本地运行产物
 .script2shot/
 
-# 构建产物与依赖
-server/dist/
+# 构建产物与依赖：server/dist/server.mjs 是随分发提交的发布产物（任何宿主都不会
+# 为用户自动构建），其余 dist 内容仍忽略。
+server/dist/*
+!server/dist/server.mjs
 server/node_modules/
 
 # 日志与临时文件

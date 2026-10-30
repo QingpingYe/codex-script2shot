@@ -49,6 +49,8 @@ export interface BootstrapOptions {
   arch?: string;
   npm_path?: string;
   node_path?: string;
+  /** false 时禁用「复用当前进程运行时」回退（下载路径测试专用）。 */
+  allow_process_runtime?: boolean;
   server_path?: string;
   timeout_ms?: number;
   create?: boolean;

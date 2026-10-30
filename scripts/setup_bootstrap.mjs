@@ -234,13 +234,33 @@ export async function doctor(options = {}) {
   }
 
   const node = await probe_version(deps, { command: "node", args: ["--version"] }, env);
-  const node_ok = node.ok && node.major !== undefined && node.major >= MIN_NODE_MAJOR;
+  let node_ok = node.ok && node.major !== undefined && node.major >= MIN_NODE_MAJOR;
+  let node_detail = { version: node.version, source: node.source };
+  if (!node_ok) {
+    // 系统 node 不可用：按 ensure-runtime 的复用顺序再看私有运行时与当前进程。
+    const private_runtime = find_private_node(home_dir, options.platform ?? process.platform);
+    if (private_runtime !== undefined) {
+      const private_probe = await probe_version(
+        deps,
+        { command: private_runtime.path, args: ["--version"] },
+        env,
+      );
+      if (private_probe.ok && private_probe.major >= MIN_NODE_MAJOR) {
+        node_ok = true;
+        node_detail = { version: private_probe.version, source: "private", path: private_runtime.path };
+      }
+    }
+    if (!node_ok && options.allow_process_runtime !== false) {
+      const process_runtime = describe_process_runtime();
+      if (process_runtime.major >= MIN_NODE_MAJOR) {
+        node_ok = true;
+        node_detail = { version: process_runtime.version, source: "process", path: process_runtime.node_path };
+      }
+    }
+  }
   checks.push(
     node_ok
-      ? check("node", "pass", `Node ${node.version}（${node.source}）`, {
-          version: node.version,
-          source: node.source,
-        })
+      ? check("node", "pass", `Node ${node_detail.version}（${node_detail.source}）`, node_detail)
       : check("node", "warn", "未找到满足要求的 Node（需要 >= 24）。", {
           code: "NODE_UNAVAILABLE",
           required_major: MIN_NODE_MAJOR,
@@ -251,7 +271,7 @@ export async function doctor(options = {}) {
     next_actions.push("Node 不满足要求：运行 ensure-runtime 准备私有运行时。");
   }
 
-  const npm_call = npm_invocation(["--version"]);
+  const npm_call = npm_invocation(["--version"], resolve_npm_path(options));
   const npm = await probe_version(deps, npm_call, env);
   const npm_ok = npm.ok;
   checks.push(
@@ -379,9 +399,12 @@ function archive_for(platform, arch, version) {
 }
 
 /**
- * `ensure-runtime`：系统 `node` + `npm` 满足 `>= 24` 时复用；否则解析官方
- * `index.json` 的最新 LTS，下载归档、校验同版本目录的 `SHASUMS256.txt` 后解压到
- * `<home>/runtime/node-<version>/`（架构 §7.1）。
+ * `ensure-runtime`：按「系统 `node` + `npm` → 当前进程运行时 → 私有运行时目录」复用；
+ * 都没有时解析官方 `index.json` 的最新 LTS，下载归档、校验同版本目录的
+ * `SHASUMS256.txt` 后解压到 `<home>/runtime/node-<version>/`（架构 §7.1）。
+ * Claude Code 等不自带 Node 的宿主先由 `scripts/ensure_node.ps1` / `ensure_node.sh`
+ * 完成首次落地，之后的调用都走上面的复用路径；`allow_process_runtime: false`
+ * 关闭当前进程回退（下载路径测试专用）。
  */
 export async function ensure_runtime(options = {}) {
   const deps = resolve_deps(options.deps);
@@ -390,7 +413,7 @@ export async function ensure_runtime(options = {}) {
   const platform = options.platform ?? process.platform;
   const arch = options.arch ?? process.arch;
 
-  // ① 复用系统运行时：node 与 npm 都在才算数。
+  // ① 复用系统运行时：PATH 上的 node 与 npm 都在才算数。
   const system_node = await probe_version(deps, { command: "node", args: ["--version"] }, env);
   if (system_node.ok && system_node.major >= MIN_NODE_MAJOR) {
     const npm_call = npm_invocation(["--version"]);
@@ -402,6 +425,40 @@ export async function ensure_runtime(options = {}) {
         version: system_node.version,
         node_path: "node",
         npm_path: "npm",
+      };
+    }
+  }
+
+  // ①b 复用当前进程的运行时：启动器已按 CODEX_* → 私有运行时 → 系统 node 解析过，
+  // 当前进程就是可用的 Node；npm 取同目录 sibling，找不到再退回 PATH。
+  if (options.allow_process_runtime !== false) {
+    const process_runtime = describe_process_runtime();
+    if (process_runtime.major >= MIN_NODE_MAJOR) {
+      return {
+        ok: true,
+        source: "process",
+        version: process_runtime.version,
+        node_path: process_runtime.node_path,
+        npm_path: process_runtime.npm_path,
+      };
+    }
+  }
+
+  // ①c 复用私有运行时目录（进程回退被关闭、或进程版本不满足要求时）。
+  const private_runtime = find_private_node(home_dir, platform);
+  if (private_runtime !== undefined) {
+    const private_probe = await probe_version(
+      deps,
+      { command: private_runtime.path, args: ["--version"] },
+      env,
+    );
+    if (private_probe.ok && private_probe.major >= MIN_NODE_MAJOR) {
+      return {
+        ok: true,
+        source: "private",
+        version: private_probe.version,
+        node_path: private_runtime.path,
+        npm_path: private_runtime.npm_path ?? "npm",
       };
     }
   }
@@ -654,14 +711,17 @@ export async function install_cli(options = {}) {
 
   // ② npm 安装到私有 prefix；缓存指向系统临时目录，避开 home 内不可写的 npm 缓存。
   const cache_dir = path.join(os.tmpdir(), "script2shot-npm-cache");
-  const npm_call = npm_invocation([
-    "install",
-    "--prefix",
-    prefix,
-    "--cache",
-    cache_dir,
-    `${LARK_CLI_PACKAGE}@${target_version}`,
-  ]);
+  const npm_call = npm_invocation(
+    [
+      "install",
+      "--prefix",
+      prefix,
+      "--cache",
+      cache_dir,
+      `${LARK_CLI_PACKAGE}@${target_version}`,
+    ],
+    resolve_npm_path(options),
+  );
   const npm_result = await deps.run(npm_call.command, npm_call.args, {
     env,
     timeout_ms: 600000,
@@ -689,7 +749,7 @@ export async function install_cli(options = {}) {
     "scripts",
     "install.js",
   );
-  const installer_result = await deps.run("node", [install_script], {
+  const installer_result = await deps.run(resolve_node_path(options), [install_script], {
     env: { ...env, LARK_CLI_RUN: "1" },
     timeout_ms: 600000,
   });
@@ -900,6 +960,38 @@ function command_call(command, args) {
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
 
 /**
+ * 从 `node_path` 推导同目录 npm（Windows `npm.cmd`，POSIX `bin/npm`）。
+ * 用于 Claude Code 等场景：调用方只拿到私有运行时的 `node_path`，npm 应取它的 sibling。
+ * `node_path` 缺省、为裸 `node` 或 sibling 不存在时返回 undefined。
+ */
+function npm_beside_node(node_path, platform = process.platform) {
+  if (typeof node_path !== "string" || node_path.trim() === "" || node_path === "node") {
+    return undefined;
+  }
+  const dir = path.dirname(path.resolve(node_path));
+  const candidate = platform === "win32" ? path.join(dir, "npm.cmd") : path.join(dir, "npm");
+  return is_file(candidate) ? candidate : undefined;
+}
+
+/** npm 路径解析优先级：显式 `npm_path` → `node_path` 同目录 → 当前进程同目录 → PATH 上的 `npm`。 */
+function resolve_npm_path(options) {
+  return (
+    options.npm_path ??
+    npm_beside_node(options.node_path) ??
+    npm_beside_node(process.execPath) ??
+    "npm"
+  );
+}
+
+/**
+ * node 路径解析优先级：显式 `node_path` → 当前进程（启动器已按
+ * CODEX_* → 私有运行时 → 系统 node 解析过，当前进程就是可用运行时）→ 裸 `node`。
+ */
+function resolve_node_path(options) {
+  return options.node_path ?? process.execPath ?? "node";
+}
+
+/**
  * `build-server`：插件 `server/` 不可写 → `PLUGIN_DIR_READONLY`；npm 失败按
  * stderr 关键字分类（提权 / 网络 / 源）；构建器二进制或 dist 缺失 →
  * `BUILD_TOOL_BLOCKED`；最后做 `initialize` + `tools/list` 握手自检（架构 §7.1）。
@@ -910,8 +1002,8 @@ export async function build_server(options = {}) {
   const plugin_root = options.plugin_root ?? DEFAULT_PLUGIN_ROOT;
   const server_dir = path.join(plugin_root, "server");
   const dist_path = path.join(server_dir, "dist", "server.mjs");
-  const npm_path = options.npm_path ?? "npm";
-  const node_path = options.node_path ?? "node";
+  const npm_path = resolve_npm_path(options);
+  const node_path = resolve_node_path(options);
 
   if (!deps.can_write(server_dir)) {
     return failure("PLUGIN_DIR_READONLY", `插件 server 目录不可写：${server_dir}。`, {
@@ -1529,7 +1621,7 @@ export async function call_tool(name, input, options = {}) {
   const plugin_root = options.plugin_root ?? DEFAULT_PLUGIN_ROOT;
   const server_path =
     options.server_path ?? path.join(plugin_root, "server", "dist", "server.mjs");
-  const node_path = options.node_path ?? "node";
+  const node_path = resolve_node_path(options);
 
   if (typeof name !== "string" || name.trim() === "") {
     return failure("USAGE_ERROR", "call-tool 需要一个工具名。", {
@@ -1834,7 +1926,7 @@ async function probe_version(deps, call, env, extra = {}) {
 function usage_error(message, allowed) {
   return failure("USAGE_ERROR", `${message}可用子命令：${allowed.join("、")}。`, {
     details: { allowed: [...allowed] },
-    next_actions: ["按 $setup 的流程选择下一个子命令。"],
+    next_actions: ["按 setup 技能的流程选择下一个子命令。"],
   });
 }
 
@@ -1886,6 +1978,35 @@ function candidate_names() {
     : ["lark-cli"];
 }
 
+/**
+ * 当前进程运行时的描述：`process.execPath` 与同目录 npm（Windows `npm.cmd`，
+ * POSIX `bin/npm`）；同级不存在 npm 时退回 PATH 上的 `npm`。major 解析失败按 0 处理。
+ */
+function describe_process_runtime() {
+  const node_path = process.execPath;
+  const version_raw = process.version ?? "";
+  const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version_raw);
+  const version = match === null ? "0.0.0" : `${match[1]}.${match[2]}.${match[3]}`;
+  const node_dir = path.dirname(node_path);
+  const npm_candidates =
+    process.platform === "win32"
+      ? [path.join(node_dir, "npm.cmd")]
+      : [path.join(node_dir, "npm")];
+  let npm_path = "npm";
+  for (const candidate of npm_candidates) {
+    if (is_file(candidate)) {
+      npm_path = candidate;
+      break;
+    }
+  }
+  return {
+    node_path,
+    npm_path,
+    version,
+    major: match === null ? 0 : Number(match[1]),
+  };
+}
+
 /** 只读查找 lark-cli：环境变量 → PATH → 私有 prefix（不启动子进程）。 */
 function find_lark_cli(env, home_dir) {
   const explicit = first_non_empty(env.LARK_CLI_PATH);
@@ -1908,6 +2029,51 @@ function find_lark_cli(env, home_dir) {
     const candidate = path.join(private_dir, name);
     if (is_file(candidate)) {
       return { path: candidate, source: "private" };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * 只读查找私有 Node 运行时（`<home>/runtime/` 下的 `node-<版本>/node-<版本>-<平台>/`，
+ * 与 ensure-runtime 同布局）。版本目录按字典序降序取第一个含可执行 node 的；
+ * 只做文件系统探测，不启动子进程。找不到返回 undefined。
+ */
+function find_private_node(home_dir, platform = process.platform) {
+  const runtime_root = path.join(home_dir, HOME_DIR_NAME, "runtime");
+  let version_dirs;
+  try {
+    version_dirs = readdirSync(runtime_root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith("node-"))
+      .map((entry) => entry.name)
+      .sort()
+      .reverse();
+  } catch {
+    return undefined;
+  }
+  const node_rel = platform === "win32" ? "node.exe" : path.join("bin", "node");
+  const npm_rel = platform === "win32" ? "npm.cmd" : path.join("bin", "npm");
+  for (const version_dir of version_dirs) {
+    const full_version_dir = path.join(runtime_root, version_dir);
+    let inner_dirs;
+    try {
+      inner_dirs = readdirSync(full_version_dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith("node-"))
+        .map((entry) => entry.name)
+        .sort()
+        .reverse();
+    } catch {
+      continue;
+    }
+    for (const inner_dir of inner_dirs) {
+      const node_path = path.join(full_version_dir, inner_dir, node_rel);
+      if (is_file(node_path)) {
+        const npm_path = path.join(full_version_dir, inner_dir, npm_rel);
+        return {
+          path: node_path,
+          npm_path: is_file(npm_path) ? npm_path : undefined,
+        };
+      }
     }
   }
   return undefined;

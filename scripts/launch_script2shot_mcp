@@ -28,9 +28,18 @@ do
   fi
 done
 
+# Claude Code 等宿主不自带 Node：优先复用 setup 安装的私有运行时（可用
+# SCRIPT2SHOT_HOME 覆盖 home），再退回系统 node。
+script2shot_home=${SCRIPT2SHOT_HOME:-${HOME:-}/.codex-script2shot}
+for candidate in "$script2shot_home"/runtime/node-*/node-*/bin/node; do
+  if [ -x "$candidate" ]; then
+    exec "$candidate" "$server_path" "$@"
+  fi
+done
+
 if command -v node >/dev/null 2>&1; then
   exec node "$server_path" "$@"
 fi
 
-printf '%s\n' '请更新 Codex 或安装 Node.js >= 24' >&2
+printf '%s\n' '未找到可用的 Node 运行时；请安装 Node.js >= 24 后重试。' >&2
 exit 127

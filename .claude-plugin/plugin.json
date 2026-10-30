@@ -1,0 +1,10 @@
+{
+  "name": "script2shot",
+  "version": "0.3.0",
+  "description": "把剧本转换成可直接使用的 AI 视频生成提示词（Seedance 2.0 / 2.5）",
+  "author": {
+    "name": "QingpingYe"
+  },
+  "repository": "https://github.com/QingpingYe/codex-script2shot",
+  "keywords": ["video", "prompt", "seedance", "script", "storyboard"]
+}
