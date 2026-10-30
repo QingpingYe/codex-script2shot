@@ -86,6 +86,7 @@ warnings.md
 - [模型规则说明](docs/model-rules-notes.md)
 - [本轮设计与计划](docs/superpowers/specs/2026-10-26-shortdrama-video-prompts-design.md)
 - [双宿主设计（Claude Code + Codex）](docs/superpowers/specs/2026-10-30-claude-code-dual-harness-design.md)
+- [双宿主改造指南（供其他插件参考）](docs/dual-harness-migration-guide.md)
 
 ## 权限（Claude Code）
 
